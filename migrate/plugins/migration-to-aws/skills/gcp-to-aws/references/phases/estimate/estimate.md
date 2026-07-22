@@ -156,6 +156,7 @@ When `gcp-resource-inventory.json` + `aws-design.json` + `estimation-infra.json`
 exist, offer:
 
 ```
+Phase 4 of 6 complete (Estimate). Remaining: Generate (+ optional Feedback).
 Estimate complete. Before Generate, want to see how the numbers move if you
 change something? I can reprice scenarios side by side in about a minute each,
 without re-running discovery — for example: a different AWS region, cheaper
@@ -178,7 +179,10 @@ commit." Suggest at most one.
   `"generate"`. Continue with Feedback/Generate sidebars in `SKILL.md`.
 
 For AI-only / billing-only runs (no infra inventory), skip the workshop offer and
-set `phases.workshop` → `"completed"`, `current_phase` → `"generate"`.
+set `phases.workshop` → `"completed"`, `current_phase` → `"generate"`. Output to user:
+"Phase 4 of 6 complete (Estimate). Remaining: Generate (+ optional Feedback). Next artifact: generation plan + migration artifacts."
+
+_Breadcrumbs are emitted only after outer-run `HANDOFF_OK` — never on `GATE_FAIL`, never from inner workshop reprices._
 
 ## Reference Files
 

@@ -845,7 +845,9 @@ Load `shared/handoff-gates.md`. **Re-read from disk** before checking.
 
 Only after `HANDOFF_OK`. In the **same turn** as the output message below, use the Phase Status Update Protocol (Write tool) to write `.phase-status.json` with `phases.clarify` set to `"completed"`.
 
-Output to user: "Clarification complete. Proceeding to Phase 3: Design AWS Architecture."
+Output to user: "Phase 2 of 6 complete (Clarify). Remaining: Design → Estimate → Generate (+ optional Feedback). Next artifact: aws-design.json. Proceeding to Phase 3: Design AWS Architecture."
+
+_Breadcrumbs are emitted only after outer-run `HANDOFF_OK` — never on `GATE_FAIL`, never from inner workshop reprices._
 
 ---
 
