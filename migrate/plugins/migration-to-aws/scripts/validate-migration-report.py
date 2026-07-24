@@ -96,6 +96,16 @@ READABILITY_PATTERNS = [
         'numbered "Section N —" heading — drop numeric prefixes from headings; '
         "let the table of contents carry structure",
     ),
+    (
+        r"\b(?:very|significantly|extremely|vastly)\b",
+        "vague intensifier (very/significantly/extremely/vastly) — quantify the "
+        'claim from artifact data instead ("-32% ($497/mo lower)"), or drop it',
+    ),
+    (
+        r"\b\d{1,2}/\d{1,2}/\d{4}\b",
+        "slash-format date (N/N/YYYY reads differently across locales) — use "
+        "ISO YYYY-MM-DD for all dates",
+    ),
 ]
 
 # Visual readability contract for generated reports. This intentionally checks
@@ -688,7 +698,7 @@ def main() -> int:
     parser.add_argument(
         "--no-readability",
         action="store_true",
-        help="Skip customer-facing readability checks (Rubric:/Section N)",
+        help="Skip customer-facing readability checks (Rubric:/Section N/intensifiers/dates)",
     )
     parser.add_argument(
         "--mode",

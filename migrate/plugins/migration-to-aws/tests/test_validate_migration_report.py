@@ -340,6 +340,55 @@ def test_numbered_section_heading_rejected(tmp_path: Path) -> None:
     assert "numbered" in out.lower() or "Section" in out
 
 
+def test_vague_intensifier_rejected(tmp_path: Path) -> None:
+    html = MINIMAL_PASS.replace(
+        '<section id="exec-costs"><h2>Costs</h2>',
+        '<section id="exec-costs"><h2>Costs</h2><p>AWS is significantly cheaper.</p>',
+    )
+    path = tmp_path / "report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, require_toc=False)
+    assert code == 1, out
+    assert "intensifier" in out
+
+
+def test_intensifier_substrings_do_not_false_positive(tmp_path: Path) -> None:
+    """'discovery', 'delivery', 'recovery', 'every' must not trip the
+    vague-intensifier check (word-boundary anchored)."""
+    html = MINIMAL_PASS.replace(
+        '<section id="exec-services"><h2>Services</h2>',
+        '<section id="exec-services"><h2>Services</h2>'
+        "<p>Live discovery, delivery pipelines, and disaster recovery run every week.</p>",
+    )
+    path = tmp_path / "report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, require_toc=False)
+    assert code == 0, out
+
+
+def test_slash_date_rejected(tmp_path: Path) -> None:
+    html = MINIMAL_PASS.replace(
+        '<section id="decision-summary"><h2>Decision</h2>',
+        '<section id="decision-summary"><h2>Decision</h2><p>Generated 07/24/2026.</p>',
+    )
+    path = tmp_path / "report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, require_toc=False)
+    assert code == 1, out
+    assert "YYYY-MM-DD" in out
+
+
+def test_iso_date_accepted(tmp_path: Path) -> None:
+    html = MINIMAL_PASS.replace(
+        '<section id="decision-summary"><h2>Decision</h2>',
+        '<section id="decision-summary"><h2>Decision</h2><p>Generated 2026-07-24.</p>',
+    )
+    path = tmp_path / "report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, require_toc=False)
+    assert code == 0, out
+
+
 def test_readability_can_be_disabled(tmp_path: Path) -> None:
     html = MINIMAL_PASS.replace(
         '<section id="decision-summary"><h2>Decision</h2>',
