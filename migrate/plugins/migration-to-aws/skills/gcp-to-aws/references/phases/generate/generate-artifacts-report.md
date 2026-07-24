@@ -465,6 +465,16 @@ assembled.
   stay/defer recommendations use the warning/neutral callout treatment.
 - links: visible blue with underline on hover and a high-contrast
   `:focus-visible` outline for keyboard readers
+- **Contrast floor (WCAG AA):** every text/background pair — including muted
+  captions, badge text on tinted backgrounds, and callout text — meets
+  **4.5:1** (3:1 for large display text). The current palette passes; this
+  line makes it a requirement, not a coincidence. Never trade contrast for a
+  softer look.
+- **Interaction discipline:** interactive elements (links, `<summary>`,
+  `.toplink`) get `cursor: pointer` and a `150–300ms` CSS transition on
+  hover/focus color changes — no snapping. **Entrance, scroll-triggered, and
+  ambient animations are banned:** they read as AI-generated in a document,
+  do nothing in print, and this is a report, not a landing page.
 
 **Tables:**
 
