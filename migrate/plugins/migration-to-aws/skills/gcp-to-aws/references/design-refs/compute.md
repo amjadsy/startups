@@ -5,20 +5,20 @@
 **Table lookup first:** Check `fast-path.md` **Direct Mappings** for this Terraform type.
 
 - `google_cloud_run_service`, `google_cloud_run_v2_service`, `google_cloudfunctions_function`, and `google_cloudfunctions2_function` are currently in Direct Mappings and usually resolve with `confidence: "deterministic"` when row conditions are met.
-- `google_app_engine_application` is now in Direct Mappings (→ Elastic Beanstalk, confidence: `deterministic`).
+- `google_app_engine_application` is now in Direct Mappings (→ Elastic Beanstalk, confidence: `deterministic`) **only when `compute_model` is absent/`"managed_platform"` and `compute` ≠ `"eks"`**; under `compute: "eks"` (Q5 = multi-cloud) it falls through to the rubric and routes to EKS (`confidence: "inferred"`).
 - `google_compute_instance` and `google_container_cluster` are not direct-mapped in `fast-path.md`; use the rubric below (typically `confidence: "inferred"`).
 - If a resource is not eligible for Direct Mappings (or row conditions are not met), use the rubric below.
 
 ## Eliminators (Hard Blockers)
 
-| GCP Service     | AWS               | Blocker                                                                                                                                                                         |
-| --------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cloud Run       | Lambda            | Execution time >15 min → use Fargate                                                                                                                                            |
-| Cloud Run       | Fargate           | GPU workload or >16 vCPU or >120 GB memory → use EC2                                                                                                                            |
-| Cloud Functions | Lambda            | Python version not supported (e.g., Python 2.7) → use custom runtime on Fargate                                                                                                 |
-| GKE             | EKS               | Custom CRI incompatible → manual workaround or ECS                                                                                                                              |
-| Any             | App Runner        | **Closed to new customers (April 30 2026).** Do not target App Runner for new migrations. Use Fargate (default), Lambda (event-driven), or EKS (K8s required).                  |
-| App Engine      | Elastic Beanstalk | `compute_model: "container_orchestration"` or `"serverless"` in preferences → do not use EB, fall through to Fargate or Lambda _(preference override, not a technical blocker)_ |
+| GCP Service     | AWS               | Blocker                                                                                                                                                                                                                                                                                        |
+| --------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cloud Run       | Lambda            | Execution time >15 min → use Fargate                                                                                                                                                                                                                                                           |
+| Cloud Run       | Fargate           | GPU workload or >16 vCPU or >120 GB memory → use EC2                                                                                                                                                                                                                                           |
+| Cloud Functions | Lambda            | Python version not supported (e.g., Python 2.7) → use custom runtime on Fargate                                                                                                                                                                                                                |
+| GKE             | EKS               | Custom CRI incompatible → manual workaround or ECS                                                                                                                                                                                                                                             |
+| Any             | App Runner        | **Closed to new customers (April 30 2026).** Do not target App Runner for new migrations. Use Fargate (default), Lambda (event-driven), or EKS (K8s required).                                                                                                                                 |
+| App Engine      | Elastic Beanstalk | `compute_model: "container_orchestration"` or `"serverless"` in preferences → do not use EB, fall through to Fargate or Lambda _(preference override, not a technical blocker)_. Also `compute: "eks"` (Q5 = multi-cloud) → do not use EB, route to **EKS** _(top-level portability override)_ |
 
 ## Signals (Decision Criteria)
 
@@ -49,11 +49,12 @@ Note: Cloud Run maps to Fargate via deterministic fast-path ("Always"). The `com
 
 ### App Engine
 
+- **Multi-cloud portability required** (`compute: "eks"` from Q5) → **EKS** — top-level portability override; takes precedence over the EB default and any `compute_model` preference (Q7b does not fire under multi-cloud). Same override that forces GKE → EKS.
 - **Default** → Elastic Beanstalk (PaaS-to-PaaS, preserves managed platform model)
 - **User prefers container control** (`compute_model: "container_orchestration"`) → Fargate
 - **Event-driven / scale-to-zero required** → Lambda
 
-After selecting Elastic Beanstalk, load `elastic-beanstalk.md` to populate `aws_config` (platform, deployment policy, IAM, VPC, sizing).
+After selecting Elastic Beanstalk, load `elastic-beanstalk.md` to populate `aws_config` (platform, deployment policy, IAM, VPC, sizing). When `compute: "eks"` routes App Engine to EKS, do **not** run the EB fan-out or load `elastic-beanstalk.md` — the app_version resources are skipped like any other non-EB path.
 
 ## CPU Architecture (Graviton vs x86)
 
@@ -72,11 +73,12 @@ Add a `graviton` block (see `schema-graviton.md`) to the service's output. GPU/C
 
 Apply in order; first match wins:
 
-1. **Eliminators**: Does GCP config violate AWS constraints? If yes: switch to alternative
+1. **Eliminators**: Does GCP config violate AWS constraints, or does a top-level preference override apply? If yes: switch to alternative. **`compute: "eks"` (Q5 = multi-cloud) is a hard override — App Engine (and all compute) → EKS; stop here, do not evaluate the managed-platform/EB branch below.**
 2. **Operational Model**: Managed (Lambda, Fargate) vs Self-Hosted (EC2, EKS)?
    - Prefer managed unless: Always-on + high baseline cost → EC2
-   - For App Engine sources: Elastic Beanstalk (PaaS-to-PaaS) when `compute_model` is absent or `"managed_platform"`
-3. **User Preference**: From `preferences.json`: `design_constraints.kubernetes`, `design_constraints.cost_sensitivity`?
+   - For App Engine sources: Elastic Beanstalk (PaaS-to-PaaS) when `compute_model` is absent or `"managed_platform"` **and `compute` ≠ `"eks"`** (when `compute: "eks"`, the criterion-1 override already selected EKS)
+3. **User Preference**: From `preferences.json`: `design_constraints.compute`, `design_constraints.kubernetes`, `design_constraints.cost_sensitivity`?
+   - If `compute = "eks"` (Q5 = multi-cloud) → **EKS** for all compute, including App Engine (top-level portability override; overrides EB default and `compute_model`)
    - If `kubernetes = "eks-managed"` → EKS (preserves K8s investment)
    - If `kubernetes = "eks-or-ecs"` → EKS with managed node groups (user is competent with K8s)
    - If `kubernetes = "ecs-fargate"` → Fargate (simpler managed containers)
@@ -142,6 +144,16 @@ Apply in order; first match wins:
 - Criterion 1 (Eliminators): EB blocked (user chose container orchestration)
 - Criterion 2 (Operational Model): Fargate (managed containers)
 - → **AWS: Fargate (0.5 CPU, 1 GB memory)**
+- Confidence: `inferred` (rubric-based override of default PaaS mapping)
+
+### Example 4c: App Engine (Q5 = multi-cloud portability required)
+
+- GCP: `google_app_engine_application` with one service (`default`), app_version runtime=python39, instance_class=F2
+- Signals: PaaS deployment, but `compute: "eks"` in preferences (Q5 = multi-cloud); Q7b did not fire, so `compute_model` is absent
+- Fast-path condition NOT met: `compute` = `"eks"`, so the Direct Mapping row does not match — falls through to rubric
+- Criterion 1 (Eliminators): EB blocked (`compute: "eks"` multi-cloud override)
+- Criterion 3 (User Preference): `compute = "eks"` → EKS (same top-level portability override as GKE)
+- → **AWS: EKS** (no EB fan-out; app_version resources skipped like any other non-EB path)
 - Confidence: `inferred` (rubric-based override of default PaaS mapping)
 
 ## Output Schema

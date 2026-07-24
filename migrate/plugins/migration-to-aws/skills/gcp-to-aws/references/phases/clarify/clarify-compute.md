@@ -37,7 +37,7 @@ _Fire when:_ Compute resources present (Cloud Run, Cloud Functions, GKE, GCE, Ap
 
 ## Q7b — What compute operational model do you prefer for your App Engine workloads?
 
-_Fire when:_ App Engine present in inventory (`google_app_engine_application`). Skip when: no App Engine in inventory.
+_Fire when:_ App Engine present in inventory (`google_app_engine_application`) AND Q5 != A (multi-cloud). Skip when: no App Engine in inventory, or Q5 = A (multi-cloud already resolved compute to EKS — App Engine routes to EKS, overriding the EB default; same portability override as Q8).
 
 **Rationale:** GCP App Engine is a PaaS that can map to different AWS compute targets depending on whether the user wants to preserve the managed platform model (Elastic Beanstalk), switch to direct container control (Fargate/ECS), or go serverless (Lambda). This drives the fundamental routing decision for App Engine resources.
 
@@ -67,6 +67,8 @@ D -> same as default (A)
 ```
 
 **Default:** **A** (`compute_model: "managed_platform"`). App Engine is PaaS; Elastic Beanstalk is the closest AWS equivalent. Users who skip or say "I don't know" get the PaaS-to-PaaS path.
+
+_Note: If Q5=Yes (multi-cloud), this question is skipped — `compute: "eks"` is already decided and App Engine routes to EKS, overriding the EB default (mirrors Q8)._
 
 ---
 

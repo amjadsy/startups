@@ -6,8 +6,8 @@
 
 App Engine → EB fidelity depends on how the workload was discovered:
 
-- **Terraform** (`google_app_engine_application` + `*_app_version` resources) → full mapping: Q7b fires, and the design fan-out emits one EB environment per service with per-service `runtime`/scaling/sizing. This is the primary path.
-- **Billing export** (no Terraform) → coarse mapping via the billing design path (`design-billing.md`): App Engine still targets EB, but without per-service or runtime detail (`confidence: billing_inferred`).
+- **Terraform** (`google_app_engine_application` + `*_app_version` resources) → full mapping: Q7b fires (only when `compute` ≠ `"eks"`), and the design fan-out emits one EB environment per service with per-service `runtime`/scaling/sizing. This is the primary path. Under `compute: "eks"` (Q5 = multi-cloud) Q7b does not fire and App Engine routes to EKS instead — the fan-out does not run.
+- **Billing export** (no Terraform) → coarse mapping via the billing design path (`design-billing.md`): App Engine targets EB (when `compute` ≠ `"eks"`), but without per-service or runtime detail (`confidence: billing_inferred`). Under `compute: "eks"` (Q5 = multi-cloud) the billing path routes App Engine to EKS instead — see `design-billing.md` App Engine multi-cloud override.
 - **App code only** (no Terraform, no billing) → no App Engine compute inventory is produced today, so no EB mapping fires.
 - **Live `gcloud` discovery** → App Engine capture is **not yet wired** (tracked as a follow-up to the live-discovery work, PR #149); until then TF-less, billing-less App Engine projects surface App Engine as an unmapped asset rather than an EB target.
 
@@ -21,7 +21,7 @@ This is not a "Terraform required" policy — it reflects which discovery paths 
 
 ## When to Use
 
-Routing signals — these apply ONLY when `google_app_engine_application` is in the inventory **and `compute_model` is absent or `"managed_platform"`** (Q7b). If the user chose `compute_model: "container_orchestration"` or `"serverless"` (Q7b = B/C), App Engine does **not** map to EB — it routes to Fargate/Lambda via the `compute.md` rubric, and this reference is not the target (see **NOT the Right Choice** below). Routing authority lives in `compute.md` / `fast-path.md` / `design-infra.md`; this file is a supplementary config reference. When the gate holds, any of these signals is sufficient:
+Routing signals — these apply ONLY when `google_app_engine_application` is in the inventory **and `compute_model` is absent or `"managed_platform"` and `compute` ≠ `"eks"`** (Q7b). If the user chose `compute_model: "container_orchestration"` or `"serverless"` (Q7b = B/C), App Engine does **not** map to EB — it routes to Fargate/Lambda via the `compute.md` rubric, and this reference is not the target (see **NOT the Right Choice** below). Likewise, if `compute: "eks"` (Q5 = multi-cloud), Q7b does not fire and App Engine routes to **EKS** — this reference is not the target. Routing authority lives in `compute.md` / `fast-path.md` / `design-infra.md`; this file is a supplementary config reference. When the gate holds, any of these signals is sufficient:
 
 - `google_app_engine_application` detected in Terraform (strongest PaaS-to-PaaS signal)
 - User answers `compute_model: "managed_platform"` in Clarify (Q7b)
