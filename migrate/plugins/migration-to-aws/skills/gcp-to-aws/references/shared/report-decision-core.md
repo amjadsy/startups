@@ -33,7 +33,7 @@ The executive summary is the first thing visible when opening the report. Design
 
 **Table of contents (required — placed AFTER the decision summary, never before it):** Linked `<nav class="toc">` listing all executive sections and appendix sections present in this report. **Every `href="#section-id"` MUST match a `<section id="section-id">` on the page exactly** (same string, including hyphens). Omit TOC links only for sections not rendered.
 
-**The hero is the thesis (opening order):** the reader's first screenful is the decision, not navigation. Page order: title line → `decision-summary` (verdict headline + hero metrics) → TOC → remaining sections. An 18-link menu between the title and the verdict makes the reader scroll past chrome to learn the answer; the document's thesis — "Go, with conditions · $X/mo · N weeks" — must be visible before any menu.
+**The hero is the thesis (opening order):** the reader's first screenful is the decision, not navigation. Page order: title line → `decision-summary` (verdict headline + hero metrics) → TOC → remaining sections. An 18-link menu between the title and the verdict makes the reader scroll past chrome to learn the answer; the document's thesis — "Go, with conditions · $X/mo · phased, long pole: database cutover" — must be visible before any menu.
 
 **Target length:** approximately 2–4 printed pages for executive summary. _Full mode only:_ **Do NOT truncate appendices** to fit page count — appendices may be long.
 
@@ -60,7 +60,7 @@ Content when `recommendation` block exists:
    1b. **Confidence pointer:** one line under the verdict block — `Confidence: [confidence] — full basis in <a href="#exec-assumptions">What This Assessment Rests On</a>.` The full assumptions panel lives at the **end** of the executive summary (see Section 8 below), not here.
 2. **Complexity:** from `migration-preview.json` → `complexity_signal` ("Simple", "Moderate", "Complex") — colored badge
 3. **Cost headline:** from `estimation-infra.json` → `cost_comparison.option_b_balanced` vs GCP baseline, OR legacy `comparison.aws_balanced_monthly_usd` vs `comparison.gcp_monthly_usd`. Do NOT use `migration-preview.json` → `cost_preview` when estimation artifact exists (preview is superseded). If only preview exists: show labeled "Early estimate (±30%) — full analysis not yet run."
-4. **Timeline:** _Full mode:_ from `generation-infra.json` → `migration_plan.total_weeks` (preferred), OR `migration-preview.json` → `timeline_hint`. _Decision mode:_ do **not** invent a week count — use, in order: (1) `migration-preview.json` → `timeline_hint` when present; else (2) the complexity-tier band from `shared/migration-complexity.md` (e.g. "~6–12 weeks"); else omit the line. Always label it "**if you execute**" so it reads as a band, not a committed schedule. In neither mode use `recommendation.next_steps` as timeline — those are action items, not duration.
+4. **Timeline:** week counts are never rendered in either mode — the plugin has no calibrated duration data (`shared/migration-complexity.md` § Provenance). _Full mode:_ approach + the binding duration driver from `generation-infra.json` → `migration_plan.duration_drivers[]` (e.g. "Phased, in dependency order — long pole: database cutover"). _Decision mode:_ `migration-preview.json` → `duration_hint` (path-shape phrasing) when present, else the tier's driver summary from `shared/migration-complexity.md`; label it "**if you execute**". **Legacy artifacts:** when an old artifact carries `total_weeks` or `timeline_hint` week ranges, render only with the visible label "Legacy planning heuristic (uncalibrated): N weeks" — never bare. In neither mode use `recommendation.next_steps` as timeline — those are action items, not duration.
 5. **Migrate if / Stay if:** from `recommendation.migrate_if` and `recommendation.stay_if`. Render as two compact lists. For BigQuery/deferred analytics: **do not** frame specialist engagement as a reason to stay on GCP unless the user must cut over analytics in the **same window** as app infra. Prefer migrate-if bullets that mention parallel specialist planning.
 6. **Key decisions ahead:** from `migration-preview.json` → `key_decisions_ahead` — **ordered list** (`<ol class="compact">`), not bullets. Each item is one concrete decision the reader must make next.
    6b. **What would flip this (v2 artifacts):** from `recommendation.would_flip_if[]` when present — short unordered list immediately after Migrate if / Stay if. Skip silently when absent.
@@ -81,7 +81,7 @@ Content when `recommendation` block exists:
 
 **Sidebar callout box:** Show the 💡 Activate callout when `startup_program_status.value` is **not** `unknown`, **or** when `unknown` but you use the neutral wording above (optional). When `unknown`, do **not** imply a confirmed tier. **The Activate item is ALWAYS this callout, never a metric card** — it is a call-to-action with a link, not a measurement, and rendering it in the metric grid gives it false equivalence with the run-rate and timeline figures. The clickable apply link goes inside the callout.
 
-**Metric hierarchy (when the decision summary renders a metric grid):** the reader should not have to rank the numbers themselves. The one or two **primary** decision metrics — the combined (or single-track) AWS run rate, and the timeline — render first with `.metric-hero` treatment (larger value, accent border). Supporting metrics (per-track costs, savings percentages, effort range) follow as standard cards, max ~5 total.
+**Metric hierarchy (when the decision summary renders a metric grid):** the reader should not have to rank the numbers themselves. The one or two **primary** decision metrics — the combined (or single-track) AWS run rate, and the migration shape (approach + binding driver, e.g. "Phased · long pole: database cutover") — render first with `.metric-hero` treatment (larger value, accent border). Supporting metrics (per-track costs, savings percentages) follow as standard cards, max ~5 total. Never render a week count or effort-hours as a metric card.
 
 Do **not** infer Activate tier from `gcp_monthly_spend` or `ai_monthly_spend` in the report or `estimation-*.json` ROI bullets.
 
@@ -237,17 +237,16 @@ Source: static template filtered by design artifact service types
 
 **Section 6 — Timeline:**
 
-- _Full mode:_ total migration weeks (infra + note parallel AI weeks if
-  applicable); migration approach (phased/fast-track/conservative);
-  **implementation effort:** prefer summed low/high planning ranges from the
-  generation plans. If only legacy midpoint fields exist, show them as
-  approximate and state their basis. Sum distinct hands-on infra and AI work,
-  but do not turn calendar weeks into labor or count AI twice merely because it
-  runs alongside infrastructure. When infrastructure was classified Large
+- _Full mode:_ migration approach (phased/fast-track/conservative), the ordered
+  stage sequence (no week column — order is the information), `duration_drivers[]`
+  with the binding driver first, and the operational time policies (watch
+  periods, observation windows — these are policy, keep them). **No
+  implementation-effort hours** — uncalibrated staffing-shaped numbers get
+  pasted into budgets; if a legacy artifact carries hour fields, drop them
+  (do not render even with a label). When infrastructure was classified Large
   solely because AI coexists, treat that as an invalid stale classification
-  and re-run complexity sizing before rendering effort. Source: generation
-  plan.
-- _Decision mode:_ the same fallback chain as decision-summary item 4 (`timeline_hint`, else the `shared/migration-complexity.md` tier band, labeled "if you execute"), plus the migration approach from `recommendation.path_label`. **Omit engineering effort hours** — they don't exist before Generate; do not estimate them. Source: `migration-preview.json` / complexity tier / estimation artifact.
+  and re-run complexity sizing before rendering. Source: generation plan.
+- _Decision mode:_ the same rules as decision-summary item 4 (`duration_hint` path-shape, else tier driver summary, labeled "if you execute"; legacy week values only with the "Legacy planning heuristic (uncalibrated)" label), plus the migration approach from `recommendation.path_label`. **Omit engineering effort hours** — they don't exist before Generate and are never estimated. Source: `migration-preview.json` / complexity drivers / estimation artifact.
 
 **Section 7 — Top Risks:**
 

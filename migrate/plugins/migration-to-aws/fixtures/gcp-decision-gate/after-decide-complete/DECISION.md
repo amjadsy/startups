@@ -21,7 +21,7 @@ GCP baseline: estimated from resource configs (±20–30%, standing charges only
 
 ## Timeline
 
-~6–12 weeks if you execute (medium complexity band).
+Phased in dependency order if you execute — long pole: database migration, then cutover in a maintenance window (medium-complexity drivers; no week estimates — uncalibrated).
 
 ## Top risks
 

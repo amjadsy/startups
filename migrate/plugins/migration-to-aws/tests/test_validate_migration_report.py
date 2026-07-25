@@ -680,7 +680,7 @@ DECISION_PASS = """<!DOCTYPE html>
 <section id="exec-assumptions"><h2>What This Assessment Rests On</h2><p>All inputs confirmed; cached pricing 2026-03.</p></section>
 <section id="exec-services"><h2>Services</h2><table><tbody><tr><td>a</td></tr></tbody></table></section>
 <section id="exec-costs"><h2>Costs</h2><p>Est. $150/mo (Balanced)</p></section>
-<section id="exec-timeline"><h2>Timeline</h2><p>~6-12 weeks if you execute</p></section>
+<section id="exec-timeline"><h2>Migration Shape</h2><p>Phased in dependency order if you execute; long pole: database migration</p></section>
 <section id="exec-risks"><h2>Risks</h2></section>
 <section id="decision-cta"><h2>Ready to execute?</h2><p>Say "generate the Terraform and migration scripts".</p></section>
 <footer>draft for review</footer>

@@ -108,7 +108,7 @@
         <li><a href="#exec-costs">Infrastructure Cost Comparison</a></li>
         <li><a href="#exec-architecture">Architecture Overview</a></li>
         <li><a href="#exec-security-teaser">Security Posture</a></li>
-        <li><a href="#exec-timeline">Timeline &amp; Effort</a></li>
+        <li><a href="#exec-timeline">Migration Shape</a></li>
         <li><a href="#exec-risks">Top Risks</a></li>
         <li><a href="#exec-assumptions">What This Assessment Rests On</a></li>
         <li><a href="#appendix-assumptions">Assumptions, Exclusions &amp; Validation</a></li>
@@ -138,7 +138,7 @@
       <p class="verdict-meta">Confidence: Medium — full basis in <a href="#exec-assumptions">What This Assessment Rests On</a>.</p>
 
       <div class="verdict">
-        <strong>Recommendation:</strong> Migrate, phased over 10 weeks — estimated monthly savings of ~$503/month
+        <strong>Recommendation:</strong> Migrate, phased in dependency order — long pole is the database cutover, with a parallel AI track; estimated monthly savings of ~$503/month
         (-35%) combined infrastructure + AI, with BigQuery analytics deferred to a
         specialist engagement. Eligible for up to $5K
         <a href="https://aws.amazon.com/startups/credits/">AWS Activate credits</a>.
@@ -156,14 +156,9 @@
           <small>Est. $912/mo AWS vs $1,415/mo GCP (excl. BigQuery)</small>
         </div>
         <div class="metric">
-          <span>Timeline</span>
-          <strong>10 weeks</strong>
-          <small>Infra phased + 3-week AI track (parallel)</small>
-        </div>
-        <div class="metric">
-          <span>Effort estimate</span>
-          <strong>~200 hrs</strong>
-          <small>120 infra + 80 AI engineering</small>
+          <span>Migration shape</span>
+          <strong>Phased</strong>
+          <small>Long pole: database cutover; AI track runs parallel</small>
         </div>
         <div class="metric">
           <span>AI projection</span>
@@ -188,7 +183,7 @@
       <h3>Migrate if</h3>
       <ul class="compact">
         <li>You want unified AWS operations for containers, database, and Bedrock AI</li>
-        <li>Estimated combined cloud-service savings (~$503/month) and AWS Activate credits offset migration effort</li>
+        <li>Estimated combined cloud-service savings (~$503/month) and AWS Activate credits offset the cost of migrating</li>
         <li>You can engage AWS account team for BigQuery analytics in parallel</li>
       </ul>
 
@@ -400,34 +395,34 @@
 
     <!-- TIMELINE -->
     <section id="exec-timeline">
-      <h2>Timeline &amp; Effort</h2>
+      <h2>Migration Shape</h2>
 
-      <h3>Infrastructure migration (10 weeks, phased)</h3>
+      <h3>Infrastructure migration (phased, in dependency order)</h3>
       <table>
         <caption>Phased infrastructure migration schedule.</caption>
-        <thead><tr><th scope="col">Phase</th><th scope="col">Weeks</th><th scope="col">Activities</th></tr></thead>
+        <thead><tr><th scope="col">Order</th><th scope="col">Phase</th><th scope="col">Activities</th></tr></thead>
         <tbody>
-          <tr><td>Setup</td><td>1–2</td><td>VPC, IAM, security baseline, CI/CD for Terraform, Bedrock model access</td></tr>
-          <tr><td>PoC</td><td>3–4</td><td>Deploy networking + storage clusters; smoke test connectivity</td></tr>
-          <tr><td>Infrastructure Deployment</td><td>5–7</td><td>RDS, Fargate, ALB; cross-cluster security groups</td></tr>
-          <tr><td>Data Migration</td><td>8</td><td>Cloud SQL &rarr; RDS replication via Database Migration Service (DMS); GCS &rarr; S3 sync</td></tr>
-          <tr><td>Cutover</td><td>9</td><td>Weekly maintenance window; DNS/traffic switch</td></tr>
-          <tr><td>Validation</td><td>10</td><td>Cost validation; GCP teardown planning</td></tr>
+          <tr><td>1</td><td>Setup</td><td>VPC, IAM, security baseline, CI/CD for Terraform, Bedrock model access</td></tr>
+          <tr><td>2</td><td>PoC</td><td>Deploy networking + storage clusters; smoke test connectivity</td></tr>
+          <tr><td>3</td><td>Infrastructure Deployment</td><td>RDS, Fargate, ALB; cross-cluster security groups</td></tr>
+          <tr><td>4</td><td>Data Migration</td><td>Cloud SQL &rarr; RDS replication via Database Migration Service (DMS); GCS &rarr; S3 sync</td></tr>
+          <tr><td>5</td><td>Cutover</td><td>Weekly maintenance window; DNS/traffic switch</td></tr>
+          <tr><td>6</td><td>Validation</td><td>Cost validation; GCP teardown planning</td></tr>
         </tbody>
       </table>
 
-      <h3>AI migration (3 weeks, parallel track)</h3>
+      <h3>AI migration (parallel track)</h3>
       <table>
         <caption>Parallel AI migration schedule.</caption>
-        <thead><tr><th scope="col">Phase</th><th scope="col">Week</th><th scope="col">Activities</th></tr></thead>
+        <thead><tr><th scope="col">Order</th><th scope="col">Phase</th><th scope="col">Activities</th></tr></thead>
         <tbody>
-          <tr><td>Bedrock setup</td><td>1</td><td>Enable model access, IAM role, provider adapter with feature flag</td></tr>
-          <tr><td>Staging validation</td><td>2</td><td>A/B comparison, prompt tuning, image quality review</td></tr>
-          <tr><td>Production rollout</td><td>3</td><td>10% &rarr; 50% &rarr; 100% traffic; monitor cost and latency</td></tr>
+          <tr><td>1</td><td>Bedrock setup</td><td>Enable model access, IAM role, provider adapter with feature flag</td></tr>
+          <tr><td>2</td><td>Staging validation</td><td>A/B comparison, prompt tuning, image quality review</td></tr>
+          <tr><td>3</td><td>Production rollout</td><td>10% &rarr; 50% &rarr; 100% traffic; monitor cost and latency</td></tr>
         </tbody>
       </table>
 
-      <p><strong>Estimated effort:</strong> 120 hours (infra) + 80 hours (AI) = <strong>~200 engineering hours</strong></p>
+      <p><strong>Duration drivers:</strong> database replication and cutover (binding), cross-cluster security groups, parallel AI evaluation per model. Stage order and go/no-go gates carry the schedule; the plugin quotes no week or hour estimates (uncalibrated).</p>
       <p><strong>Cutover strategy:</strong> maintenance-window-weekly &nbsp;|&nbsp;
          <strong>Rollback:</strong> revert DNS to GCP Cloud Run; keep RDS read replica 48h</p>
     </section>
@@ -487,7 +482,7 @@
       <ul class="compact">
         <li><strong>BigQuery analytics</strong> — AWS target path not yet selected by specialist; costs excluded from the estimated AWS monthly run rate (does not block other services)</li>
         <li><strong>GCP egress during migration</strong> — billing export not available (<code>billing_data_available: false</code>)</li>
-        <li><strong>Professional services / labor</strong> — engineering hours estimated but not priced</li>
+        <li><strong>Professional services / labor</strong> — neither estimated nor priced (no calibrated effort data)</li>
         <li><strong>Dual-run period</strong> — temporary cost of running GCP + AWS concurrently not modeled</li>
         <li><strong>Dev-tier sizing</strong> — db.t4g.micro, single-AZ, on-demand Fargate unless upgraded</li>
       </ul>

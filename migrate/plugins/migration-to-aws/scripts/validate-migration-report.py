@@ -87,6 +87,17 @@ READABILITY_PATTERNS = [
         '<details> "Why this mapping?" block',
     ),
     (
+        r"\d+\s*(?:–|-|to)\s*\d+\s*(?:engineering\s+|effort\s+)?hours\b",
+        "effort-hours range — the plugin has no calibrated effort data and "
+        "hour figures get pasted into budgets; communicate time as stage "
+        "sequence + duration drivers (migration-complexity.md § Provenance)",
+    ),
+    (
+        r"(?<!uncalibrated\):\s)(?<!uncalibrated\): )\b\d+\s*(?:–|-|to)\s*\d+\+?\s*weeks\b",
+        'bare week-range estimate — durations are uncalibrated; either drop it '
+        'or label it "Legacy planning heuristic (uncalibrated): N–M weeks"',
+    ),
+    (
         r"Section\s+0\b",
         'literal "Section 0" heading — drop numeric "Section N" prefixes from '
         "customer-facing headings; let the table of contents carry structure",
