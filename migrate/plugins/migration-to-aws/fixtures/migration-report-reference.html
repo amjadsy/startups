@@ -303,6 +303,7 @@
             <th scope="col">Est. Monthly AWS</th>
             <th scope="col">vs GCP ($165/mo)</th>
             <th scope="col">Annual difference</th>
+            <th scope="col">vs Balanced, for this stack</th>
           </tr>
         </thead>
         <tbody>
@@ -311,18 +312,21 @@
             <td>$198</td>
             <td class="increase">+20% (+$33)</td>
             <td class="increase">+$396</td>
+            <td>RDS Multi-AZ instead of single-AZ (+$21/mo) — removes the single-AZ assumption; Fargate provisioned headroom (+$12/mo)</td>
           </tr>
           <tr>
             <td><strong>Balanced</strong><br><span class="tier-sub">Default scenario; Terraform implements this tier</span></td>
             <td><strong>$112</strong></td>
             <td class="savings"><strong>-32% (-$53)</strong></td>
             <td class="savings"><strong>-$636</strong></td>
+            <td>— anchor; matches generated Terraform</td>
           </tr>
           <tr>
             <td>Optimized<br><span class="tier-sub">Spot, reservations, storage trade-offs assumed</span></td>
             <td>$82</td>
             <td class="savings">-50% (-$83)</td>
             <td class="savings">-$996</td>
+            <td>Drops NAT Gateway (-$18/mo) — tasks move to public subnets or VPC endpoints, a posture change, not just savings; assumes a 1-year Compute Savings Plan (-$12/mo)</td>
           </tr>
         </tbody>
       </table>

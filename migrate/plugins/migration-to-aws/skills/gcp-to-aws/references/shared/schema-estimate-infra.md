@@ -8,6 +8,23 @@ Schema for `estimation-infra.json`, produced by `estimate-infra.md`.
 
 The fields **`aws_monthly_premium`**, **`aws_monthly_balanced`**, **`aws_monthly_optimized`** (under `projected_costs`) and **`option_a_premium`**, **`option_b_balanced`**, **`option_c_optimized`** (under `cost_comparison`) are **three pricing scenarios** for the **same** GCP->AWS mapping in `aws-design.json`. They are **not** three alternative Terraform roots.
 
+**`scenario_deltas` (required with three tiers):** `projected_costs.scenario_deltas` itemizes, per non-Balanced scenario, what concretely differs from Balanced **for this stack** — the estimate engine already knows (it priced the differences); this field makes the reader see them instead of inferring from generic labels. Each entry names the change AND its consequence when the change is architectural, not just financial (e.g. dropping a NAT Gateway is a network-posture change, not merely savings):
+
+```json
+"scenario_deltas": {
+  "premium": [
+    "RDS Multi-AZ instead of single-AZ (+$14/mo) — removes the single-AZ assumption",
+    "Provisioned compute headroom (+$X/mo)"
+  ],
+  "optimized": [
+    "Drops NAT Gateway (-$33/mo) — tasks move to public subnets or VPC endpoints; security-posture change, not just savings",
+    "Assumes 1-year commitment pricing on compute (-$Y/mo) — requires an upfront commitment decision"
+  ]
+}
+```
+
+Validation: when all three tiers are present, `scenario_deltas.premium` and `scenario_deltas.optimized` are non-empty string arrays; every architectural delta (resource added/removed vs the Balanced design) states its consequence, and commitment-based savings name the commitment. Readers of pre-extension artifacts must tolerate absence.
+
 | Tier key        | User-facing label | Subtitle (use in reports / MIGRATION_GUIDE)                                |
 | --------------- | ----------------- | -------------------------------------------------------------------------- |
 | **`premium`**   | Premium           | _Highest resilience / highest monthly estimate in this model_              |
