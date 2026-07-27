@@ -56,6 +56,28 @@
     ],
     "stay_if": [
       "BigQuery must cut over in the same window as app infra and cannot use a phased analytics track"
+    ],
+    "track_outcomes": [
+      {
+        "track": "compute_database",
+        "outcome": "go",
+        "note": "Fargate + RDS; the phased backbone"
+      },
+      {
+        "track": "ai_text",
+        "outcome": "go",
+        "note": "Nova Lite via provider adapter"
+      },
+      {
+        "track": "ai_image",
+        "outcome": "conditional_go",
+        "note": "Keeps current provider via the adapter until the image-quality eval passes; does not gate other tracks"
+      },
+      {
+        "track": "analytics",
+        "outcome": "defer_for_evidence",
+        "note": "BigQuery - specialist engagement, parallel track"
+      }
     ]
   },
   "cost_comparison": {

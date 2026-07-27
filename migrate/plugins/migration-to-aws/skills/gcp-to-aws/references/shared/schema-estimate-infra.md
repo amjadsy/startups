@@ -251,8 +251,27 @@ Validation: when all three tiers are present, `scenario_deltas.premium` and `sce
       "cost is the only metric and AWS is more expensive",
       "team deeply experienced with GCP"
     ],
+    "track_outcomes": [
+      {
+        "track": "compute_database",
+        "outcome": "go",
+        "note": "Fargate + RDS; the phased backbone"
+      },
+      { "track": "ai_text", "outcome": "go", "note": "Nova Lite via provider adapter" },
+      {
+        "track": "ai_image",
+        "outcome": "conditional_go",
+        "note": "Keeps current provider via the adapter until the image-quality eval passes; does not gate other tracks"
+      },
+      {
+        "track": "analytics",
+        "outcome": "defer_for_evidence",
+        "note": "BigQuery — specialist engagement, parallel track"
+      }
+    ],
     "conditions": [
-      "Confirm database availability requirement — Multi-AZ was assumed, not confirmed (2x cost factor)"
+      "Confirm database availability requirement — Multi-AZ was assumed, not confirmed (2x cost factor)",
+      "AI image: evaluate image quality vs current provider before swapping — track-scoped; a failed eval demotes this track only"
     ],
     "decision_basis": {
       "measured": [
@@ -305,6 +324,8 @@ Validation:
 - `would_flip_if`, when present, is an array of strings
 - `outcome == "stay"` requires `path == "stay"`; `outcome == "defer_for_evidence"` may pair with any `path` (path shows what migration _would_ look like)
 - `migrate_if` and `stay_if` are non-empty arrays of strings
+- **Scope rule (`stay_if` / `conditions`):** the whole-stack `stay_if` list is reserved for factors that argue for staying **entirely** (e.g. compute economics dominating a sparse-traffic app). A factor affecting a single track (one AI workload's quality eval, one deferred service's specialist plan) is **track-scoped**: it goes in `conditions[]` prefixed with its track ("AI image: …") and/or shapes that track's entry in `track_outcomes` — it MUST NOT appear as a whole-stack stay reason. This generalizes the existing BigQuery rule (deferral is not a reason to stay unless analytics must cut over in the same window) to every track.
+- `track_outcomes`, when present, is an array of `{track, outcome, note}`; `track` is one of `compute_database`, `ai_text`, `ai_image`, `ai_agentic`, `analytics` (use only tracks that exist in the design); `outcome` uses the same enum as `recommendation.outcome`. **Required when the stack has more than one track** (AI artifacts and/or deferred services alongside infrastructure). The stack-level `outcome` is then a summary: it must not be worse than the compute/database track's outcome merely because a secondary track has a condition — a failing track demotes that track, never the stack. Readers of pre-extension artifacts must tolerate absence.
 - `next_steps` is a non-empty array of strings
 - Block is **REQUIRED** in `estimation-infra.json` output (Part 7 must write it; Part 7 always writes the v2 fields)
 

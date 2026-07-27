@@ -131,6 +131,7 @@
       <h2>Migration Decision Summary</h2>
       <p class="verdict-headline">Go, with conditions</p>
       <p class="verdict-meta">Execution shape: Phased Migration &middot; Complexity: Complex</p>
+      <p class="verdict-meta">By track: Compute + database: <strong>go</strong>. AI text: <strong>go</strong>. AI image: <strong>conditional</strong> — keeps the current provider via the adapter until the quality eval passes; does not gate the rest. Analytics: <strong>deferred</strong> — specialist track, parallel.</p>
       <ul class="compact">
         <li>Condition: confirm database availability — Multi-AZ was assumed, not confirmed (roughly 2x database cost factor)</li>
         <li>Condition: confirm CUD expiration date before committing a migration start date</li>
