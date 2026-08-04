@@ -124,8 +124,30 @@ def _attr_string(block: str, attr: str) -> str | None:
 
 
 def _attr_int(block: str, attr: str) -> int | None:
-    match = re.search(rf"^\s*{re.escape(attr)}\s*=\s*(\d+)", block, re.MULTILINE)
-    return int(match.group(1)) if match else None
+    """Read an integer attribute, accepting BARE (443) and QUOTED ("443") forms.
+
+    Terraform accepts a quoted integer for number-typed arguments (`port = "443"`
+    is valid, idiomatic, `terraform fmt`-clean HCL and converts to 443), so a
+    bare-only reader silently degrades every port-based rule: a correct HTTPS
+    listener written as port = "443" was reported as a missing HTTPS listener
+    (false positive), and — worse — an ingress with from_port = "5432" /
+    cidr_blocks = ["0.0.0.0/0"] produced no covered ports, so the public-ingress
+    rules never fired on a genuinely world-open database (fail-CLOSED miss).
+
+    The quoted arm requires the value to be ENTIRELY digits (the closing quote is
+    anchored against the digits), so "443x", "443-444" and "${var.port}" do NOT
+    read as 443 — they return None and keep the existing fail-open behaviour for
+    non-literal / non-integer values.
+    """
+    match = re.search(
+        rf'^\s*{re.escape(attr)}\s*=\s*(?:(\d+)|"(\d+)")',
+        block,
+        re.MULTILINE,
+    )
+    if not match:
+        return None
+    bare, quoted = match.group(1), match.group(2)
+    return int(bare if bare is not None else quoted)
 
 
 def _default_action_type(block: str) -> str | None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess  # nosec B404 — test-only, inputs are hardcoded literals
 import sys
@@ -27,6 +28,23 @@ BAD_SG_PUBLIC_SSH = FIXTURES / "bad-sg-public-ssh"
 GOOD_SG_PUBLIC_WEBAPP = FIXTURES / "good-sg-public-webapp"
 BAD_ELASTICACHE_UNENCRYPTED = FIXTURES / "bad-elasticache-unencrypted"
 GOOD_ELASTICACHE_ENCRYPTED = FIXTURES / "good-elasticache-encrypted"
+GOOD_QUOTED_PORT_HTTPS = FIXTURES / "good-quoted-port-https"
+BAD_DB_SG_PUBLIC_QUOTED_PORT = FIXTURES / "bad-db-sg-public-quoted-port"
+
+
+def _load_validator_module():
+    """Import the validator for unit-level tests (its filename is hyphenated, so
+    it is not importable as a normal module name)."""
+    spec = importlib.util.spec_from_file_location("validate_terraform_policy", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Register before exec: @dataclass resolves annotations via sys.modules.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+VALIDATOR = _load_validator_module()
 
 
 def run_policy_validator(terraform_dir: Path, json_out: Path | None = None) -> tuple[int, str]:
@@ -254,3 +272,73 @@ resource "aws_lb_listener" "http_redirect" {
         code, out = run_policy_validator(Path(tmp))
         assert code == 0, f"block-form forward should pass, got: {out}"
         assert "POLICY_OK" in out
+
+
+def test_quoted_port_https_listener_passes() -> None:
+    """Regression: Terraform accepts a quoted integer for number arguments, so a
+    correct HTTPS listener written as port = "443" must NOT be falsely flagged.
+
+    Reading only bare integers left port=None, so https_ok was empty and a valid
+    stack failed with rule=alb_https_listener.
+    """
+    code, out = run_policy_validator(GOOD_QUOTED_PORT_HTTPS)
+    assert code == 0, out
+    assert "POLICY_OK" in out
+
+
+def test_quoted_port_db_sg_public_ingress_fails() -> None:
+    """Regression: from_port / to_port = "5432" with cidr_blocks = ["0.0.0.0/0"]
+    is a world-open database and must fire, not silently pass."""
+    code, out = run_policy_validator(BAD_DB_SG_PUBLIC_QUOTED_PORT)
+    assert code == 1, out
+    assert "db_sg_no_public_ingress" in out
+
+
+def test_quoted_port_sg_public_admin_ingress_fails() -> None:
+    """Same quoted-port regression for the sensitive-port rule (SSH on 22)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "vpc.tf").write_text(
+            """
+resource "aws_security_group" "bad" {
+  name = "bad-ssh-sg"
+
+  ingress {
+    from_port   = "22"
+    to_port     = "22"
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+""",
+            encoding="utf-8",
+        )
+        code, out = run_policy_validator(Path(tmp))
+        assert code == 1, out
+        assert "sg_no_public_admin_ingress" in out
+        assert "22 (SSH)" in out
+
+
+def test_attr_int_reads_bare_and_quoted_integers() -> None:
+    assert VALIDATOR._attr_int("  port = 443\n", "port") == 443
+    assert VALIDATOR._attr_int('  port = "443"\n', "port") == 443
+    assert VALIDATOR._attr_int('  from_port = "0"\n', "from_port") == 0
+
+
+def test_attr_int_rejects_non_literal_quoted_values() -> None:
+    """Precision guard: a quoted value must be ENTIRELY digits. Anything else is
+    non-literal and must return None so the rules keep failing open."""
+    for body in (
+        '  port = "443x"\n',
+        '  port = "x443"\n',
+        '  port = "443-444"\n',
+        '  port = "${var.port}"\n',
+        '  port = " 443"\n',
+        '  port = ""\n',
+        "  port = var.port\n",
+        "  port = local.ports[0]\n",
+    ):
+        assert VALIDATOR._attr_int(body, "port") is None, body
+
+
+def test_attr_int_absent_attribute_is_none() -> None:
+    assert VALIDATOR._attr_int('  protocol = "HTTPS"\n', "port") is None
