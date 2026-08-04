@@ -553,6 +553,25 @@ resource "aws_security_group" "database" {
     description     = "PostgreSQL from application compute"
   }
 
+  # {{IF migration_approach == "interim_cutover_data_first"}}
+  # INTERIM ONLY — Heroku app still on Heroku, reaching this database.
+  # Bounded allowlist, never 0.0.0.0/0. Populate interim_heroku_ingress_cidrs in
+  # terraform.tfvars from MIGRATION_GUIDE.md "Interim Database Exposure" Step 2:
+  # Private Space peering CIDRs, Private Space stable outbound IPs, or a
+  # static-egress proxy add-on's IPs. Empty (the default) emits no rule.
+  # Reset to [] and delete this block at cutover.
+  dynamic "ingress" {
+    for_each = length(var.interim_heroku_ingress_cidrs) > 0 ? [1] : []
+    content {
+      from_port   = 5432
+      to_port     = 5432
+      protocol    = "tcp"
+      cidr_blocks = var.interim_heroku_ingress_cidrs
+      description = "INTERIM: PostgreSQL from Heroku static egress — remove at cutover"
+    }
+  }
+  # {{ENDIF}}
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -639,6 +658,19 @@ resource "aws_security_group" "messaging" {
     create_before_destroy = true
   }
 }
+
+# {{IF migration_approach == "interim_cutover_data_first"}}
+variable "interim_heroku_ingress_cidrs" {
+  description = "INTERIM ONLY: bounded /32 allowlist for the Heroku app's egress addresses while it still runs on Heroku. Empty (default) emits no interim ingress rule. See MIGRATION_GUIDE.md 'Interim Database Exposure' Step 2."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = !contains(var.interim_heroku_ingress_cidrs, "0.0.0.0/0")
+    error_message = "interim_heroku_ingress_cidrs must be a bounded allowlist of specific addresses; 0.0.0.0/0 is not permitted for a database port."
+  }
+}
+# {{ENDIF}}
 ```
 
 **Security group rules:**
@@ -648,6 +680,7 @@ resource "aws_security_group" "messaging" {
 - Database/Cache/MSK SGs allow traffic from the app SG only
 - ALB SG allows 80 and 443 from 0.0.0.0/0
 - All SGs allow all outbound (compute needs ECR/source bundle access, package downloads, and service connectivity)
+- When `migration_approach == "interim_cutover_data_first"`, the database SG additionally emits one gated `dynamic "ingress"` for the Heroku app's egress addresses. It is a bounded CIDR allowlist driven by `interim_heroku_ingress_cidrs`, defaults to emitting nothing, and must never contain `0.0.0.0/0` — the variable's `validation` block enforces this.
 
 ### IAM Roles
 
@@ -1326,6 +1359,14 @@ resource "aws_db_instance" "<app_sanitized>_postgres" {
   db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.database.id]
 
+  # {{IF migration_approach == "interim_cutover_data_first"}}
+  # INTERIM ONLY — defaults to false (private). Only Paths B and C in
+  # MIGRATION_GUIDE.md "Interim Database Exposure" Step 2 need this true, and
+  # they also require the DB subnet group to sit in internet-gateway-routed
+  # subnets. Path A (Private Space VPC peering) keeps this false.
+  publicly_accessible = var.interim_db_public_access
+  # {{ENDIF}}
+
   backup_retention_period = 7
   backup_window           = "<preferences.json.global.maintenance_window formatted>"
   maintenance_window      = "<preferences.json.global.maintenance_window formatted>"
@@ -1355,6 +1396,16 @@ resource "aws_db_parameter_group" "<app_sanitized>_postgres" {
     value = "1"
   }
 
+  # {{IF migration_approach == "interim_cutover_data_first"}}
+  # Prerequisite for interim Heroku access: reject any non-TLS connection.
+  # Static parameter — takes effect on the next instance reboot.
+  parameter {
+    name         = "rds.force_ssl"
+    value        = "1"
+    apply_method = "pending-reboot"
+  }
+  # {{ENDIF}}
+
   tags = {
     Name = "${var.project_name}-${var.environment}-postgres-params"
   }
@@ -1377,6 +1428,14 @@ variable "db_password" {
   type        = string
   sensitive   = true
 }
+
+# {{IF migration_approach == "interim_cutover_data_first"}}
+variable "interim_db_public_access" {
+  description = "INTERIM ONLY: expose the database on a public endpoint while the app still runs on Heroku. Leave false unless MIGRATION_GUIDE.md 'Interim Database Exposure' Step 2 Path B or C applies. Reset to false at cutover."
+  type        = bool
+  default     = false
+}
+# {{ENDIF}}
 ```
 
 ### Aurora PostgreSQL (when `aws_service == "Aurora PostgreSQL"`)
@@ -1806,6 +1865,14 @@ migration_id = "<migration_id>"
 # Existing VPC (only if Private Space peering is detected)
 # existing_vpc_id     = "vpc-0123456789abcdef0"
 # existing_subnet_ids = ["subnet-aaa", "subnet-bbb"]
+
+# {{IF migration_approach == "interim_cutover_data_first"}}
+# Interim Heroku -> RDS access. Bounded allowlist only, never 0.0.0.0/0.
+# Source the addresses per MIGRATION_GUIDE.md "Interim Database Exposure" Step 2,
+# then reset both to their defaults at cutover.
+# interim_heroku_ingress_cidrs = ["203.0.113.10/32", "203.0.113.11/32"]
+# interim_db_public_access     = false
+# {{ENDIF}}
 ```
 
 ---
