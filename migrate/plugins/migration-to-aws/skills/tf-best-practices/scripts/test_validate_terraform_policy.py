@@ -393,11 +393,34 @@ def test_attr_interpolation_does_not_hide_later_attributes() -> None:
     assert VALIDATOR._attr_string(body, "storage_encrypted") == "true"
 
 
-def test_attr_unbalanced_brace_fails_open() -> None:
-    """An unbalanced brace inside a string literal skews the depth count. That must
-    yield None (fail open), never a value read out of the wrong scope."""
-    body = '{\n  name = "a { b"\n  port = 80\n}'
-    assert VALIDATOR._attr_int(body, "port") is None
+def test_lexically_irrelevant_braces_do_not_hide_attributes() -> None:
+    """A brace in a comment, string, or heredoc is not a block delimiter, so it must
+    not shift a real top-level attribute out of scope.
+
+    Regression guard: an earlier revision counted raw `{`/`}` and DID hide the
+    attribute here. For these rules a hidden attribute means a MISSED violation
+    (`publicly_accessible = true` read as absent, hence compliant), so "fail open"
+    is the wrong default — the value is a plain top-level literal, not ambiguous."""
+    for label, body in (
+        ("hash comment", '{\n  # primary { instance\n  port = 80\n}'),
+        ("slash comment", '{\n  // primary { instance\n  port = 80\n}'),
+        ("block comment", '{\n  /* primary { instance */\n  port = 80\n}'),
+        ("string", '{\n  identifier = "primary { db"\n  port = 80\n}'),
+        ("unbalanced string", '{\n  name = "a { b"\n  port = 80\n}'),
+        ("heredoc", '{\n  policy = <<EOT\n  { not code }\nEOT\n  port = 80\n}'),
+    ):
+        assert VALIDATOR._attr_int(body, "port") == 80, label
+
+
+def test_commented_out_attribute_is_not_read() -> None:
+    """An attribute that only appears inside a comment is not set."""
+    assert VALIDATOR._attr_int("{\n  # port = 443\n}", "port") is None
+    assert VALIDATOR._attr_int("{\n  // port = 443\n}", "port") is None
+    assert VALIDATOR._attr_int("{\n  /*\n  port = 443\n  */\n}", "port") is None
+    assert (
+        VALIDATOR._attr_string('{\n  /*\n  protocol = "HTTPS"\n  */\n}', "protocol")
+        is None
+    )
 
 
 def test_every_fixture_matches_its_good_bad_prefix() -> None:

@@ -111,6 +111,96 @@ def _extract_blocks(content: str, resource_type: str) -> list[tuple[str, str, in
     return blocks
 
 
+_HEREDOC_OPEN = re.compile(r"<<-?\s*([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
+    """Scan HCL once, returning per-index (brace depth, is-real-code) arrays.
+
+    Only braces that are actual block delimiters count toward depth. HCL permits
+    `{` and `}` inside `#` / `//` line comments, `/* */` block comments, quoted
+    strings, and heredoc bodies, and those are NOT delimiters — counting them
+    would let unrelated text shift the apparent nesting of a real attribute.
+    `is_code` additionally lets callers ignore an attribute that only appears
+    commented out.
+
+    Interpolations are treated as opaque string content: `{` and `}` inside a
+    string are both ignored, so the running depth is unaffected either way.
+    """
+    n = len(block)
+    depths = [0] * n
+    codes = [False] * n
+    depth = 0
+    state = "code"
+    tag = ""
+    i = 0
+    while i < n:
+        ch = block[i]
+        nxt = block[i + 1] if i + 1 < n else ""
+        if state == "code":
+            if ch == "#" or (ch == "/" and nxt == "/"):
+                depths[i], codes[i] = depth, False
+                state = "line_comment"
+                i += 1
+                continue
+            if ch == "/" and nxt == "*":
+                depths[i], depths[i + 1] = depth, depth
+                state = "block_comment"
+                i += 2
+                continue
+            if ch == '"':
+                depths[i], codes[i] = depth, False
+                state = "string"
+                i += 1
+                continue
+            if ch == "<" and nxt == "<":
+                heredoc = _HEREDOC_OPEN.match(block, i)
+                if heredoc:
+                    for j in range(i, heredoc.end()):
+                        depths[j] = depth
+                    tag = heredoc.group(1)
+                    state = "heredoc"
+                    i = heredoc.end()
+                    continue
+            depths[i], codes[i] = depth, True
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+            i += 1
+            continue
+
+        depths[i] = depth
+        if state == "line_comment":
+            if ch == "\n":
+                state = "code"
+            i += 1
+        elif state == "block_comment":
+            if ch == "*" and nxt == "/":
+                depths[i + 1] = depth
+                state = "code"
+                i += 2
+            else:
+                i += 1
+        elif state == "string":
+            if ch == "\\" and i + 1 < n:
+                depths[i + 1] = depth
+                i += 2
+            else:
+                if ch == '"':
+                    state = "code"
+                i += 1
+        else:  # heredoc — body is literal until a line holding only the tag
+            end = block.find("\n", i)
+            line_end = n if end == -1 else end + 1
+            for j in range(i, line_end):
+                depths[j] = depth
+            if block[i:line_end].strip() == tag:
+                state = "code"
+            i = line_end
+    return depths, codes
+
+
 def _first_own_attr(block: str, pattern: str, flags: int = 0) -> re.Match[str] | None:
     """First match of `pattern` that sits among the block's OWN attributes.
 
@@ -124,19 +214,23 @@ def _first_own_attr(block: str, pattern: str, flags: int = 0) -> re.Match[str] |
     blocks). Read whole-body, such a listener reports port 443 / protocol HTTPS
     instead of 80 / HTTP.
 
-    So match candidates are filtered by brace depth: only those at the body's own
-    depth are eligible. Depth is `{` minus `}` before the match, and the base
-    depth is 1 for a braced body (as returned by _extract_braced_block) or 0 for
-    a bare attribute fragment.
+    Candidates are therefore filtered by brace depth — only those at the body's
+    own depth are eligible (1 for a braced body as returned by
+    _extract_braced_block, 0 for a bare attribute fragment) — and a candidate that
+    is merely commented out is skipped.
 
-    Fail-open on ambiguity, consistent with the rest of this module: an unbalanced
-    brace inside a string literal skews the count, which can make a real
-    attribute look nested and yield None — never a spurious value.
+    Depth comes from _lex_hcl, NOT from raw `{`/`}` counting. Raw counting is
+    unsafe here: a brace in an unrelated comment or string literal would shift the
+    depth of a real top-level attribute and hide it, and for these rules a hidden
+    attribute means a MISSED violation — `publicly_accessible = true` reported as
+    compliant. That is the failure class this reader exists to prevent, so
+    lexically-irrelevant braces must not participate.
     """
     base = 1 if block.lstrip().startswith("{") else 0
+    depths, codes = _lex_hcl(block)
     for match in re.finditer(pattern, block, flags):
-        prefix = block[: match.start()]
-        if prefix.count("{") - prefix.count("}") == base:
+        start = match.start()
+        if start < len(codes) and codes[start] and depths[start] == base:
             return match
     return None
 
