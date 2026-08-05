@@ -412,6 +412,69 @@ def test_lexically_irrelevant_braces_do_not_hide_attributes() -> None:
         assert VALIDATOR._attr_int(body, "port") == 80, label
 
 
+def test_extraction_not_truncated_by_lexically_irrelevant_closing_brace() -> None:
+    """A `}` in a comment, string, or heredoc body is not a delimiter, so it must
+    not end the resource body early.
+
+    Regression guard: raw brace counting in `_extract_braced_block` truncated the
+    body before `publicly_accessible = true`, so the resource reached the rules
+    with the offending attribute already discarded — zero violations."""
+    for label, filler in (
+        ("hash comment", "  # capacity review } pending"),
+        ("slash comment", "  // capacity review } pending"),
+        ("block comment", "  /* capacity review } pending */"),
+        ("string", '  identifier = "primary } db"'),
+        ("heredoc", "  description = <<EOT\n  a closing } brace\nEOT"),
+    ):
+        content = (
+            'resource "aws_db_instance" "pg" {\n'
+            f"{filler}\n"
+            "  publicly_accessible = true\n"
+            "}\n"
+        )
+        blocks = VALIDATOR._extract_blocks(content, "aws_db_instance")
+        assert len(blocks) == 1, label
+        assert (
+            VALIDATOR._attr_string(blocks[0][1], "publicly_accessible") == "true"
+        ), label
+
+
+def test_regular_heredoc_terminator_must_be_unindented() -> None:
+    """`<<TAG` requires the terminator at column 0; only `<<-TAG` tolerates
+    indentation. Treating both as tolerant exits a regular heredoc early, so its
+    body text is read as real code — here an in-heredoc `port = 443` was returned
+    instead of the listener's own `port = 80`."""
+    regular = '{\n  policy = <<EOT\n  EOT\n  port = 443\nEOT\n  port = 80\n}'
+    assert VALIDATOR._attr_int(regular, "port") == 80
+    indented = '{\n  policy = <<-EOT\n  { not code }\n  EOT\n  port = 80\n}'
+    assert VALIDATOR._attr_int(indented, "port") == 80
+
+
+def test_attribute_presence_probe_matches_value_scoping() -> None:
+    """`_has_own_attr` must agree with `_attr_string` about what counts as set.
+
+    The encryption rules read "attribute present but unreadable" as
+    variable-driven and skip. If presence counted a commented-out assignment the
+    reader ignores, a resource whose attribute is genuinely ABSENT — hence
+    unencrypted by default — would be skipped instead of flagged."""
+    only_commented = '{\n  identifier = "pg"\n  /*\n  storage_encrypted = false\n  */\n}'
+    assert VALIDATOR._has_own_attr(only_commented, "storage_encrypted") is False
+    assert VALIDATOR._attr_string(only_commented, "storage_encrypted") is None
+    real = '{\n  storage_encrypted = var.encrypt\n}'
+    assert VALIDATOR._has_own_attr(real, "storage_encrypted") is True
+    assert VALIDATOR._attr_string(real, "storage_encrypted") is None
+
+
+def test_commented_out_resource_is_not_extracted() -> None:
+    """A commented-out resource declaration is not a resource."""
+    content = (
+        '# resource "aws_db_instance" "ghost" {\n'
+        "#   publicly_accessible = true\n"
+        "# }\n"
+    )
+    assert VALIDATOR._extract_blocks(content, "aws_db_instance") == []
+
+
 def test_commented_out_attribute_is_not_read() -> None:
     """An attribute that only appears inside a comment is not set."""
     assert VALIDATOR._attr_int("{\n  # port = 443\n}", "port") is None

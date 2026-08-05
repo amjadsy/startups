@@ -83,35 +83,7 @@ def _read_tf_files(terraform_dir: Path) -> list[tuple[str, str]]:
     return files
 
 
-def _extract_braced_block(content: str, open_brace: int) -> tuple[str, int]:
-    """Return (block_text_including_braces, index_after_close). Brace-depth aware."""
-    depth = 0
-    for idx in range(open_brace, len(content)):
-        char = content[idx]
-        if char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return content[open_brace : idx + 1], idx + 1
-    return content[open_brace:], len(content)
-
-
-def _extract_blocks(content: str, resource_type: str) -> list[tuple[str, str, int]]:
-    """Return (name, body, 1-based line) for each resource of resource_type."""
-    blocks: list[tuple[str, str, int]] = []
-    for match in RESOURCE_OPEN.finditer(content):
-        if match.group("type") != resource_type:
-            continue
-        name = match.group("name")
-        brace_start = match.end() - 1
-        body, _ = _extract_braced_block(content, brace_start)
-        line = content.count("\n", 0, match.start()) + 1
-        blocks.append((name, body, line))
-    return blocks
-
-
-_HEREDOC_OPEN = re.compile(r"<<-?\s*([A-Za-z_][A-Za-z0-9_]*)")
+_HEREDOC_OPEN = re.compile(r"<<(-?)\s*([A-Za-z_][A-Za-z0-9_]*)")
 
 
 def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
@@ -133,6 +105,7 @@ def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
     depth = 0
     state = "code"
     tag = ""
+    tag_indent_ok = False
     i = 0
     while i < n:
         ch = block[i]
@@ -158,7 +131,11 @@ def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
                 if heredoc:
                     for j in range(i, heredoc.end()):
                         depths[j] = depth
-                    tag = heredoc.group(1)
+                    tag = heredoc.group(2)
+                    # Only `<<-TAG` permits an indented terminator; plain `<<TAG`
+                    # requires it at column 0, so an indented tag-looking line is
+                    # ordinary body text.
+                    tag_indent_ok = heredoc.group(1) == "-"
                     state = "heredoc"
                     i = heredoc.end()
                     continue
@@ -195,10 +172,86 @@ def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
             line_end = n if end == -1 else end + 1
             for j in range(i, line_end):
                 depths[j] = depth
-            if block[i:line_end].strip() == tag:
+            line = block[i:line_end]
+            terminator = line.strip() if tag_indent_ok else line.rstrip()
+            if terminator == tag:
                 state = "code"
             i = line_end
     return depths, codes
+
+
+def _extract_braced_block(
+    content: str, open_brace: int, lexed: tuple[list[int], list[bool]] | None = None
+) -> tuple[str, int]:
+    """Return (block_text_including_braces, index_after_close).
+
+    Uses _lex_hcl, not raw brace counting: a `}` inside a comment, string, or
+    heredoc body is not a delimiter, and treating it as one truncates the block
+    early. That silently drops every attribute after the stray brace — a resource
+    body cut before `publicly_accessible = true` reports no violation at all. Pass
+    `lexed` to reuse a scan already done for this exact `content`.
+    """
+    depths, codes = lexed if lexed is not None else _lex_hcl(content)
+    if open_brace >= len(codes) or not codes[open_brace]:
+        return content[open_brace:], len(content)
+    target = depths[open_brace] + 1
+    for idx in range(open_brace + 1, len(content)):
+        if codes[idx] and content[idx] == "}" and depths[idx] == target:
+            return content[open_brace : idx + 1], idx + 1
+    return content[open_brace:], len(content)
+
+
+def _extract_blocks(content: str, resource_type: str) -> list[tuple[str, str, int]]:
+    """Return (name, body, 1-based line) for each resource of resource_type.
+
+    The file is lexed once and the scan is shared with every extraction, so
+    extraction, attribute presence, and attribute values all agree on what counts
+    as code. A resource declaration that is itself commented out is skipped.
+    """
+    lexed = _lex_hcl(content)
+    _, codes = lexed
+    blocks: list[tuple[str, str, int]] = []
+    for match in RESOURCE_OPEN.finditer(content):
+        if match.group("type") != resource_type:
+            continue
+        if not codes[match.start()]:
+            continue
+        name = match.group("name")
+        brace_start = match.end() - 1
+        body, _ = _extract_braced_block(content, brace_start, lexed)
+        line = content.count("\n", 0, match.start()) + 1
+        blocks.append((name, body, line))
+    return blocks
+
+
+def _own_blocks(body: str, block_type: str) -> list[str]:
+    """Bodies of `block_type { ... }` blocks declared directly in `body`.
+
+    Shares the lexer so a commented-out `ingress {` is not treated as a real rule.
+    """
+    lexed = _lex_hcl(body)
+    _, codes = lexed
+    found: list[str] = []
+    for match in re.finditer(rf"{re.escape(block_type)}\s*\{{", body):
+        if not codes[match.start()]:
+            continue
+        inner, _ = _extract_braced_block(body, match.end() - 1, lexed)
+        found.append(inner)
+    return found
+
+
+def _has_own_attr(block: str, attr: str) -> bool:
+    """True if `attr` is assigned among the block's OWN attributes.
+
+    Presence must use the same lexical rules as value reading. A probe that counts
+    a commented-out assignment while the reader correctly ignores it makes the two
+    disagree, and the rules that branch on "attribute present but unreadable →
+    variable-driven → fail open" then skip a resource whose attribute is genuinely
+    absent.
+    """
+    return (
+        _first_own_attr(block, rf"^\s*{re.escape(attr)}\s*=", re.MULTILINE) is not None
+    )
 
 
 def _first_own_attr(block: str, pattern: str, flags: int = 0) -> re.Match[str] | None:
@@ -502,8 +555,7 @@ def check_db_sg_no_public_ingress(tf_files: list[tuple[str, str]]) -> list[Viola
     for rel_path, content in tf_files:
         for name, body, line in _extract_blocks(content, "aws_security_group"):
             # Walk each inline ingress block via brace matching.
-            for m in re.finditer(r"ingress\s*\{", body):
-                ingress_body, _ = _extract_braced_block(body, m.end() - 1)
+            for ingress_body in _own_blocks(body, "ingress"):
                 if _ingress_covers_db_port(ingress_body) and _ingress_allows_public(ingress_body):
                     violations.append(
                         Violation(
@@ -548,8 +600,7 @@ def check_sg_no_public_admin_ingress(tf_files: list[tuple[str, str]]) -> list[Vi
     violations: list[Violation] = []
     for rel_path, content in tf_files:
         for name, body, line in _extract_blocks(content, "aws_security_group"):
-            for m in re.finditer(r"ingress\s*\{", body):
-                ingress_body, _ = _extract_braced_block(body, m.end() - 1)
+            for ingress_body in _own_blocks(body, "ingress"):
                 if not _ingress_allows_public(ingress_body):
                     continue
                 hit = _ingress_covered_ports(ingress_body, _SENSITIVE_NONDB_PORTS)
@@ -654,7 +705,7 @@ def check_rds_encryption_at_rest(tf_files: list[tuple[str, str]]) -> list[Violat
             for name, body, line in _extract_blocks(content, res_type):
                 val = _attr_string(body, "storage_encrypted")
                 # Variable-driven / non-literal → attribute present but not "true"/"false".
-                has_attr = re.search(r"^\s*storage_encrypted\s*=", body, re.MULTILINE)
+                has_attr = _has_own_attr(body, "storage_encrypted")
                 if has_attr and val is None:
                     continue  # variable-driven — fail open
                 if val == "true":
@@ -689,9 +740,7 @@ def check_elasticache_encryption_at_rest(tf_files: list[tuple[str, str]]) -> lis
     for rel_path, content in tf_files:
         for name, body, line in _extract_blocks(content, "aws_elasticache_replication_group"):
             val = _attr_string(body, "at_rest_encryption_enabled")
-            has_attr = re.search(
-                r"^\s*at_rest_encryption_enabled\s*=", body, re.MULTILINE
-            )
+            has_attr = _has_own_attr(body, "at_rest_encryption_enabled")
             if has_attr and val is None:
                 continue  # variable-driven — fail open
             if val == "true":
