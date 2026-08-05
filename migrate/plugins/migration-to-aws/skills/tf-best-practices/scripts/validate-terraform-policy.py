@@ -111,13 +111,45 @@ def _extract_blocks(content: str, resource_type: str) -> list[tuple[str, str, in
     return blocks
 
 
+def _first_own_attr(block: str, pattern: str, flags: int = 0) -> re.Match[str] | None:
+    """First match of `pattern` that sits among the block's OWN attributes.
+
+    `_extract_blocks` / `_extract_braced_block` return a resource body INCLUDING
+    its nested blocks, and a plain `re.search` takes the first match anywhere —
+    so an attribute of a nested block can be read as if it belonged to the
+    resource. `aws_lb_listener` is the live example: `default_action { redirect {
+    port = "443", protocol = "HTTPS" } }` carries both a `port` and a `protocol`,
+    and HCL does not require the listener's own `port` to precede its
+    `default_action` (`terraform fmt` will not reorder attributes relative to
+    blocks). Read whole-body, such a listener reports port 443 / protocol HTTPS
+    instead of 80 / HTTP.
+
+    So match candidates are filtered by brace depth: only those at the body's own
+    depth are eligible. Depth is `{` minus `}` before the match, and the base
+    depth is 1 for a braced body (as returned by _extract_braced_block) or 0 for
+    a bare attribute fragment.
+
+    Fail-open on ambiguity, consistent with the rest of this module: an unbalanced
+    brace inside a string literal skews the count, which can make a real
+    attribute look nested and yield None — never a spurious value.
+    """
+    base = 1 if block.lstrip().startswith("{") else 0
+    for match in re.finditer(pattern, block, flags):
+        prefix = block[: match.start()]
+        if prefix.count("{") - prefix.count("}") == base:
+            return match
+    return None
+
+
 def _attr_string(block: str, attr: str) -> str | None:
-    match = re.search(rf'^\s*{re.escape(attr)}\s*=\s*"([^"]*)"', block, re.MULTILINE)
+    match = _first_own_attr(
+        block, rf'^\s*{re.escape(attr)}\s*=\s*"([^"]*)"', re.MULTILINE
+    )
     if match:
         return match.group(1)
-    bool_match = re.search(
-        rf"^\s*{re.escape(attr)}\s*=\s*(true|false)\b",
+    bool_match = _first_own_attr(
         block,
+        rf"^\s*{re.escape(attr)}\s*=\s*(true|false)\b",
         re.MULTILINE | re.IGNORECASE,
     )
     return bool_match.group(1).lower() if bool_match else None
@@ -138,10 +170,14 @@ def _attr_int(block: str, attr: str) -> int | None:
     anchored against the digits), so "443x", "443-444" and "${var.port}" do NOT
     read as 443 — they return None and keep the existing fail-open behaviour for
     non-literal / non-integer values.
+
+    Accepting the quoted form also makes a nested block's `port` a candidate where
+    a bare-only pattern could never match one, so the search is scoped to the
+    block's own attributes via _first_own_attr — see its docstring.
     """
-    match = re.search(
-        rf'^\s*{re.escape(attr)}\s*=\s*(?:(\d+)|"(\d+)")',
+    match = _first_own_attr(
         block,
+        rf'^\s*{re.escape(attr)}\s*=\s*(?:(\d+)|"(\d+)")',
         re.MULTILINE,
     )
     if not match:

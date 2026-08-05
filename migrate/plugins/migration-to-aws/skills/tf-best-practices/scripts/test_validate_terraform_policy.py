@@ -342,3 +342,76 @@ def test_attr_int_rejects_non_literal_quoted_values() -> None:
 
 def test_attr_int_absent_attribute_is_none() -> None:
     assert VALIDATOR._attr_int('  protocol = "HTTPS"\n', "port") is None
+
+
+# A listener whose own `port`/`protocol` are written AFTER its default_action.
+# Valid HCL — `terraform fmt` does not reorder attributes relative to blocks — and
+# the nested redirect carries both a `port` and a `protocol`, so a whole-body read
+# returns the redirect's 443/HTTPS instead of the listener's own 80/HTTP.
+_LISTENER_ATTRS_AFTER_NESTED_BLOCK = """{
+  load_balancer_arn = aws_lb.app.arn
+
+  default_action {
+    type = "redirect"
+    redirect {
+      port     = "443"
+      protocol = "HTTPS"
+    }
+  }
+
+  port     = 80
+  protocol = "HTTP"
+}"""
+
+
+def test_attrs_read_from_own_block_not_nested_block() -> None:
+    """Accepting quoted integers makes a nested `port = "443"` a match candidate
+    where a bare-only pattern could never match one, so reads are scoped to the
+    block's own attributes. Pinned for both readers: _attr_string had the same
+    whole-body weakness before this change and shares the scoping now."""
+    assert VALIDATOR._attr_int(_LISTENER_ATTRS_AFTER_NESTED_BLOCK, "port") == 80
+    assert (
+        VALIDATOR._attr_string(_LISTENER_ATTRS_AFTER_NESTED_BLOCK, "protocol") == "HTTP"
+    )
+
+
+def test_attr_nested_only_value_is_not_promoted() -> None:
+    """An attribute that exists ONLY inside a nested block is absent from the
+    enclosing block — returning the nested value would invent an attribute.
+
+    Written as `terraform fmt` emits it (one attribute per line), which is the form
+    that actually reaches the line-anchored pattern; a collapsed one-line
+    `redirect { port = "443" }` never matches and so would not exercise scoping."""
+    body = '{\n  default_action {\n    redirect {\n      port = "443"\n    }\n  }\n}'
+    assert VALIDATOR._attr_int(body, "port") is None
+
+
+def test_attr_interpolation_does_not_hide_later_attributes() -> None:
+    """`${...}` braces are balanced, so an interpolated value earlier in the body
+    must not make a following top-level attribute unreadable."""
+    body = '{\n  identifier        = "${var.project}-db"\n  storage_encrypted = true\n}'
+    assert VALIDATOR._attr_string(body, "storage_encrypted") == "true"
+
+
+def test_attr_unbalanced_brace_fails_open() -> None:
+    """An unbalanced brace inside a string literal skews the depth count. That must
+    yield None (fail open), never a value read out of the wrong scope."""
+    body = '{\n  name = "a { b"\n  port = 80\n}'
+    assert VALIDATOR._attr_int(body, "port") is None
+
+
+def test_every_fixture_matches_its_good_bad_prefix() -> None:
+    """Enforce the naming invariant the fixture set relies on: `good-*` (and the
+    internal-ALB case) must be POLICY_OK, `bad-*` must be POLICY_FAIL. Without
+    this, each fixture is wired up by hand and a new one added without its own
+    test would silently get no coverage."""
+    fixture_dirs = sorted(d for d in FIXTURES.iterdir() if d.is_dir())
+    assert len(fixture_dirs) >= 18, f"unexpectedly few fixtures: {fixture_dirs}"
+    for fixture in fixture_dirs:
+        code, out = run_policy_validator(fixture)
+        if fixture.name.startswith("bad-"):
+            assert code == 1, f"{fixture.name} must FAIL: {out}"
+            assert "POLICY_FAIL" in out, f"{fixture.name}: {out}"
+        else:
+            assert code == 0, f"{fixture.name} must pass: {out}"
+            assert "POLICY_OK" in out, f"{fixture.name}: {out}"
