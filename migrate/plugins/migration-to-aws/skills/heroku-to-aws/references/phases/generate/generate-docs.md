@@ -752,10 +752,16 @@ After successful verification (recommend 48–72 hours of parallel running):
 
 Once your application is fully running on AWS (no longer connecting from Heroku):
 
-- [ ] **Disable public access on RDS/Aurora:** In Terraform, set `interim_db_public_access = false` and apply; confirm the database reports "Not publicly accessible"
-- [ ] **Restrict security groups:** In Terraform, reset `interim_heroku_ingress_cidrs = []` and apply, then delete the interim ingress block; allow only VPC-internal traffic on database ports
+- [ ] **Disable public access on RDS/Aurora:** Confirm the database reports "Not publicly accessible"
+- [ ] **Restrict security groups:** Ensure no `0.0.0.0/0` inbound rules remain; allow only VPC-internal traffic on database ports
 - [ ] **Verify backups:** Confirm automated backups are enabled with appropriate retention
 - [ ] **Confirm private connectivity:** Application connects to the database via private VPC networking (not public endpoint)
+
+{{IF migration_approach == "interim_cutover_data_first"}}
+
+- [ ] **Close the interim access path in Terraform:** reset `interim_heroku_ingress_cidrs = []` and `interim_db_public_access = false`, `terraform apply`, then delete the interim ingress block — full procedure in "Interim Database Exposure" Step 4 above
+
+{{ENDIF}}
 
 ### Decommission Heroku Resources
 

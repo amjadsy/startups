@@ -661,13 +661,27 @@ resource "aws_security_group" "messaging" {
 
 # {{IF migration_approach == "interim_cutover_data_first"}}
 variable "interim_heroku_ingress_cidrs" {
-  description = "INTERIM ONLY: bounded /32 allowlist for the Heroku app's egress addresses while it still runs on Heroku. Empty (default) emits no interim ingress rule. See MIGRATION_GUIDE.md 'Interim Database Exposure' Step 2."
+  description = "INTERIM ONLY: bounded allowlist for the Heroku app's egress addresses while it still runs on Heroku — /32 host addresses on Paths B and C, or the Private Space CIDRs on Path A. Empty (default) emits no interim ingress rule. See MIGRATION_GUIDE.md 'Interim Database Exposure' Step 2."
   type        = list(string)
   default     = []
 
   validation {
     condition     = !contains(var.interim_heroku_ingress_cidrs, "0.0.0.0/0")
     error_message = "interim_heroku_ingress_cidrs must be a bounded allowlist of specific addresses; 0.0.0.0/0 is not permitted for a database port."
+  }
+
+  # Rejecting only the literal 0.0.0.0/0 would still admit an equivalent split
+  # (0.0.0.0/1 + 128.0.0.0/1, and so on down to /7), so constrain the SHAPE: every
+  # entry must be a well-formed CIDR with a prefix of /8 or longer. That admits
+  # everything the guide prescribes — /32 host addresses and Private Space ranges,
+  # up to a whole RFC 1918 10.0.0.0/8 — while no combination of permitted entries
+  # can cover the internet without hundreds of lines.
+  validation {
+    condition = alltrue([
+      for cidr in var.interim_heroku_ingress_cidrs :
+      can(cidrnetmask(cidr)) && can(regex("/(8|9|[12][0-9]|3[0-2])$", cidr))
+    ])
+    error_message = "Each entry in interim_heroku_ingress_cidrs must be a valid IPv4 CIDR with a prefix of /8 or longer; broader prefixes cover too much of the internet for a database port."
   }
 }
 # {{ENDIF}}
