@@ -97,7 +97,12 @@ def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
     commented out.
 
     Interpolations are treated as opaque string content: `{` and `}` inside a
-    string are both ignored, so the running depth is unaffected either way.
+    string are both ignored, so the running depth is unaffected either way. This
+    requires tracking interpolation nesting, because `${...}` may contain its own
+    quoted strings (`"${lookup(var.m, "a{b")}"`). Without that, the inner string's
+    closing quote would end the OUTER string and everything after it would be
+    scanned as code — putting textual braces back into the depth count, which is
+    the failure mode this lexer exists to prevent.
     """
     n = len(block)
     depths = [0] * n
@@ -106,6 +111,8 @@ def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
     state = "code"
     tag = ""
     tag_indent_ok = False
+    interp = 0          # open `${` levels inside the current string
+    inner_str = False   # inside a quoted string nested in an interpolation
     i = 0
     while i < n:
         ch = block[i]
@@ -124,6 +131,8 @@ def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
             if ch == '"':
                 depths[i], codes[i] = depth, False
                 state = "string"
+                interp = 0
+                inner_str = False
                 i += 1
                 continue
             if ch == "<" and nxt == "<":
@@ -163,8 +172,20 @@ def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
             if ch == "\\" and i + 1 < n:
                 depths[i + 1] = depth
                 i += 2
+            elif ch == "$" and nxt == "{" and not inner_str:
+                depths[i + 1] = depth
+                interp += 1
+                i += 2
+            elif interp > 0 and ch == '"':
+                # A quote inside `${...}` opens/closes a NESTED string; it must not
+                # be mistaken for the end of the interpolated string itself.
+                inner_str = not inner_str
+                i += 1
+            elif interp > 0 and ch == "}" and not inner_str:
+                interp -= 1
+                i += 1
             else:
-                if ch == '"':
+                if ch == '"' and interp == 0:
                     state = "code"
                 i += 1
         else:  # heredoc — body is literal until a line holding only the tag

@@ -393,6 +393,29 @@ def test_attr_interpolation_does_not_hide_later_attributes() -> None:
     assert VALIDATOR._attr_string(body, "storage_encrypted") == "true"
 
 
+def test_quote_nested_in_interpolation_does_not_end_the_string() -> None:
+    """A `"` inside `${...}` opens a NESTED string; it must not end the outer one.
+
+    Regression guard: the first lexer set `state = "code"` on any `"` seen in a
+    string, so an inner string's closing quote ended the outer string and the rest
+    of the line was scanned as code — putting textual braces back into the depth
+    count. That is the exact failure class the lexer was added to close, reached by
+    a different route, and it is reachable from ordinary HCL (`replace(v, "{", "")`,
+    `templatefile("t.tpl", {"a"="{"})`).
+
+    Both directions matter: an opening brace skews depth (the attribute is judged
+    nested and skipped), a closing brace truncates the body outright.
+    """
+    for label, body in (
+        ("open brace in nested quote", '{\n  identifier = "${lookup(var.m, "a{b")}"\n  port = 80\n}'),
+        ("close brace in nested quote", '{\n  n = "${replace(v, "}", "")}"\n  port = 80\n}'),
+        ("both braces in nested quote", '{\n  n = "${replace(v, "{}", "")}"\n  port = 80\n}'),
+        ("nested quote, no brace", '{\n  a = "${lookup(var.tags, "Name")}"\n  port = 80\n}'),
+        ("two interpolations", '{\n  a = "${f("x{")}-${g("y}")}"\n  port = 80\n}'),
+    ):
+        assert VALIDATOR._attr_int(body, "port") == 80, label
+
+
 def test_lexically_irrelevant_braces_do_not_hide_attributes() -> None:
     """A brace in a comment, string, or heredoc is not a block delimiter, so it must
     not shift a real top-level attribute out of scope.
@@ -425,6 +448,7 @@ def test_extraction_not_truncated_by_lexically_irrelevant_closing_brace() -> Non
         ("block comment", "  /* capacity review } pending */"),
         ("string", '  identifier = "primary } db"'),
         ("heredoc", "  description = <<EOT\n  a closing } brace\nEOT"),
+        ("closing brace in a quote nested in an interpolation", '  n = "${replace(v, "}", "")}"'),
     ):
         content = (
             'resource "aws_db_instance" "pg" {\n'
@@ -492,7 +516,10 @@ def test_every_fixture_matches_its_good_bad_prefix() -> None:
     this, each fixture is wired up by hand and a new one added without its own
     test would silently get no coverage."""
     fixture_dirs = sorted(d for d in FIXTURES.iterdir() if d.is_dir())
-    assert len(fixture_dirs) >= 18, f"unexpectedly few fixtures: {fixture_dirs}"
+    # Exact, not `>=`: a floor cannot detect fixtures being deleted down to it,
+    # which is the removal this assertion exists to catch. Update deliberately
+    # when adding or removing a fixture.
+    assert len(fixture_dirs) == 21, f"fixture count changed: {[d.name for d in fixture_dirs]}"
     for fixture in fixture_dirs:
         code, out = run_policy_validator(fixture)
         if fixture.name.startswith("bad-"):
