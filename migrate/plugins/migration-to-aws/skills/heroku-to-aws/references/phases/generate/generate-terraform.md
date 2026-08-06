@@ -1476,11 +1476,41 @@ resource "aws_rds_cluster" "<app_sanitized>_aurora" {
   skip_final_snapshot       = false
   final_snapshot_identifier = "${var.project_name}-${var.environment}-aurora-final"
 
+  # {{IF migration_approach == "interim_cutover_data_first"}}
+  # Prerequisite for interim Heroku access: reject any non-TLS connection.
+  # On Aurora, rds.force_ssl is a CLUSTER-level parameter, so it needs its own
+  # aws_rds_cluster_parameter_group — attaching the instance-level
+  # aws_db_parameter_group used by the RDS branch does not work here.
+  db_cluster_parameter_group_name = aws_rds_cluster_parameter_group.<app_sanitized>_aurora.name
+  # {{ENDIF}}
+
   tags = {
     Name      = "${var.project_name}-${var.environment}-aurora"
     HerokuApp = "<heroku_app>"
   }
 }
+
+# {{IF migration_approach == "interim_cutover_data_first"}}
+# INTERIM ONLY — enforces TLS on the cluster for the duration of the interim
+# window. Aurora PostgreSQL 16 and older default rds.force_ssl to 0 (OFF), unlike
+# RDS for PostgreSQL 15+ which defaults to 1, so on this branch the parameter must
+# be set explicitly or the database accepts plaintext connections.
+# In a cluster parameter group this parameter is DYNAMIC: no apply_method and no
+# reboot are required, which is why this block has neither.
+resource "aws_rds_cluster_parameter_group" "<app_sanitized>_aurora" {
+  name   = "${var.project_name}-${var.environment}-aurora-cluster-params"
+  family = "aurora-postgresql<major_version>"
+
+  parameter {
+    name  = "rds.force_ssl"
+    value = "1"
+  }
+
+  tags = {
+    Name = "${var.project_name}-${var.environment}-aurora-cluster-params"
+  }
+}
+# {{ENDIF}}
 
 resource "aws_rds_cluster_instance" "<app_sanitized>_aurora" {
   count              = 2
@@ -1489,6 +1519,16 @@ resource "aws_rds_cluster_instance" "<app_sanitized>_aurora" {
   instance_class     = "<aws_config.instance_class>"
   engine             = aws_rds_cluster.<app_sanitized>_aurora.engine
   engine_version     = aws_rds_cluster.<app_sanitized>_aurora.engine_version
+
+  # {{IF migration_approach == "interim_cutover_data_first"}}
+  # INTERIM ONLY — defaults to false (private). On Aurora, public access is an
+  # INSTANCE-level attribute, so it belongs here rather than on aws_rds_cluster.
+  # Only Paths B and C in MIGRATION_GUIDE.md "Interim Database Exposure" Step 2
+  # need this true, and they also require the DB subnet group to sit in
+  # internet-gateway-routed subnets. Path A (Private Space VPC peering) keeps it
+  # false.
+  publicly_accessible = var.interim_db_public_access
+  # {{ENDIF}}
 
   tags = {
     Name = "${var.project_name}-${var.environment}-aurora-${count.index + 1}"

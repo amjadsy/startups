@@ -257,13 +257,19 @@ During the interim period your Heroku app connects to the AWS database. Work thr
 
 Complete every part of Step 1 and pass its verification gate before touching Step 2.
 
-1. **Require TLS on the database.** The generated Terraform already sets `rds.force_ssl = 1` in this database's custom parameter group, so `terraform apply` puts it in place — there is no console step and no way to skip it. Because the parameter is static, reboot the instance once so it takes effect:
+1. **Require TLS on the database.** The generated Terraform already sets `rds.force_ssl = 1` for this database, so `terraform apply` puts it in place — there is no console step and no way to skip it. Where the parameter lives, and whether it needs a reboot, depends on the engine:
 
-   ```bash
-   aws rds reboot-db-instance --db-instance-identifier <db_identifier>
-   ```
+   - **RDS for PostgreSQL** — set in the instance-level `aws_db_parameter_group`. The parameter is **static**, so reboot the instance once so it takes effect:
 
-   > `rds.force_ssl` defaults to `1` (on) on RDS for PostgreSQL 15 and later. On major version 14 and earlier the default is `0` (off), so it must be set explicitly. Changing it requires an instance reboot.
+     ```bash
+     aws rds reboot-db-instance --db-instance-identifier <db_identifier>
+     ```
+
+   - **Aurora PostgreSQL** — set in the cluster-level `aws_rds_cluster_parameter_group` (a cluster parameter, so an instance-level group cannot carry it). The parameter is **dynamic** here, so no reboot is needed and `reboot-db-instance` does not apply to a cluster. `terraform apply` is sufficient.
+
+   > Defaults differ by engine, which is why the generated Terraform always sets this explicitly rather than relying on them. **RDS for PostgreSQL:** `rds.force_ssl` defaults to `1` (on) on major version 15 and later; on 14 and earlier the default is `0` (off). **Aurora PostgreSQL:** the default is `0` (**off**) on version 16 and older, and `1` (on) only from version 17 — so on the Aurora version this guide pins, TLS is _not_ enforced by default.
+
+   Either way, do not treat this as done because the code exists — step 4 below is the gate that proves it.
 
 2. **Ship the RDS CA bundle with your Heroku app** so the client can verify the server certificate:
 
