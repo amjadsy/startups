@@ -97,11 +97,7 @@ aws secretsmanager create-secret \
   --region $AWS_REGION
 ```
 
-Then install the Secrets Store CSI driver and AWS provider. Follow the official Helm install instructions in the upstream chart README: <https://github.com/kubernetes-sigs/secrets-store-csi-driver/blob/main/charts/secrets-store-csi-driver/README.md>
-
-```bash
-helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver --namespace kube-system
-```
+Then install the Secrets Store CSI driver and AWS provider by following the official Helm install instructions in the upstream chart README: <https://github.com/kubernetes-sigs/secrets-store-csi-driver/blob/main/charts/secrets-store-csi-driver/README.md>
 
 Create a SecretProviderClass that maps the Secrets Manager secret to a Kubernetes secret:
 
