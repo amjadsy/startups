@@ -14,13 +14,17 @@ in-block literal evidence, so a valid stack is never falsely blocked):
   - rds_not_public: aws_db_instance / aws_rds_cluster must not set
     publicly_accessible = true (fail-open when variable-driven or absent).
   - db_sg_no_public_ingress: an inline aws_security_group ingress covering a
-    database port (5432 / 3306) must not allow 0.0.0.0/0 (fail-open on
-    separate aws_security_group_rule / aws_vpc_security_group_ingress_rule
-    resources, which this static reader cannot correlate).
+    database port (5432 / 3306) must not allow 0.0.0.0/0 (IPv4) or ::/0 (IPv6)
+    (fail-open on separate aws_security_group_rule /
+    aws_vpc_security_group_ingress_rule resources, which this static reader
+    cannot correlate).
   - sg_no_public_admin_ingress: an inline ingress must not open a well-known
     admin/datastore port (SSH, RDP, Redis, Memcached, Mongo, Elasticsearch,
-    Kibana) to 0.0.0.0/0. Scoped to a fixed never-public port list — web ports
-    and app/game ports are not flagged. Same inline-only fail-open scope.
+    Kibana) to 0.0.0.0/0 or ::/0. Scoped to a fixed never-public port list — web
+    ports and app/game ports are not flagged. Same inline-only fail-open scope.
+    Both SG rules read cidr_blocks and ipv6_cidr_blocks independently: an
+    IPv6-only or dual-stack VPC is exposed by ::/0 exactly as IPv4 is by
+    0.0.0.0/0.
   - no_wildcard_iam: a literal IAM policy document with Effect "Allow" must not
     use Action "*" or Resource "*" (fail-open on aws_iam_policy_document data
     sources, whose statements are not visible as literal JSON here).
@@ -40,6 +44,7 @@ Exit 0 on POLICY_OK, 1 on POLICY_FAIL, 2 on usage/IO error.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import re
 import sys
@@ -86,15 +91,19 @@ def _read_tf_files(terraform_dir: Path) -> list[tuple[str, str]]:
 _HEREDOC_OPEN = re.compile(r"<<(-?)\s*([A-Za-z_][A-Za-z0-9_]*)")
 
 
-def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
-    """Scan HCL once, returning per-index (brace depth, is-real-code) arrays.
+def _lex_hcl(block: str) -> tuple[list[int], list[bool], list[bool]]:
+    """Scan HCL once, returning per-index (brace depth, is-real-code, is-comment)
+    arrays.
 
     Only braces that are actual block delimiters count toward depth. HCL permits
     `{` and `}` inside `#` / `//` line comments, `/* */` block comments, quoted
     strings, and heredoc bodies, and those are NOT delimiters — counting them
     would let unrelated text shift the apparent nesting of a real attribute.
     `is_code` additionally lets callers ignore an attribute that only appears
-    commented out.
+    commented out. `is_comment` marks exactly the comment spans (delimiters
+    included, terminating newline excluded), distinguishing them from the other
+    non-code states — a reader that must ignore comments but still read string
+    contents (list entries are quoted strings) needs that distinction.
 
     Interpolations are treated as opaque string content: `{` and `}` inside a
     string are both ignored, so the running depth is unaffected either way. This
@@ -107,6 +116,7 @@ def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
     n = len(block)
     depths = [0] * n
     codes = [False] * n
+    comments = [False] * n
     depth = 0
     state = "code"
     tag = ""
@@ -119,12 +129,13 @@ def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
         nxt = block[i + 1] if i + 1 < n else ""
         if state == "code":
             if ch == "#" or (ch == "/" and nxt == "/"):
-                depths[i], codes[i] = depth, False
+                depths[i], codes[i], comments[i] = depth, False, True
                 state = "line_comment"
                 i += 1
                 continue
             if ch == "/" and nxt == "*":
                 depths[i], depths[i + 1] = depth, depth
+                comments[i], comments[i + 1] = True, True
                 state = "block_comment"
                 i += 2
                 continue
@@ -160,10 +171,14 @@ def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
         if state == "line_comment":
             if ch == "\n":
                 state = "code"
+            else:
+                comments[i] = True
             i += 1
         elif state == "block_comment":
+            comments[i] = True
             if ch == "*" and nxt == "/":
                 depths[i + 1] = depth
+                comments[i + 1] = True
                 state = "code"
                 i += 2
             else:
@@ -198,11 +213,13 @@ def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
             if terminator == tag:
                 state = "code"
             i = line_end
-    return depths, codes
+    return depths, codes, comments
 
 
 def _extract_braced_block(
-    content: str, open_brace: int, lexed: tuple[list[int], list[bool]] | None = None
+    content: str,
+    open_brace: int,
+    lexed: tuple[list[int], list[bool], list[bool]] | None = None,
 ) -> tuple[str, int]:
     """Return (block_text_including_braces, index_after_close).
 
@@ -212,7 +229,7 @@ def _extract_braced_block(
     body cut before `publicly_accessible = true` reports no violation at all. Pass
     `lexed` to reuse a scan already done for this exact `content`.
     """
-    depths, codes = lexed if lexed is not None else _lex_hcl(content)
+    depths, codes, _ = lexed if lexed is not None else _lex_hcl(content)
     if open_brace >= len(codes) or not codes[open_brace]:
         return content[open_brace:], len(content)
     target = depths[open_brace] + 1
@@ -230,7 +247,7 @@ def _extract_blocks(content: str, resource_type: str) -> list[tuple[str, str, in
     as code. A resource declaration that is itself commented out is skipped.
     """
     lexed = _lex_hcl(content)
-    _, codes = lexed
+    _, codes, _ = lexed
     blocks: list[tuple[str, str, int]] = []
     for match in RESOURCE_OPEN.finditer(content):
         if match.group("type") != resource_type:
@@ -251,7 +268,7 @@ def _own_blocks(body: str, block_type: str) -> list[str]:
     Shares the lexer so a commented-out `ingress {` is not treated as a real rule.
     """
     lexed = _lex_hcl(body)
-    _, codes = lexed
+    _, codes, _ = lexed
     found: list[str] = []
     for match in re.finditer(rf"{re.escape(block_type)}\s*\{{", body):
         if not codes[match.start()]:
@@ -301,7 +318,7 @@ def _first_own_attr(block: str, pattern: str, flags: int = 0) -> re.Match[str] |
     lexically-irrelevant braces must not participate.
     """
     base = 1 if block.lstrip().startswith("{") else 0
-    depths, codes = _lex_hcl(block)
+    depths, codes, _ = _lex_hcl(block)
     for match in re.finditer(pattern, block, flags):
         start = match.start()
         if start < len(codes) and codes[start] and depths[start] == base:
@@ -494,7 +511,8 @@ def check_alb_https_policy(terraform_dir: Path) -> list[Violation]:
 
 _DB_PORTS = (5432, 3306)
 
-# Well-known admin / datastore ports that should never be open to 0.0.0.0/0.
+# Well-known admin / datastore ports that should never be open to the whole
+# internet in either address family (0.0.0.0/0 or ::/0).
 # Deliberately EXCLUDES 5432/3306 (covered by db_sg_no_public_ingress, so no
 # double-reporting) and web ports 80/443 (legitimately public). Kept tight to
 # unambiguous "never public" ports so valid designs (e.g. game servers on high
@@ -556,16 +574,80 @@ def _ingress_covers_db_port(ingress_body: str) -> bool:
     return bool(_ingress_covered_ports(ingress_body, _DB_PORTS))
 
 
-def _ingress_allows_public(ingress_body: str) -> bool:
-    # Match a cidr_blocks list literal and look for 0.0.0.0/0 inside it.
-    m = re.search(r"cidr_blocks\s*=\s*\[(.*?)\]", ingress_body, re.DOTALL)
-    if not m:
+def _strip_hcl_comments(text: str) -> str:
+    """Blank out comment spans, using the lexer's classification of them.
+
+    This must share _lex_hcl's single definition of "what counts as code" rather
+    than keep a parallel comment regex: a regex cannot know that a `/*` inside a
+    quoted string does not open a comment, and stripping from such a false opener
+    swallows every real attribute up to the next `*/` — including a live
+    `cidr_blocks = ["0.0.0.0/0"]`, which then reports POLICY_OK. Comment
+    characters are replaced with spaces rather than deleted, so surviving tokens
+    never fuse and line anchors keep working.
+    """
+    _, _, comments = _lex_hcl(text)
+    return "".join(" " if comments[i] else ch for i, ch in enumerate(text))
+
+
+def _attr_list_inner(block: str, attr: str) -> str | None:
+    """Return the raw text inside a literal `attr = [ ... ]`, else None.
+
+    The name must start a line OR directly follow a `{`. The line-start arm keeps
+    `cidr_blocks` from matching the tail of `ipv6_cidr_blocks` (reading one list
+    while believing it is the other silently inverts the verdict); the brace arm
+    keeps an attribute that shares its block's opening line visible, e.g.
+    `ingress { cidr_blocks = [...]`, which is valid HCL that a line-anchored
+    pattern alone would miss.
+    """
+    m = re.search(
+        rf"(?:^|\{{)\s*{re.escape(attr)}\s*=\s*\[(.*?)\]",
+        block,
+        re.DOTALL | re.MULTILINE,
+    )
+    return m.group(1) if m else None
+
+
+def _is_entire_internet(cidr: str) -> bool:
+    """True if `cidr` is a literal range covering the whole address space.
+
+    Canonicalises through `ipaddress` instead of comparing text, because IPv6 has
+    many legal spellings of the zero address (`::/0`, `::0/0`, `0:0:0:0:0:0:0:0/0`)
+    and nothing in Terraform normalises them — `terraform fmt` treats a CIDR as an
+    opaque string. Anything that is not a parseable literal (`var.x`, `${...}`,
+    malformed text) returns False, preserving the module's fail-open posture.
+    """
+    try:
+        return ipaddress.ip_network(cidr, strict=False).prefixlen == 0
+    except ValueError:
         return False
-    return "0.0.0.0/0" in m.group(1)
+
+
+def _ingress_public_cidrs(ingress_body: str) -> list[str]:
+    """Return the "entire internet" CIDRs this ingress rule allows, both families.
+
+    IPv4 `0.0.0.0/0` and IPv6 `::/0` are equally public: on a dual-stack or
+    IPv6-only VPC, `::/0` on an admin port is a live exposure. Each family is read
+    under its own attribute name so the two are never confused, comments are
+    stripped first (by the shared lexer, so a comment marker inside a quoted
+    string is not a comment), and only quoted string literals count as list
+    entries — so a range mentioned in a comment inside the list is not an allowed
+    range. Values are returned as spelled in the file, so the violation names
+    what is written. Empty list => no unambiguous public exposure.
+    """
+    body = _strip_hcl_comments(ingress_body)
+    found: list[str] = []
+    for attr in ("cidr_blocks", "ipv6_cidr_blocks"):
+        inner = _attr_list_inner(body, attr)
+        if inner is None:
+            continue
+        for cidr in re.findall(r'"([^"]*)"', inner):
+            if _is_entire_internet(cidr) and cidr not in found:
+                found.append(cidr)
+    return found
 
 
 def check_db_sg_no_public_ingress(tf_files: list[tuple[str, str]]) -> list[Violation]:
-    """Flag inline security-group ingress that opens a DB port to 0.0.0.0/0.
+    """Flag inline security-group ingress that opens a DB port to 0.0.0.0/0 or ::/0.
 
     Fail-open: only INLINE `ingress { ... }` blocks inside aws_security_group are
     inspected. Separate aws_security_group_rule / aws_vpc_security_group_ingress_rule
@@ -577,7 +659,8 @@ def check_db_sg_no_public_ingress(tf_files: list[tuple[str, str]]) -> list[Viola
         for name, body, line in _extract_blocks(content, "aws_security_group"):
             # Walk each inline ingress block via brace matching.
             for ingress_body in _own_blocks(body, "ingress"):
-                if _ingress_covers_db_port(ingress_body) and _ingress_allows_public(ingress_body):
+                public = _ingress_public_cidrs(ingress_body)
+                if _ingress_covers_db_port(ingress_body) and public:
                     violations.append(
                         Violation(
                             check="policy",
@@ -587,12 +670,12 @@ def check_db_sg_no_public_ingress(tf_files: list[tuple[str, str]]) -> list[Viola
                             severity="error",
                             summary=(
                                 f"aws_security_group '{name}' has an ingress rule that opens a "
-                                "database port (5432/3306) to 0.0.0.0/0"
+                                f"database port (5432/3306) to {' and '.join(public)}"
                             ),
                             fix_hint=(
                                 "Restrict the ingress to the application security group "
                                 "(security_groups = [aws_security_group.app.id]) or a private "
-                                "CIDR — never 0.0.0.0/0 for a database port"
+                                "CIDR — never 0.0.0.0/0 or ::/0 for a database port"
                             ),
                         )
                     )
@@ -601,7 +684,8 @@ def check_db_sg_no_public_ingress(tf_files: list[tuple[str, str]]) -> list[Viola
 
 def check_sg_no_public_admin_ingress(tf_files: list[tuple[str, str]]) -> list[Violation]:
     """Flag inline security-group ingress that opens a well-known admin/datastore
-    port (SSH, RDP, Redis, Memcached, Mongo, Elasticsearch, Kibana) to 0.0.0.0/0.
+    port (SSH, RDP, Redis, Memcached, Mongo, Elasticsearch, Kibana) to 0.0.0.0/0
+    or ::/0.
 
     Deliberately scoped to a fixed list of ports that are ~never legitimately
     public — NOT "any public ingress" — so valid public workloads (web on
@@ -622,7 +706,8 @@ def check_sg_no_public_admin_ingress(tf_files: list[tuple[str, str]]) -> list[Vi
     for rel_path, content in tf_files:
         for name, body, line in _extract_blocks(content, "aws_security_group"):
             for ingress_body in _own_blocks(body, "ingress"):
-                if not _ingress_allows_public(ingress_body):
+                public = _ingress_public_cidrs(ingress_body)
+                if not public:
                     continue
                 hit = _ingress_covered_ports(ingress_body, _SENSITIVE_NONDB_PORTS)
                 if not hit:
@@ -637,7 +722,7 @@ def check_sg_no_public_admin_ingress(tf_files: list[tuple[str, str]]) -> list[Vi
                         severity="error",
                         summary=(
                             f"aws_security_group '{name}' opens sensitive port(s) {labels} "
-                            "to 0.0.0.0/0"
+                            f"to {' and '.join(public)}"
                         ),
                         fix_hint=(
                             "Restrict this ingress to a bastion/app security group or a private "
