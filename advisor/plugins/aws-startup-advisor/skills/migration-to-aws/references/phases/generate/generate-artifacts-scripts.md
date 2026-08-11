@@ -29,7 +29,8 @@ Set boolean flags for downstream script generation:
 
 - **has_databases**: true if ANY resource has `aws_service` containing "RDS", "Aurora", "DynamoDB",
   "ElastiCache", "Redshift" OR `gcp_type` starting with `google_sql_`, `google_firestore_`,
-  `google_bigtable_`, `google_bigquery_`, `google_redis_`
+  `google_bigtable_`, `google_redis_` (NOT `google_bigquery_` — BigQuery is specialist-deferred
+  and carries no automated data-migration steps; see `has_bigquery`)
 - **has_bigquery**: true if ANY resource has `gcp_type` starting with `google_bigquery_`
   OR `aws_service` = "Deferred — specialist engagement"
 - **has_storage**: true if ANY resource has `aws_service` = "S3" OR `gcp_type` = `google_storage_bucket`
