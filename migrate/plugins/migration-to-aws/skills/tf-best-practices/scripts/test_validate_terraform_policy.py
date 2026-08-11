@@ -377,6 +377,24 @@ def test_commented_out_cidr_attribute_is_not_read() -> None:
     assert code == 0, f"commented-out cidr_blocks must not fire: {out}"
 
 
+def test_comment_marker_inside_string_does_not_swallow_real_cidr() -> None:
+    """False negative: comment stripping must share the lexer, not re-scan with a
+    regex. A regex sees the `/*` inside the description STRING as a comment
+    opener and deletes everything up to the `*/` in the later line comment —
+    including the live `cidr_blocks = ["0.0.0.0/0"]` between them, reporting a
+    public SSH ingress as POLICY_OK. The lexer knows string interiors are not
+    comment openers, so the public range survives stripping and fires.
+    """
+    body = _sg_fixture(
+        'description = "temp /* migration window"\n'
+        '    cidr_blocks = ["0.0.0.0/0"]\n'
+        "    # closes */ in runbook"
+    )
+    code, out = _verdict(body)
+    assert code == 1, f"0.0.0.0/0 after a string containing /* must still fire: {out}"
+    assert "22 (SSH)" in out, out
+
+
 def test_elasticache_unencrypted_fails() -> None:
     code, out = run_policy_validator(BAD_ELASTICACHE_UNENCRYPTED)
     assert code == 1, out

@@ -91,15 +91,19 @@ def _read_tf_files(terraform_dir: Path) -> list[tuple[str, str]]:
 _HEREDOC_OPEN = re.compile(r"<<(-?)\s*([A-Za-z_][A-Za-z0-9_]*)")
 
 
-def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
-    """Scan HCL once, returning per-index (brace depth, is-real-code) arrays.
+def _lex_hcl(block: str) -> tuple[list[int], list[bool], list[bool]]:
+    """Scan HCL once, returning per-index (brace depth, is-real-code, is-comment)
+    arrays.
 
     Only braces that are actual block delimiters count toward depth. HCL permits
     `{` and `}` inside `#` / `//` line comments, `/* */` block comments, quoted
     strings, and heredoc bodies, and those are NOT delimiters — counting them
     would let unrelated text shift the apparent nesting of a real attribute.
     `is_code` additionally lets callers ignore an attribute that only appears
-    commented out.
+    commented out. `is_comment` marks exactly the comment spans (delimiters
+    included, terminating newline excluded), distinguishing them from the other
+    non-code states — a reader that must ignore comments but still read string
+    contents (list entries are quoted strings) needs that distinction.
 
     Interpolations are treated as opaque string content: `{` and `}` inside a
     string are both ignored, so the running depth is unaffected either way. This
@@ -112,6 +116,7 @@ def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
     n = len(block)
     depths = [0] * n
     codes = [False] * n
+    comments = [False] * n
     depth = 0
     state = "code"
     tag = ""
@@ -124,12 +129,13 @@ def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
         nxt = block[i + 1] if i + 1 < n else ""
         if state == "code":
             if ch == "#" or (ch == "/" and nxt == "/"):
-                depths[i], codes[i] = depth, False
+                depths[i], codes[i], comments[i] = depth, False, True
                 state = "line_comment"
                 i += 1
                 continue
             if ch == "/" and nxt == "*":
                 depths[i], depths[i + 1] = depth, depth
+                comments[i], comments[i + 1] = True, True
                 state = "block_comment"
                 i += 2
                 continue
@@ -165,10 +171,14 @@ def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
         if state == "line_comment":
             if ch == "\n":
                 state = "code"
+            else:
+                comments[i] = True
             i += 1
         elif state == "block_comment":
+            comments[i] = True
             if ch == "*" and nxt == "/":
                 depths[i + 1] = depth
+                comments[i + 1] = True
                 state = "code"
                 i += 2
             else:
@@ -203,11 +213,13 @@ def _lex_hcl(block: str) -> tuple[list[int], list[bool]]:
             if terminator == tag:
                 state = "code"
             i = line_end
-    return depths, codes
+    return depths, codes, comments
 
 
 def _extract_braced_block(
-    content: str, open_brace: int, lexed: tuple[list[int], list[bool]] | None = None
+    content: str,
+    open_brace: int,
+    lexed: tuple[list[int], list[bool], list[bool]] | None = None,
 ) -> tuple[str, int]:
     """Return (block_text_including_braces, index_after_close).
 
@@ -217,7 +229,7 @@ def _extract_braced_block(
     body cut before `publicly_accessible = true` reports no violation at all. Pass
     `lexed` to reuse a scan already done for this exact `content`.
     """
-    depths, codes = lexed if lexed is not None else _lex_hcl(content)
+    depths, codes, _ = lexed if lexed is not None else _lex_hcl(content)
     if open_brace >= len(codes) or not codes[open_brace]:
         return content[open_brace:], len(content)
     target = depths[open_brace] + 1
@@ -235,7 +247,7 @@ def _extract_blocks(content: str, resource_type: str) -> list[tuple[str, str, in
     as code. A resource declaration that is itself commented out is skipped.
     """
     lexed = _lex_hcl(content)
-    _, codes = lexed
+    _, codes, _ = lexed
     blocks: list[tuple[str, str, int]] = []
     for match in RESOURCE_OPEN.finditer(content):
         if match.group("type") != resource_type:
@@ -256,7 +268,7 @@ def _own_blocks(body: str, block_type: str) -> list[str]:
     Shares the lexer so a commented-out `ingress {` is not treated as a real rule.
     """
     lexed = _lex_hcl(body)
-    _, codes = lexed
+    _, codes, _ = lexed
     found: list[str] = []
     for match in re.finditer(rf"{re.escape(block_type)}\s*\{{", body):
         if not codes[match.start()]:
@@ -306,7 +318,7 @@ def _first_own_attr(block: str, pattern: str, flags: int = 0) -> re.Match[str] |
     lexically-irrelevant braces must not participate.
     """
     base = 1 if block.lstrip().startswith("{") else 0
-    depths, codes = _lex_hcl(block)
+    depths, codes, _ = _lex_hcl(block)
     for match in re.finditer(pattern, block, flags):
         start = match.start()
         if start < len(codes) and codes[start] and depths[start] == base:
@@ -562,10 +574,19 @@ def _ingress_covers_db_port(ingress_body: str) -> bool:
     return bool(_ingress_covered_ports(ingress_body, _DB_PORTS))
 
 
-# HCL comments: `#` / `//` to end of line, and `/* ... */` spans. Removed before
-# reading CIDR lists so that a range named only in a comment is never treated as
-# an allowed range (and a commented-out attribute is never read as set).
-_HCL_COMMENT = re.compile(r"(?:#|//)[^\n]*|/\*.*?\*/", re.DOTALL)
+def _strip_hcl_comments(text: str) -> str:
+    """Blank out comment spans, using the lexer's classification of them.
+
+    This must share _lex_hcl's single definition of "what counts as code" rather
+    than keep a parallel comment regex: a regex cannot know that a `/*` inside a
+    quoted string does not open a comment, and stripping from such a false opener
+    swallows every real attribute up to the next `*/` — including a live
+    `cidr_blocks = ["0.0.0.0/0"]`, which then reports POLICY_OK. Comment
+    characters are replaced with spaces rather than deleted, so surviving tokens
+    never fuse and line anchors keep working.
+    """
+    _, _, comments = _lex_hcl(text)
+    return "".join(" " if comments[i] else ch for i, ch in enumerate(text))
 
 
 def _attr_list_inner(block: str, attr: str) -> str | None:
@@ -607,12 +628,13 @@ def _ingress_public_cidrs(ingress_body: str) -> list[str]:
     IPv4 `0.0.0.0/0` and IPv6 `::/0` are equally public: on a dual-stack or
     IPv6-only VPC, `::/0` on an admin port is a live exposure. Each family is read
     under its own attribute name so the two are never confused, comments are
-    stripped first, and only quoted string literals count as list entries — so a
-    range mentioned in a comment inside the list is not an allowed range. Values
-    are returned as spelled in the file, so the violation names what is written.
-    Empty list => no unambiguous public exposure.
+    stripped first (by the shared lexer, so a comment marker inside a quoted
+    string is not a comment), and only quoted string literals count as list
+    entries — so a range mentioned in a comment inside the list is not an allowed
+    range. Values are returned as spelled in the file, so the violation names
+    what is written. Empty list => no unambiguous public exposure.
     """
-    body = _HCL_COMMENT.sub("", ingress_body)
+    body = _strip_hcl_comments(ingress_body)
     found: list[str] = []
     for attr in ("cidr_blocks", "ipv6_cidr_blocks"):
         inner = _attr_list_inner(body, attr)
