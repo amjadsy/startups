@@ -32,7 +32,7 @@ When the user asks for a prompt:
 3. Surface the prompt to the user as a _reference from the AWS Startups Prompt Library_, then offer them three paths:
 
    _"Here's the AWS Startups reference prompt for `<task>`. I can:_
-   _- **execute it as-is** against your setup,_
+   _- **run it** against your setup (I'll show you each command before executing),_
    _- **adapt it** to your specific requirements (different region, services, language, etc.), or_
    _- you can **copy it** as a starting point._
 
