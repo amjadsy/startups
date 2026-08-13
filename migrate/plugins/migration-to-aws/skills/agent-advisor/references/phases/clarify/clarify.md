@@ -312,29 +312,15 @@ function; this loop is the only multiplicity). By the scope gate above at least 
 guaranteed, so `units{}` is never empty and there is always a scored primary to mirror:
 
 ```bash
-# scoring.py is imported as a module, so put its dir on PYTHONPATH (it is not on sys.path from
-# the run directory). Everything the loop needs is in answers.json (ALWAYS present): each unit
-# carries its own workload_class (persisted in Step 4) and entry_point is at the top level. This
-# reads NO other file, so it works on runs that skipped Discover (no context-signals.json).
+# score_units.py loops the agent_session units, calling scoring.py (a pure function) once per
+# unit, and mirrors the primary unit's result at the top level (what single-unit consumers and
+# the legacy scoring-result.verdict read). Everything the loop needs is in answers.json (ALWAYS
+# present): each unit carries its own workload_class (persisted in Step 4) and entry_point is at
+# the top level. It reads NO other file, so it works on runs that skipped Discover (no
+# context-signals.json). Do NOT inline this logic as an ad-hoc interpreter one-liner — instructions must only run
+# committed scripts, with paths passed as arguments.
 SCRIPTS="${CLAUDE_PLUGIN_ROOT}/skills/agent-advisor/scripts"
-PYTHONPATH="$SCRIPTS" uv run python -c "
-import json, scoring
-a = json.load(open('$RUN_DIR/answers.json'))
-ep = a.get('entry_point', 'build_scratch')
-units = {
-    u: scoring.score({'entry_point': ep, 'answers': {**a['system'], **{k: v for k, v in info.items() if k not in ('workload_class', 'provenance')}}})
-    for u, info in a['units'].items()
-    if info.get('workload_class') == 'agent_session'
-}
-out = {'units': units}
-# Collapse mirror: copy the primary agent unit's result to the top level so single-unit
-# consumers that read scoring-result.verdict keep working (backward compat). The scope gate
-# guarantees >=1 agent_session unit, so `units` is non-empty and a mirror always exists.
-primary = a.get('primary_unit')
-mirror = units.get(primary) or next(iter(units.values()))
-out.update(mirror)
-print(json.dumps(out, indent=2))
-" > $RUN_DIR/scoring-result.json
+uv run "$SCRIPTS/score_units.py" "$RUN_DIR/answers.json" > $RUN_DIR/scoring-result.json
 ```
 
 (Once per agent unit, merging system + unit answers — excluding the `workload_class`/`provenance`
