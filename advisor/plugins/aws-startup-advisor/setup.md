@@ -2,9 +2,26 @@
 
 You are an AI coding agent. Follow these instructions exactly.
 
-## Step 1: Check for Node.js
+## Step 1: Detect your environment
+
+Determine which agent you are running as:
+
+- If you are **Claude Code** (you have access to the `/plugin` command), go to **Step 2A**.
+- If you are **any other agent** (Kiro, Cursor, Codex, Copilot, etc.), go to **Step 2B**.
+
+## Step 2A: Install via Claude Code plugin (preferred)
 
 Run:
+
+```bash
+/plugin install aws-startup-advisor@claude-plugins-official
+```
+
+This installs AWS Startup Advisor as a registered Claude Code plugin. Skip to **Step 3** to confirm success.
+
+## Step 2B: Install via npx (non-Claude agents)
+
+Check for Node.js:
 
 ```bash
 node -v
@@ -15,8 +32,6 @@ If this fails with "command not found", tell the user:
 > "Node.js is required but not installed. Download it from https://nodejs.org (LTS recommended), install it, then ask me to try again."
 
 Stop here until Node.js is available. Do not proceed without it.
-
-## Step 2: Install the skills
 
 Run:
 
