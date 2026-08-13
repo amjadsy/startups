@@ -138,7 +138,7 @@ estimate artifact(s), present a brief summary, then **return to the workshop
 loop**. Do **not** emit `HANDOFF_OK`, do **not** update `.phase-status.json`, do
 **not** offer the what-if workshop below.
 
-### Outer Estimate — Decision gate (replaces auto-advance to Generate)
+### Outer Estimate — Decision gate
 
 After outer-run `HANDOFF_OK`, use the Phase Status Update Protocol
 (read-merge-write) — **in the same turn** as the summary:
