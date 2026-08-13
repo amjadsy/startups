@@ -1,5 +1,11 @@
 # Volatile Facts & Freshness
 
+**Outbound-query rule (applies to every channel below — MCP, WebFetch, or CLI):**
+freshness lookups carry ONLY public service, feature, model, or region names (e.g.
+"AgentCore session cap", "Lambda MicroVMs launch TPS"). Never include user code,
+file contents, prompts, architecture details, or anything else from the workspace
+or the run directory in an outbound request — the answer never depends on it.
+
 ## Fields to verify at runtime via the awsknowledge MCP
 
 - AgentCore session cap (currently "8h, extending")
@@ -55,10 +61,11 @@ feature-status lookup):**
 - **Feature statuses** (Serverless Workers, Workflow Streams, External Payload Storage,
   Worker Versioning) — **preferred:** query the Temporal KB MCP (above). **Fallback:**
   fetch the relevant docs.temporal.io page. CAUTION for Serverless Workers regardless of
-  channel: the docs label has shown "Available" while the feature was pre-release
-  (user-verified 2026-07); a docs label — or an MCP answer echoing it — alone does NOT
-  upgrade it to GA — keep the pre-release label until the user shows GA evidence (e.g. a
-  GA announcement post).
+  channel: the docs label has moved before without a GA announcement (it read "Available"
+  in 2026-07 while the feature was still pre-release; it reads "Public Preview" as of
+  2026-08) — a docs label — or an MCP answer echoing it — alone does NOT upgrade it to
+  GA — keep the Public Preview label until the user shows GA evidence (e.g. a GA
+  announcement post).
 
 **Not verifiable (always cached):**
 
@@ -97,3 +104,7 @@ Choose the wording that matches what actually happened:
 - If the MCP was not called / unavailable:
   > _Generated `<DATE>`. AWS Knowledge MCP not called this run; all facts are cached values —
   > verify against AWS docs before committing._
+
+The footer is a summary, not the only place a date belongs. A cached number quoted in the body —
+a service limit, a scaling ceiling, a price anchor — carries its own snapshot date at the point of
+use, so a reader who reads one section is not relying on a footer they may never reach.
