@@ -77,3 +77,52 @@ def test_cli_no_key_exits_2_without_network():
         )
     assert proc.returncode == 2
     assert json.loads(proc.stdout) == {"status": "no_key"}
+
+
+def test_provider_selected_from_file_not_ambient_env(tmp_path, monkeypatch):
+    # Review finding: an ambient OPENAI_API_KEY must not select OpenAI when
+    # the migration's env file carries a GEMINI_API_KEY — the model ID would
+    # go to the wrong provider's API.
+    import resolve_source_model as rsm
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-ambient")
+    p = tmp_path / ".source-provider-env"
+    p.write_text("GEMINI_API_KEY=AIza-file\n", encoding="utf-8")
+    pairs = rsm.load_env_file(str(p))
+    assert rsm.pick_provider(pairs) == "GEMINI_API_KEY"
+
+
+def test_anthropic_pagination_follows_has_more(monkeypatch):
+    import resolve_source_model as rsm
+    calls = []
+
+    def fake_get(url, headers):
+        calls.append(url)
+        if "after_id" not in url:
+            return {"data": [{"id": "claude-3-5-haiku-20241022"}],
+                    "has_more": True, "last_id": "claude-3-5-haiku-20241022"}
+        return {"data": [{"id": "claude-3-5-sonnet-20241022"}], "has_more": False}
+
+    monkeypatch.setattr(rsm, "_get_json", fake_get)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant")
+    ids = rsm.list_anthropic()
+    assert len(calls) == 2 and "after_id=claude-3-5-haiku-20241022" in calls[1]
+    # A page-2 model must resolve, not report not_found.
+    assert rsm.resolve(ids, "claude-3-5-sonnet")["status"] == "prefix"
+
+
+def test_gemini_pagination_follows_next_page_token(monkeypatch):
+    import resolve_source_model as rsm
+    calls = []
+
+    def fake_get(url, headers):
+        calls.append(url)
+        if "pageToken" not in url:
+            return {"models": [{"name": "models/gemini-1.5-flash"}],
+                    "nextPageToken": "tok2"}
+        return {"models": [{"name": "models/gemini-1.5-pro"}]}
+
+    monkeypatch.setattr(rsm, "_get_json", fake_get)
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza")
+    ids = rsm.list_gemini()
+    assert len(calls) == 2 and "pageToken=tok2" in calls[1]
+    assert "gemini-1.5-pro" in ids

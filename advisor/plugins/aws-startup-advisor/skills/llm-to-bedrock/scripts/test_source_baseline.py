@@ -70,3 +70,52 @@ def test_env_file_loader_ignores_blank_and_malformed_lines(tmp_path: pathlib.Pat
     os.environ.pop("OPENAI_API_KEY", None)
     sb.load_env_file(str(p))
     assert os.environ["OPENAI_API_KEY"] == "sk-live"
+
+
+def test_provider_selected_from_file_not_ambient_env(tmp_path):
+    # Review finding: file is authoritative; ambient keys must not win.
+    _with_keys(OPENAI_API_KEY="sk-ambient")
+    p = tmp_path / ".source-provider-env"
+    p.write_text("GEMINI_API_KEY=AIza-file\n", encoding="utf-8")
+    pairs = sb.load_env_file(str(p))
+    provider = next(k for k in sb.PROVIDERS if k in pairs)
+    assert provider == "GEMINI_API_KEY"
+
+
+def _http_error(code, reason, body: bytes):
+    import io
+    import urllib.error
+    return urllib.error.HTTPError(
+        "https://api.openai.com/v1/chat/completions", code, reason,
+        hdrs=None, fp=io.BytesIO(body),
+    )
+
+
+def test_error_detail_extracts_message_and_param():
+    # Review finding: the evaluator contract needs the 400 body's
+    # message/param — reason alone is just "Bad Request".
+    e = _http_error(400, "Bad Request", b'{"error": {"message": "Unsupported parameter: max_tokens", "param": "max_tokens", "type": "invalid_request_error"}}')
+    assert sb.error_detail(e) == "Unsupported parameter: max_tokens (param: max_tokens)"
+
+
+def test_error_detail_handles_non_json_and_is_bounded():
+    e = _http_error(502, "Bad Gateway", b"<html>upstream error</html>" * 200)
+    d = sb.error_detail(e)
+    assert d.startswith("<html>upstream error")
+    assert len(d) <= 200
+
+
+def test_error_detail_never_raises_on_unreadable_body():
+    import urllib.error
+    e = urllib.error.HTTPError("https://api.openai.com/x", 400, "Bad Request", None, None)
+    assert sb.error_detail(e) == ""
+
+
+def test_status_line_keeps_contract_prefix():
+    # Step-3 classification greps on the "http_<code>" prefix — the appended
+    # detail must not break it.
+    e = _http_error(401, "Unauthorized", b'{"error": {"message": "Incorrect API key provided"}}')
+    detail = sb.error_detail(e)
+    status = f"http_{e.code}: {e.reason}" + (f" — {detail}" if detail else "")
+    assert status.startswith("http_401: Unauthorized")
+    assert "Incorrect API key provided" in status

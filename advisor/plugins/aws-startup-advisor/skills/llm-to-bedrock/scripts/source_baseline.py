@@ -35,13 +35,20 @@ import urllib.request
 MAX_TOKENS = 4096
 
 
-def load_env_file(path: str) -> None:
+def load_env_file(path: str) -> dict[str, str]:
+    """Parse the env file and return ITS pairs. The file is authoritative for
+    provider selection — an ambient OPENAI_API_KEY must not select OpenAI when
+    the migration's file carries a GEMINI_API_KEY. Parsed pairs are also
+    exported so the request builders read the file's values."""
+    pairs: dict[str, str] = {}
     with open(path) as f:
         for line in f:
             line = line.strip()
             if line and "=" in line:
                 k, v = line.split("=", 1)
+                pairs[k] = v
                 os.environ[k] = v
+    return pairs
 
 
 def build_openai_request(model: str, system: str, user_text: str) -> tuple[str, dict, dict]:
@@ -112,6 +119,31 @@ PROVIDERS = {
 }
 
 
+ERROR_BODY_CAP = 2048
+
+
+def error_detail(e: urllib.error.HTTPError) -> str:
+    """Bounded, credential-free extract of the provider's error body.
+
+    The evaluator contract needs the HTTP 400 body's message/param to tell a
+    request-shape bug from a quota or auth problem — reason alone is usually
+    just "Bad Request" and the body is irrecoverable after this process exits.
+    """
+    try:
+        raw = e.read(ERROR_BODY_CAP).decode("utf-8", "replace")
+    except Exception:
+        return ""
+    try:
+        err = json.loads(raw).get("error", {})
+        if isinstance(err, dict):
+            msg = err.get("message", "")
+            param = err.get("param")
+            return f"{msg} (param: {param})" if param else msg
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    return raw[:200]
+
+
 def _send(url: str, headers: dict, body: dict) -> dict:
     req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), headers=headers)
     with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310 — fixed https hosts
@@ -122,7 +154,7 @@ def main() -> int:
     if len(sys.argv) != 2:
         print(__doc__.strip().splitlines()[2].strip(), file=sys.stderr)
         return 2
-    load_env_file(sys.argv[1])
+    file_pairs = load_env_file(sys.argv[1])
 
     try:
         model = os.environ["SOURCE_MODEL_ID"]
@@ -132,7 +164,8 @@ def main() -> int:
         print(f"FAIL: required env var {e} not set", file=sys.stderr)
         return 2
 
-    provider = next((k for k in PROVIDERS if k in os.environ), None)
+    # Select from the FILE's keys only — never the ambient environment.
+    provider = next((k for k in PROVIDERS if k in file_pairs), None)
     if provider is None:
         print("FAIL: no recognized provider key in the env file", file=sys.stderr)
         return 2
@@ -161,9 +194,9 @@ def main() -> int:
             out = extract(_send(url, headers, body))
             results.append({"id": p["id"], "source_response": out, "status": "live"})
         except urllib.error.HTTPError as e:
-            results.append(
-                {"id": p["id"], "source_response": "", "status": f"http_{e.code}: {e.reason}"}
-            )
+            detail = error_detail(e)
+            status = f"http_{e.code}: {e.reason}" + (f" — {detail}" if detail else "")
+            results.append({"id": p["id"], "source_response": "", "status": status})
         except Exception as e:  # noqa: BLE001 — every row must land in the JSONL
             results.append(
                 {"id": p["id"], "source_response": "", "status": f"error: {type(e).__name__}: {e}"}
