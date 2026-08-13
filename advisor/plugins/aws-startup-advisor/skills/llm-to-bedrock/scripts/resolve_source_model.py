@@ -52,8 +52,25 @@ def load_env_file(path: str) -> dict[str, str]:
     return pairs
 
 
+PROVIDER_TO_KEY = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "google": "GEMINI_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+}
+
+
 def pick_provider(file_pairs: dict[str, str]) -> str | None:
-    """Select the provider from the FILE's keys only, never the ambient env."""
+    """Select the provider key name. SOURCE_PROVIDER (the helper's declared
+    input) is authoritative when set — a file carrying several provider keys
+    must not fall back to tuple-order guessing. Without it, fall back to the
+    first recognized key IN THE FILE (never the ambient environment)."""
+    stated = os.environ.get("SOURCE_PROVIDER", "").lower()
+    if stated:
+        key = PROVIDER_TO_KEY.get(stated)
+        if key is None or key not in file_pairs:
+            return None
+        return key
     return next((k for k in PROVIDER_KEYS if k in file_pairs), None)
 
 

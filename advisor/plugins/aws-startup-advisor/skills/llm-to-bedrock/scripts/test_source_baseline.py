@@ -114,8 +114,61 @@ def test_error_detail_never_raises_on_unreadable_body():
 def test_status_line_keeps_contract_prefix():
     # Step-3 classification greps on the "http_<code>" prefix — the appended
     # detail must not break it.
-    e = _http_error(401, "Unauthorized", b'{"error": {"message": "Incorrect API key provided"}}')
+    e = _http_error(400, "Bad Request", b'{"error": {"message": "Unsupported parameter"}}')
     detail = sb.error_detail(e)
     status = f"http_{e.code}: {e.reason}" + (f" — {detail}" if detail else "")
-    assert status.startswith("http_401: Unauthorized")
-    assert "Incorrect API key provided" in status
+    assert status.startswith("http_400: Bad Request")
+    assert "Unsupported parameter" in status
+
+
+def test_auth_error_bodies_are_suppressed_entirely():
+    # Review finding: an auth endpoint can echo the submitted credential in
+    # its body, and 401/403 classification uses the code alone — so auth
+    # bodies carry no detail at all.
+    for code, reason in ((401, "Unauthorized"), (403, "Forbidden")):
+        e = _http_error(code, reason, b'{"error": {"message": "bad key sk-live-SECRETKEY123"}}')
+        assert sb.error_detail(e, ["sk-live-SECRETKEY123"]) == ""
+        status = f"http_{e.code}: {e.reason}"
+        assert "SECRETKEY123" not in status
+
+
+def test_echoed_key_never_reaches_detail_or_status():
+    # Review repro: FULL_SECRET_IN_DETAIL must be impossible. A 400 body that
+    # echoes the key (JSON path) and a non-JSON fallback that echoes it are
+    # both redacted inside error_detail itself.
+    secrets = ["sk-live-SECRETKEY123"]
+    e = _http_error(400, "Bad Request", b'{"error": {"message": "invalid key sk-live-SECRETKEY123 for model"}}')
+    d = sb.error_detail(e, secrets)
+    assert "SECRETKEY123" not in d and "***" in d
+    e2 = _http_error(500, "Server Error", b"upstream said: sk-live-SECRETKEY123 rejected")
+    d2 = sb.error_detail(e2, secrets)
+    assert "SECRETKEY123" not in d2 and "***" in d2
+
+
+def test_redact_strips_key_from_exception_status():
+    # Review finding: http.client rejects an invalid header with the FULL
+    # header value in the ValueError message — 'Bearer sk-live-KEY' would land
+    # in the status JSONL, breaking the never-in-output promise.
+    msg = "error: ValueError: Invalid header value b'Bearer sk-live-SECRET123\\rX'"
+    assert "SECRET123" not in sb.redact(msg, ["sk-live-SECRET123"])
+    assert "***" in sb.redact(msg, ["sk-live-SECRET123"])
+
+
+def test_redact_tolerates_empty_secrets():
+    assert sb.redact("error: boom", ["", None]) == "error: boom"
+
+
+def test_source_provider_env_is_authoritative(tmp_path, monkeypatch):
+    # Review finding: a file carrying several provider keys must not fall back
+    # to dict-order guessing (OpenAI-first) — SOURCE_PROVIDER, the helper's
+    # declared input, decides.
+    pairs = {"OPENAI_API_KEY": "a", "ANTHROPIC_API_KEY": "b"}
+    monkeypatch.setenv("SOURCE_PROVIDER", "anthropic")
+    assert sb.pick_provider_key(pairs) == "ANTHROPIC_API_KEY"
+    monkeypatch.setenv("SOURCE_PROVIDER", "openai")
+    assert sb.pick_provider_key(pairs) == "OPENAI_API_KEY"
+    # stated provider whose key is NOT in the file → hard None, never a guess
+    monkeypatch.setenv("SOURCE_PROVIDER", "google")
+    assert sb.pick_provider_key(pairs) is None
+    monkeypatch.delenv("SOURCE_PROVIDER")
+    assert sb.pick_provider_key(pairs) == "OPENAI_API_KEY"

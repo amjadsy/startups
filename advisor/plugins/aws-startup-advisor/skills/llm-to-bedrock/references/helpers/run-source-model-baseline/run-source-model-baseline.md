@@ -104,9 +104,14 @@ behavior contract, unit-locked in `test_resolve_source_model.py`.
 Run it, passing the plan model id via env and the env-file path as the argument:
 
 ```bash
-PLAN_MODEL_ID=<source_model_id> \
+SOURCE_PROVIDER=<source_provider> \
+  PLAN_MODEL_ID=<source_model_id> \
   uv run --project <scriptsDir> python <scriptsDir>/resolve_source_model.py <REPO>/.saws-migrate/.source-provider-env
 ```
+
+`SOURCE_PROVIDER` (this skill's declared input) is authoritative for provider selection —
+if the env file carries several provider keys, the stated provider's key is used and a
+missing key is a hard `no_key`, never a guess.
 
 Interpret the JSON output:
 
@@ -137,7 +142,8 @@ Pass `SOURCE_MODEL_ID`, `GOLDEN_DATASET_PATH`, `OUTPUT_PATH` via env and the
 env-file path as the argument:
 
 ```bash
-SOURCE_MODEL_ID=<source_model_id> \
+SOURCE_PROVIDER=<source_provider> \
+  SOURCE_MODEL_ID=<source_model_id> \
   GOLDEN_DATASET_PATH=<golden_dataset_path> \
   OUTPUT_PATH=<output_path> \
   uv run --project <scriptsDir> python <scriptsDir>/source_baseline.py <REPO>/.saws-migrate/.source-provider-env

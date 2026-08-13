@@ -126,3 +126,15 @@ def test_gemini_pagination_follows_next_page_token(monkeypatch):
     ids = rsm.list_gemini()
     assert len(calls) == 2 and "pageToken=tok2" in calls[1]
     assert "gemini-1.5-pro" in ids
+
+
+def test_source_provider_env_is_authoritative(monkeypatch):
+    # Mirror of the runner's rule: SOURCE_PROVIDER beats file-order guessing.
+    import resolve_source_model as rsm
+    pairs = {"OPENAI_API_KEY": "a", "GEMINI_API_KEY": "c"}
+    monkeypatch.setenv("SOURCE_PROVIDER", "google")
+    assert rsm.pick_provider(pairs) == "GEMINI_API_KEY"
+    monkeypatch.setenv("SOURCE_PROVIDER", "anthropic")  # not in file
+    assert rsm.pick_provider(pairs) is None
+    monkeypatch.delenv("SOURCE_PROVIDER")
+    assert rsm.pick_provider(pairs) == "OPENAI_API_KEY"

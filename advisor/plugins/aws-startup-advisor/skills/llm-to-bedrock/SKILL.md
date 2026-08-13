@@ -203,10 +203,11 @@ and continue with one of the paths below.
 
 First check whether the key is already present in the shell environment (each Bash call
 initializes from the user's profile, so a profile-exported key is visible to every call).
-This prints presence only, never the value:
+POSIX-safe — `printenv` works in bash and zsh alike (`${!VAR}` indirection is bash-only and
+zsh errors on it). This prints presence only, never the value:
 
 ```bash
-[ -n "${!KEY_ENV_VAR:-}" ] && echo ENV_KEY_PRESENT || echo ENV_KEY_ABSENT
+[ -n "$(printenv "$KEY_ENV_VAR")" ] && echo ENV_KEY_PRESENT || echo ENV_KEY_ABSENT
 ```
 
 **AskUserQuestion:** "Do you have an API key for the source model (e.g. OpenAI key for GPT-4o)?
@@ -218,7 +219,7 @@ Options (offer the first only on `ENV_KEY_PRESENT`):
   command — the value never appears in the transcript:
 
   ```bash
-  printf '%s=%s\n' "$KEY_ENV_VAR" "${!KEY_ENV_VAR}" > "$REPO/.saws-migrate/.source-provider-env" && chmod 600 "$REPO/.saws-migrate/.source-provider-env"
+  printf '%s=%s\n' "$KEY_ENV_VAR" "$(printenv "$KEY_ENV_VAR")" > "$REPO/.saws-migrate/.source-provider-env" && chmod 600 "$REPO/.saws-migrate/.source-provider-env"
   ```
 
   Then run the format check below and set `sourceBaselineAvailable = true`,

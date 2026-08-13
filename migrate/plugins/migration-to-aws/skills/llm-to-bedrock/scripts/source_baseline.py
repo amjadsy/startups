@@ -102,6 +102,39 @@ def build_gemini_request(model: str, system: str, user_text: str) -> tuple[str, 
     return url, headers, body
 
 
+PROVIDER_TO_KEY = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "google": "GEMINI_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+}
+
+
+def pick_provider_key(file_pairs: dict) -> str | None:
+    """Select the provider key name. SOURCE_PROVIDER (the helper's declared
+    input) is authoritative when set — a file carrying several provider keys
+    must not fall back to dict-order guessing. Without it, fall back to the
+    first recognized key IN THE FILE (never the ambient environment)."""
+    stated = os.environ.get("SOURCE_PROVIDER", "").lower()
+    if stated:
+        key = PROVIDER_TO_KEY.get(stated)
+        if key is None or key not in file_pairs:
+            return None
+        return key
+    return next((k for k in PROVIDERS if k in file_pairs), None)
+
+
+def redact(text: str, secrets) -> str:
+    """Strip secret values from failure text. A raised exception can embed a
+    header value verbatim (http.client rejects an invalid header with the full
+    'Bearer <key>' in the ValueError message), and the docstring promise is
+    that the key never reaches the output JSONL."""
+    for s in secrets:
+        if s:
+            text = text.replace(s, "***")
+    return text
+
+
 PROVIDERS = {
     # env key → (request builder, response-text extractor)
     "OPENAI_API_KEY": (
@@ -120,15 +153,23 @@ PROVIDERS = {
 
 
 ERROR_BODY_CAP = 2048
+AUTH_CODES = (401, 403)
 
 
-def error_detail(e: urllib.error.HTTPError) -> str:
+def error_detail(e: urllib.error.HTTPError, secrets=()) -> str:
     """Bounded, credential-free extract of the provider's error body.
 
     The evaluator contract needs the HTTP 400 body's message/param to tell a
     request-shape bug from a quota or auth problem — reason alone is usually
     just "Bad Request" and the body is irrecoverable after this process exits.
+
+    Auth errors (401/403) return no detail at all: their classification uses
+    the status code alone, and an auth endpoint can echo the submitted
+    credential in its body. Every remaining path is redacted against the known
+    key values, including the non-JSON fallback.
     """
+    if e.code in AUTH_CODES:
+        return ""
     try:
         raw = e.read(ERROR_BODY_CAP).decode("utf-8", "replace")
     except Exception:
@@ -138,10 +179,11 @@ def error_detail(e: urllib.error.HTTPError) -> str:
         if isinstance(err, dict):
             msg = err.get("message", "")
             param = err.get("param")
-            return f"{msg} (param: {param})" if param else msg
+            detail = f"{msg} (param: {param})" if param else msg
+            return redact(detail, secrets)
     except (json.JSONDecodeError, AttributeError):
         pass
-    return raw[:200]
+    return redact(raw[:200], secrets)
 
 
 def _send(url: str, headers: dict, body: dict) -> dict:
@@ -164,12 +206,12 @@ def main() -> int:
         print(f"FAIL: required env var {e} not set", file=sys.stderr)
         return 2
 
-    # Select from the FILE's keys only — never the ambient environment.
-    provider = next((k for k in PROVIDERS if k in file_pairs), None)
+    provider = pick_provider_key(file_pairs)
     if provider is None:
-        print("FAIL: no recognized provider key in the env file", file=sys.stderr)
+        print("FAIL: no usable provider key in the env file (check SOURCE_PROVIDER)", file=sys.stderr)
         return 2
     build, extract = PROVIDERS[provider]
+    secrets = [v for k, v in file_pairs.items() if k in PROVIDERS]
 
     with open(dataset_path) as f:
         prompts = [json.loads(line) for line in f if line.strip()]
@@ -194,13 +236,13 @@ def main() -> int:
             out = extract(_send(url, headers, body))
             results.append({"id": p["id"], "source_response": out, "status": "live"})
         except urllib.error.HTTPError as e:
-            detail = error_detail(e)
+            detail = error_detail(e, secrets)
             status = f"http_{e.code}: {e.reason}" + (f" — {detail}" if detail else "")
-            results.append({"id": p["id"], "source_response": "", "status": status})
+            results.append({"id": p["id"], "source_response": "",
+                            "status": redact(status, secrets)})
         except Exception as e:  # noqa: BLE001 — every row must land in the JSONL
-            results.append(
-                {"id": p["id"], "source_response": "", "status": f"error: {type(e).__name__}: {e}"}
-            )
+            results.append({"id": p["id"], "source_response": "",
+                            "status": redact(f"error: {type(e).__name__}: {e}", secrets)})
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w") as f:
