@@ -103,7 +103,7 @@ After writing `estimation-infra.json`, present a concise summary to the user:
 5. **Migration complexity**: tier + timeline range
 6. **Monthly and annual savings** (or increase) vs Heroku per tier (if a baseline was determined)
 7. **Top 2-3 optimization opportunities** with savings potential
-8. **Recommendation**: `path_label` with one-line justification
+8. **Recommendation**: lead with `outcome_label` (or `path_label` when `outcome` is absent). List `conditions[]` when `conditional_go`. Close with 1–3 `would_flip_if[]` bullets when present. Keep `path_label` as the execution-shape line under the verdict.
 
 Keep under 25 lines. The user can ask for details or re-read `estimation-infra.json`.
 

@@ -35,7 +35,7 @@ Write `$MIGRATION_DIR/preferences.json`:
     "questions_defaulted": ["Q7", "Q8", ...],
     "questions_skipped_extracted": ["Q6", "Q12b", ...],
     "questions_skipped_not_applicable": ["Q6", "Q8", ...],
-    "inventory_clarifications": {}
+    "inventory_clarifications": {"database_ha": "plan:premium-0"}
   },
   "global": {
     "target_region": "<Q1 value>",
