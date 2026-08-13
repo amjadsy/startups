@@ -23,7 +23,7 @@ emits at load time. Call it `<SKILL_BASE>`. Derived paths:
 uv --version 2>/dev/null || echo "MISSING"
 ```
 
-If missing: "Install uv first: `curl -LsSf https://astral.sh/uv/install.sh | sh`". Stop.
+If missing: "Install uv first — see the official install guide: https://docs.astral.sh/uv/getting-started/installation/ (e.g. `brew install uv` or `pipx install uv`)". Stop.
 
 ---
 
