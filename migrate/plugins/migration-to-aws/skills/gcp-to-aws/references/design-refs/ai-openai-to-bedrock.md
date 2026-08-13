@@ -209,7 +209,7 @@ Assistants API and Responses API are different surfaces. Do not treat all Assist
 
 ### GPT-5.4 → Claude Sonnet 5
 
-Near price parity (~5% difference). Migration case is driven by AWS consolidation, agentic reliability, or prompt caching — not cost. Both have ~200K+ context. Low risk.
+Near price parity (~5% difference). Migration case is driven by AWS consolidation, agentic reliability, or prompt caching — not cost. Sonnet 5 has 1M context. Low risk.
 
 ### GPT-5.4 Mini/Nano → Nova Lite/Micro
 
@@ -217,7 +217,7 @@ Near price parity (~5% difference). Migration case is driven by AWS consolidatio
 
 ### GPT-4/4 Turbo → Claude Sonnet 5
 
-70-90% savings, similar or better quality, longer context (200K vs 128K). Low risk.
+70-90% savings, similar or better quality, longer context (1M vs 128K). Low risk.
 
 ### GPT-3.5 Turbo → Llama 4 Maverick
 
