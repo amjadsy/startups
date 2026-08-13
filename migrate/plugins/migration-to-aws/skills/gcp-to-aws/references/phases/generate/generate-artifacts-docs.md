@@ -367,7 +367,7 @@ After generating documentation, verify:
 1. **Fill-in checklist is complete**: every placeholder (`TODO`, `ACCOUNT_ID`, `<...>`, `example.com`) present in generated artifacts appears in the Fill-in checklist table, and every row's "Where to get it" cell contains a concrete command, console path, or artifact reference
 1. **Cost figures match**: Values in README.md match estimation artifacts
 1. **Timeline matches**: Week counts match generation plan artifacts
-1. **Rollback instructions match**: Rollback steps match generation plan
+1. **Rollback instructions match**: Rollback Procedure subsection contains all four contract elements from above — (1) triggers with concrete criteria tied to `04-validate.sh` checks, (2) exact DNS/restore commands with TTL implications, (3) an explicit post-cutover-writes data posture (write-freeze + delta / accepted loss / reverse sync by name), and (4) RTO — and those steps match the generation plan. A one-line "rollback via DNS" fails this check.
 
 ## Phase Completion
 
