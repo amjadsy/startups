@@ -87,6 +87,10 @@ run = [
   "node advisor/plugins/aws-startup-advisor/tools/sync-vendored-shared.ts advisor/plugins/aws-startup-advisor",
 ]
 
+[tasks."drift:check"]
+description = "Fail if the migrate + advisor copies of a shared skill tree drift apart (a fix landed on one side only). Normalizes the intentional prefix/path/schema-id differences; allowlists deliberate prose divergence."
+run = "node advisor/plugins/aws-startup-advisor/tools/cross-plugin-drift.ts"
+
 [tasks."fixtures:check"]
 description = "Structural integrity of committed replay fixtures (JSON parse, asserter byte-compile, manifest file references, gitignore traps, seed phase-status vs declared phases) for both plugins"
 run = [
@@ -108,6 +112,7 @@ run = [
   { task = "lint:types" },
   { task = "lint:frontmatter" },
   { task = "shared:check" },
+  { task = "drift:check" },
   { task = "fixtures:assert" },
   { task = "fixtures:check" },
   { task = "pricing:staleness" },

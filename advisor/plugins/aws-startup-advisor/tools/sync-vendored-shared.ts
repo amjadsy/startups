@@ -10,11 +10,8 @@
 // not by a single physical file — the lockfile pattern).
 //
 // Usage:
-//   node sync-vendored-shared.ts [pluginPath]           # CHECK mode: exit 1 if any copy drifts
-//   node sync-vendored-shared.ts [pluginPath] --write    # SYNC mode: copy canonical -> every vendored/
-//
-//   pluginPath is repo-root-relative and defaults to migrate/plugins/migration-to-aws.
-//   Pass advisor/plugins/aws-startup-advisor to validate the consolidated plugin.
+//   node sync-vendored-shared.ts           # CHECK mode: exit 1 if any copy drifts
+//   node sync-vendored-shared.ts --write    # SYNC mode: copy canonical -> every vendored/
 //
 // Zero-dep: runs under Node 24 native TS type-stripping (same as the validator).
 
@@ -22,7 +19,6 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSyn
 import { dirname, join, relative } from "node:path";
 
 // Repo-root-relative locations. The script is invoked from the repo root (mise task).
-// The plugin path is the first non-flag CLI arg, defaulting to the original plugin.
 const PLUGIN = process.argv.slice(2).find((a) => !a.startsWith("-")) ?? "migrate/plugins/migration-to-aws";
 const CANONICAL = join(PLUGIN, "skills/shared");
 const SKILLS_DIR = join(PLUGIN, "skills");

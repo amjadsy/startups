@@ -23,10 +23,8 @@
 //      segment -> skills/<segment>-to-aws; cross-check skipped when no such skill)
 //
 // Usage:
-//   node fixtures-check.ts                          # check the repo's own fixtures (mise task)
-//   node fixtures-check.ts <root>                   # check another checkout (e.g. a PR worktree)
-//   node fixtures-check.ts <root> <pluginSubpath>   # check a specific plugin's fixtures
-//                                                   # (pluginSubpath default: migrate/plugins/migration-to-aws)
+//   node fixtures-check.ts            # check the repo's own fixtures (mise task)
+//   node fixtures-check.ts <root>     # check another checkout (e.g. a PR worktree)
 //
 // Zero-dep: runs under Node 24 native TS type-stripping (same as the other tools).
 
