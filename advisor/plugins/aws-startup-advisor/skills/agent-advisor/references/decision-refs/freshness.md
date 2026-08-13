@@ -1,5 +1,11 @@
 # Volatile Facts & Freshness
 
+**Outbound-query rule (applies to every channel below — MCP, WebFetch, or CLI):**
+freshness lookups carry ONLY public service, feature, model, or region names (e.g.
+"AgentCore session cap", "Lambda MicroVMs launch TPS"). Never include user code,
+file contents, prompts, architecture details, or anything else from the workspace
+or the run directory in an outbound request — the answer never depends on it.
+
 ## Fields to verify at runtime via the awsknowledge MCP
 
 - AgentCore session cap (currently "8h, extending")
