@@ -51,6 +51,7 @@ Sensitive key patterns to redact (case-insensitive): `password`, `passwd`, `secr
 
    **Cloud SQL normalization (`google_sql_database_instance`)** — Clarify auto-resolves Q6/Q12/Q13/Q13b from these fields, so write them with canonical names at the top level of `config`:
    - `config.disk_size_gb` — from Terraform `settings.disk_size` (attribute name in HCL is `disk_size`; normalize to `disk_size_gb`). Omit when not set in Terraform — do not guess.
+   - `config.disk_autoresize` — from Terraform `settings.disk_autoresize`, ONLY when the attribute is explicitly present in HCL. Omit when absent — do not write the provider default (`true`); absence is not an authored choice.
    - `config.availability_type` — from Terraform `settings.availability_type` (`ZONAL` or `REGIONAL`). Omit when not set.
    - `config.tier` — from Terraform `settings.tier` (e.g. `db-f1-micro`).
    - `config.database_version` — from Terraform `database_version` (e.g. `POSTGRES_15`).

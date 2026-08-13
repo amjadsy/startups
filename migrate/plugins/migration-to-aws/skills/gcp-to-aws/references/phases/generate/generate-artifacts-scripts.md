@@ -85,9 +85,11 @@ Read `preferences.json` → `design_constraints.db_size.value` to select the mig
 
 **Inventory cross-check (before selecting the tool):** If `gcp-resource-inventory.json` has a `google_sql_database_instance` with a disk size (`config.disk_size_gb` or legacy variants), map it to the Q13b band and compare against `db_size.value`. Terraform disk size is **allocated capacity — an upper bound on actual data**, so the comparison is asymmetric:
 
-- **`db_size.value` band is LARGER than the allocated band** — data cannot exceed its allocation (barring `disk_autoresize` growth since the Terraform was written). Warn and use the allocated band:
+- **`db_size.value` band is LARGER than the allocated band** — data cannot exceed its allocation, UNLESS the disk can autoresize. Branch on `config.disk_autoresize` (extracted by Discover only when explicitly set in HCL):
+  - Explicitly `true` — the allocation is a starting point, not a cap; the disk may have grown since the Terraform was written. Keep the user's answer; no warning. Note it in the script header comment (`# db_size source: user answer [value]; terraform disk_size_gb=[N] is autoresize-enabled, not a cap`).
+  - Explicitly `false`, or absent — treat the allocation as the effective bound. Warn and use the allocated band:
 
-  > **Database size inconsistency:** Clarify recorded `db_size: [value]` but Terraform only allocates `disk_size_gb: [N]` ([band]). Using the allocated band for tool selection — say "use my answer instead" if the disk has grown since this Terraform was written.
+  > **Database size inconsistency:** Clarify recorded `db_size: [value]` but Terraform only allocates `disk_size_gb: [N]` ([band]). Using the allocated band for tool selection — say "use my answer instead" if the disk has grown since this Terraform was written (e.g. autoresize is enabled outside this Terraform).
 
 - **`db_size.value` band is SMALLER than the allocated band** — plausible (actual data below allocation is the normal case). Keep the user's answer; no warning.
 

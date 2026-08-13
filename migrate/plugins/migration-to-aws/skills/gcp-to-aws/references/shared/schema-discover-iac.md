@@ -95,6 +95,7 @@ Complete inventory of discovered GCP resources with classification, dependencies
 **Canonical `config` keys for `google_sql_database_instance`** (Clarify Step 2 auto-extraction reads these — use EXACTLY these keys; do not write `disk_size` or a `gcp_config` object):
 
 - `config.disk_size_gb` — allocated disk in GB, normalized from Terraform `settings.disk_size`. Omit when not set in Terraform.
+- `config.disk_autoresize` — boolean, from Terraform `settings.disk_autoresize`, ONLY when explicitly set in HCL. Omit when not set — the provider default is `true`, but an omitted attribute is not evidence the author chose it, so do not synthesize the default. (Generate's disk-size cross-check treats explicit `false` as a hard allocation cap and explicit `true` as growth-possible; absent = unknown.)
 - `config.availability_type` — `"ZONAL"` or `"REGIONAL"`. Omit when not set.
 - `config.tier` — Cloud SQL machine tier (e.g. `"db-f1-micro"`).
 - `config.database_version` — engine version string (e.g. `"POSTGRES_15"`).
