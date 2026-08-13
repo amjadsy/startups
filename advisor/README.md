@@ -1,6 +1,6 @@
 # AWS Startup Advisor
 
-Turn your AI coding agent into an AWS advisor for startups. One plugin for Kiro, Claude Code, Cursor, Codex, GitHub Copilot, and many others — ask it to plan and price a migration off GCP or Heroku, rewrite your OpenAI code for Amazon Bedrock, pick the right runtime for your AI agents, scaffold a new app, or answer AWS Activate and credits questions.
+Turn your AI coding agent into an AWS advisor for startups. One plugin for Kiro, Claude Code, Cursor, Codex, GitHub Copilot, and many others — ask it to plan and price a migration off GCP or Heroku, rewrite your OpenAI code for Amazon Bedrock, pick the right runtime for your AI agents, scaffold a new app, or find out which AWS Activate credits and startup programs you qualify for.
 
 You don't get generic advice — you get deliverables: a costed migration plan with runnable Terraform translated from your actual config, a ready-to-merge git branch, a deployable proof-of-concept, an architecture recommendation tuned to your stage and runway. Processing is local; your code and data stay in your environment.
 
