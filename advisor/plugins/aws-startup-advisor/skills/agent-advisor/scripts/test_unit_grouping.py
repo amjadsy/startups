@@ -628,7 +628,7 @@ def test_report_contract_round14_fixes():
 
 
 def _run_score_units(answers):
-    import subprocess
+    import subprocess  # nosec B404 — test-only, fixed args
     import sys
     import tempfile
 
