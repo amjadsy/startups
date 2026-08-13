@@ -44,7 +44,7 @@ grep -qE '^(OPENAI|ANTHROPIC|GEMINI)_API_KEY=.+' <REPO>/.saws-migrate/.source-pr
 
 - `absent` → return immediately with `status: "skipped"`.
 - `present` + `format_bad` → the file exists but has no parseable `KEY=VALUE` line (e.g. a bare
-  key was pasted without the env-var prefix). Do NOT proceed — the resolver would silently hit
+  key was written without the env-var prefix). Do NOT proceed — the resolver would silently hit
   the `no_key` path. Return `status: "skipped"` with a note telling the caller the env file is
   malformed and needs re-collection in `KEY=VALUE` form. Never print the file's contents.
 - `present` + `format_ok` → continue.
