@@ -3,6 +3,7 @@
 The grouping judgment (in-process agents merge; cross-process split) is prose,
 so these tests pin the load-bearing sentences the same way the temporal locks do.
 """
+import json
 import pathlib
 import re
 
@@ -626,20 +627,59 @@ def test_report_contract_round14_fixes():
         "the Assessment-inputs Source must look up the layered provenance by scope"
 
 
+def _run_score_units(answers):
+    import subprocess
+    import sys
+    import tempfile
+
+    script = pathlib.Path(__file__).parent / "score_units.py"
+    with tempfile.TemporaryDirectory() as tmp:
+        # No context-signals.json in this dir — mirrors a skipped-Discover run.
+        answers_path = pathlib.Path(tmp) / "answers.json"
+        answers_path.write_text(json.dumps(answers), encoding="utf-8")
+        proc = subprocess.run(  # nosec B603 — test-only, fixed args
+            [sys.executable, str(script), str(answers_path)],
+            capture_output=True, text=True, check=True,
+        )
+    return json.loads(proc.stdout)
+
+
+_SCORING_ANSWERS = {
+    "entry_point": "build_scratch",
+    "primary_unit": "solo",
+    "system": {"ops_preference": "minimal", "existing_cluster": "none",
+               "multi_cloud": "no", "platform_fit": "none"},
+    "units": {
+        "solo": {"workload_class": "agent_session", "session_duration": "15min_to_8hr",
+                 "traffic_pattern": "steady", "session_state": "stateful",
+                 "isolation": "nice_to_have", "memory_needs": "session_only",
+                 "multi_agent": "no", "framework": "langgraph", "idle_resume": "none",
+                 "compute_tier": "light", "launch_concurrency": "moderate",
+                 "deployment_preference": "framework", "compliance": [],
+                 "model_priority": "balanced", "region": "single"},
+        "cron": {"workload_class": "batch"},
+    },
+}
+
+
 def test_scoring_command_importable_and_wraps_units():
-    # Codex round-15 P1: the Clarify scoring command must be runnable — scoring importable via
-    # PYTHONPATH — and must WRAP results under {"units": {...}} (downstream reads .units[id]),
-    # not emit a bare {unit_id: result} map.
+    # Codex round-15 P1, retargeted from the former inline interpreter one-liner to the
+    # committed score_units.py: the Clarify scoring command must be runnable and must WRAP
+    # results under {"units": {...}} (downstream reads .units[id]), not emit a bare
+    # {unit_id: result} map.
     clarify = _norm(pathlib.Path(__file__).parent.parent
                     / "references" / "phases" / "clarify" / "clarify.md")
-    assert re.search(r"PYTHONPATH=", clarify), \
-        "scoring command must put scripts dir on PYTHONPATH so `import scoring` works"
-    assert re.search(r"json\.dumps\(\s*\{?\s*['\"]units['\"]", clarify) or \
-        re.search(r"\{'units': units\}|\{\"units\": units\}", clarify), \
-        "scoring command must wrap per-unit results under a top-level 'units' key"
+    assert re.search(r'score_units\.py"\s+"\$RUN_DIR/answers\.json"', clarify), \
+        "clarify must invoke the committed score_units.py with answers.json as an argument"
+    assert "python -c" not in clarify, \
+        "clarify must not inline scoring code — committed scripts only (skills.sh RCE flag)"
+    out = _run_score_units(_SCORING_ANSWERS)
+    assert set(out["units"].keys()) == {"solo"}, \
+        "results must be wrapped under a top-level 'units' key, agent_session units only"
     # single-unit collapse: primary unit's result must also be mirrored to the top level.
-    assert re.search(r"primary|mirror", clarify, re.IGNORECASE), \
-        "scoring command must mirror the primary unit's result to the top level for legacy readers"
+    for key, value in out["units"]["solo"].items():
+        assert out.get(key) == value, \
+            f"primary unit's '{key}' must be mirrored to the top level for legacy readers"
 
 
 def test_build_diagram_single_unit_design_renders_from_unit():
@@ -701,23 +741,25 @@ def test_runner_up_excludes_the_winner():
 
 
 def test_scoring_reads_only_answers_json():
-    # Codex round-17 P1: scoring must NOT open context-signals.json (absent on skipped-Discover
-    # runs — build_scratch / no-path). workload_class is persisted into answers.json.units[id]
-    # (Step 4), and entry_point read from .phase-status.json — answers.json is always present.
+    # Codex round-17 P1, retargeted to the committed score_units.py: scoring must NOT open
+    # context-signals.json (absent on skipped-Discover runs — build_scratch / no-path).
+    # workload_class is persisted into answers.json.units[id] (Step 4), and entry_point read
+    # from .phase-status.json — answers.json is always present.
     clarify = _norm(pathlib.Path(__file__).parent.parent
                     / "references" / "phases" / "clarify" / "clarify.md")
-    # the executed python (inside `uv run python -c "..."`) must not open context-signals.json
-    m = re.search(r'uv run python -c "(.*?)"\s*>\s*\$RUN_DIR/scoring-result\.json',
-                  clarify, re.DOTALL)
-    assert m, "clarify must have the scoring python invocation"
-    assert "context-signals.json" not in m.group(1), \
+    src = (pathlib.Path(__file__).parent / "score_units.py").read_text(encoding="utf-8")
+    assert "context-signals.json" not in src, \
         "the executed scoring code must not open context-signals.json (absent on skipped-Discover)"
-    assert "open('$RUN_DIR/answers.json')" in m.group(1), \
-        "scoring must read answers.json (always present)"
+    assert "sys.argv[1]" in src, \
+        "scoring must read answers.json from argv (always present), never a hardcoded path"
+    # behavioral: runs to completion in a directory that has ONLY answers.json
+    out = _run_score_units(_SCORING_ANSWERS)
+    assert "cron" not in out["units"], \
+        "the filter must read workload_class from the answers.json unit entry (batch excluded)"
     # workload_class is persisted into answers.json units + filtered from there
     assert re.search(r'"workload_class":\s*"<class>"', clarify), \
         "answers.json units[] must persist workload_class (Step 4 schema)"
-    assert "info.get('workload_class') == 'agent_session'" in clarify, \
+    assert 'info.get("workload_class") == "agent_session"' in src, \
         "the filter must read workload_class from the answers.json unit entry"
     # entry_point sourced from .phase-status.json, not context-signals.json
     assert re.search(r"entry_point.{0,80}\.phase-status\.json", clarify, re.DOTALL), \
