@@ -22,6 +22,18 @@ The other three skills do not require MCP servers.
 
 ## Install
 
+### Claude Code (recommended)
+
+Install as a registered plugin in one command — no Node.js required:
+
+```bash
+/plugin install aws-startup-advisor@claude-plugins-official
+```
+
+This installs all 5 skills and registers the plugin in the Claude Code directory.
+
+### All other agents (Kiro, Cursor, Codex, Copilot, etc.)
+
 **Prerequisite:** Node.js 18+ (ships with `npx`). Grab the LTS or current release for your OS from [nodejs.org/en/download](https://nodejs.org/en/download). Verify with `node -v && npx -v`.
 
 Install all skills at once into a single agent:
