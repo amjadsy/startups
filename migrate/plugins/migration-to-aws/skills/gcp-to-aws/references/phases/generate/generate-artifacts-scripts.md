@@ -38,7 +38,7 @@ Set boolean flags for downstream script generation:
   OR `gcp_type` starting with `google_cloud_run_`, `google_container_cluster`
 - **has_secrets**: true if ANY resource has `aws_service` containing "Secrets Manager"
   OR `gcp_type` starting with `google_secret_manager_`
-- **has_data_migration**: has_databases OR has_storage (used for script 02)
+- **has_data_migration**: has_databases OR has_storage OR has_bigquery (used for script 02)
 
 Report detected categories to user: "Resource categories detected: [list active flags]"
 
@@ -82,6 +82,22 @@ Verify all prerequisites before migration:
 
 Based on database and storage resources in `aws-design.json`:
 
+**Script preamble** — emit FIRST, whenever this script is generated (any subsection below
+active). The shebang, failure mode, and dry-run plumbing are not gated on any single resource
+flag: a BigQuery-only project generates only the deferral notice below, and that script still
+has to satisfy Script Quality Rule 1 (`set -euo pipefail`):
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+# Data migration
+# Usage: ./02-migrate-data.sh [--execute]
+
+DRY_RUN=true
+[[ "${1:-}" == "--execute" ]] && DRY_RUN=false
+echo "Mode: $([ "$DRY_RUN" = true ] && echo 'DRY RUN' || echo 'EXECUTE')"
+```
+
 **Cloud SQL to RDS/Aurora** — include only if `has_databases`:
 
 Read `preferences.json` → `design_constraints.db_size.value` to select the migration tool:
@@ -94,11 +110,7 @@ Read `preferences.json` → `design_constraints.db_size.value` to select the mig
 Generate the script with conditional branches based on `db_size`:
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
 # Cloud SQL → RDS data migration
-# Usage: ./02-migrate-data.sh [--execute]
-#
 # Tool selection based on database size (preferences.json design_constraints.db_size.value):
 # <10GB: pg_dump/pg_restore
 # 10-500GB: pgcopydb (parallel copy, 3-5x faster than pg_dump)
@@ -106,11 +118,7 @@ set -euo pipefail
 # unknown: pgcopydb (safer default at unknown scale)
 # TODO: Verify database size before running — wrong tool choice can exceed your maintenance window.
 
-DRY_RUN=true
-[[ "${1:-}" == "--execute" ]] && DRY_RUN=false
-
 echo "=== Database Migration: Cloud SQL → RDS ==="
-echo "Mode: $([ "$DRY_RUN" = true ] && echo 'DRY RUN' || echo 'EXECUTE')"
 
 SOURCE_HOST="" # TODO: Set Cloud SQL IP
 TARGET_HOST="" # From terraform output database_endpoint
