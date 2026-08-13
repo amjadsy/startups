@@ -25,7 +25,7 @@ recommends a runtime; the conversation adapts to the user's technical background
 ## Prerequisites
 
 - `uv` available (for scoring). Check: `uv --version`. If missing, tell the user to install
-  it (`curl -LsSf https://astral.sh/uv/install.sh | sh`) and stop.
+  it from the official install guide (https://docs.astral.sh/uv/getting-started/installation/ — e.g. `brew install uv` or `pipx install uv`) and stop.
 
 ## Phase Structure (frontmatter)
 
