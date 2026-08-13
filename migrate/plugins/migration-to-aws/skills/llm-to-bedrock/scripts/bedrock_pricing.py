@@ -35,7 +35,11 @@ def parse_price_dimensions(price_item: dict) -> dict:
 
 # Static fallback table: per-1K-token USD rates from public pricing pages.
 # Used when the PriceList API doesn't return data (e.g. new cross-region inference profile IDs).
-# Source: https://aws.amazon.com/bedrock/pricing/ (checked 2026-06)
+# Source: https://aws.amazon.com/bedrock/pricing/, cross-checked row-by-row against
+# skills/gcp-to-aws/references/shared/pricing-cache.md (its per-1M rates / 1000).
+# Every row below was re-verified against that cache on 2026-08-04; the Opus 4.8 row
+# had been copied from Opus 4.1's legacy $15/$75 and was corrected to $5/$25.
+# `mise run pricing:staleness` re-checks this table against the cache.
 STATIC_FALLBACK = {
     "anthropic.claude-haiku-4-5-20251001-v1:0":     {"input_per_1k_usd": 0.001, "output_per_1k_usd": 0.005},
     "us.anthropic.claude-haiku-4-5-20251001-v1:0":  {"input_per_1k_usd": 0.001, "output_per_1k_usd": 0.005},
@@ -102,7 +106,8 @@ def lookup(region: str, model_id: str) -> dict:
     # by display name and frequently lacks entries for new inference profiles.
     fb = _static_fallback(model_id)
     if fb:
-        fb["note"] = "static pricing table (checked 2026-06 against aws.amazon.com/bedrock/pricing)"
+        fb["note"] = ("static pricing table (verified 2026-08-04 against "
+                      "aws.amazon.com/bedrock/pricing and the vendored pricing cache)")
         return fb
     import boto3
     from botocore.exceptions import BotoCoreError, ClientError
