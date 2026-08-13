@@ -74,6 +74,36 @@ def pick_provider(file_pairs: dict[str, str]) -> str | None:
     return next((k for k in PROVIDER_KEYS if k in file_pairs), None)
 
 
+def _secret_variants(secrets) -> list:
+    """Every textual form a secret can take in error text. A raw CR/LF inside
+    a credential is rendered ESCAPED in exception messages (repr turns one
+    control char into backslash-r text), so literal replacement alone misses
+    it; the control-char-split fragments catch any remaining partial echo."""
+    import re as _re
+    out: list = []
+    for s in secrets:
+        if not s:
+            continue
+        out.append(s)
+        esc = s.encode("unicode_escape").decode("ascii")
+        if esc != s:
+            out.append(esc)
+        for frag in _re.split(r"[\x00-\x1f]+", s):
+            if len(frag) >= 6 and frag not in out:
+                out.append(frag)
+    return sorted(out, key=len, reverse=True)
+
+
+def redact(text: str, secrets) -> str:
+    """Strip secret values from failure text. A raised exception can embed a
+    header value verbatim (http.client rejects an invalid header with the full
+    'Bearer <key>' in the ValueError message), and the docstring promise is
+    that the key never reaches the output JSONL."""
+    for s in _secret_variants(secrets):
+        text = text.replace(s, "***")
+    return text
+
+
 def _get_json(url: str, headers: dict) -> dict:
     req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=30) as r:  # nosec B310 — fixed https hosts
@@ -168,15 +198,20 @@ def main() -> int:
     plan_id = os.environ["PLAN_MODEL_ID"]
 
     provider = pick_provider(file_pairs)
-    if provider == "OPENAI_API_KEY":
-        catalog = list_openai()
-    elif provider == "ANTHROPIC_API_KEY":
-        catalog = list_anthropic()
-    elif provider == "GEMINI_API_KEY":
-        catalog = list_gemini()
-    else:
+    listers = {"OPENAI_API_KEY": list_openai, "ANTHROPIC_API_KEY": list_anthropic,
+               "GEMINI_API_KEY": list_gemini}
+    if provider not in listers:
         print(json.dumps({"status": "no_key"}))
         return 2
+
+    secrets = [v for k, v in file_pairs.items() if k in PROVIDER_KEYS]
+    try:
+        catalog = listers[provider]()
+    except Exception as e:  # noqa: BLE001 — an unhandled traceback would put the
+        # exception text (which can embed the auth header) on stderr unredacted
+        print(json.dumps({"status": "error",
+                          "detail": redact(f"{type(e).__name__}: {e}", secrets)}))
+        return 3
 
     print(json.dumps(resolve(catalog, plan_id)))
     return 0

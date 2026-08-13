@@ -138,3 +138,25 @@ def test_source_provider_env_is_authoritative(monkeypatch):
     assert rsm.pick_provider(pairs) is None
     monkeypatch.delenv("SOURCE_PROVIDER")
     assert rsm.pick_provider(pairs) == "OPENAI_API_KEY"
+
+
+def test_network_exception_never_reaches_stderr_unredacted(tmp_path, monkeypatch, capsys):
+    # Adjudicated finding: an unhandled exception from the catalog fetch put
+    # its text (which can embed the auth header) on stderr as a traceback.
+    # main() must catch it and emit a REDACTED JSON error instead.
+    import resolve_source_model as rsm
+    env = tmp_path / ".source-provider-env"
+    env.write_text("OPENAI_API_KEY=redaction-unit-test-123\n", encoding="utf-8")  # test placeholder, not a credential
+
+    def boom(url, headers):
+        raise ValueError("Invalid header value b'Bearer redaction-unit-test-123\\rX'")
+
+    monkeypatch.setattr(rsm, "_get_json", boom)
+    monkeypatch.setenv("PLAN_MODEL_ID", "gpt-4o")
+    monkeypatch.setattr(sys, "argv", ["resolve_source_model.py", str(env)])
+    rc = rsm.main()
+    captured = capsys.readouterr()
+    assert rc == 3
+    assert "redaction-unit-test-123" not in captured.out and "redaction-unit-test-123" not in captured.err
+    out = json.loads(captured.out)
+    assert out["status"] == "error" and "***" in out["detail"]

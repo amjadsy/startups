@@ -172,3 +172,20 @@ def test_source_provider_env_is_authoritative(tmp_path, monkeypatch):
     assert sb.pick_provider_key(pairs) is None
     monkeypatch.delenv("SOURCE_PROVIDER")
     assert sb.pick_provider_key(pairs) == "OPENAI_API_KEY"
+
+
+def test_redact_catches_escaped_control_chars_in_exception_text():
+    # Adjudicated finding: a raw CR inside the credential renders ESCAPED in
+    # exception text (one control char -> backslash-r as two characters), so
+    # literal replacement missed it and the key leaked in escaped form.
+    secret = "sk-live-SECRET\rKEY123"
+    escaped_msg = "error: ValueError: Invalid header value b'Bearer sk-live-SECRET\\rKEY123'"
+    out = sb.redact(escaped_msg, [secret])
+    assert "SECRET" not in out and "KEY123" not in out
+
+
+def test_redact_catches_fragments_around_control_chars():
+    # Even a partial echo of either side of the control char must not survive.
+    secret = "sk-live-SECRET\nKEY123456"
+    out = sb.redact("provider said sk-live-SECRET then KEY123456 rejected", [secret])
+    assert "sk-live-SECRET" not in out and "KEY123456" not in out
