@@ -7,6 +7,8 @@
   "properties": {
     "entry_point": { "enum": ["build_scratch", "build_deploy", "migrate", "add_capabilities"] },
     "audience": { "enum": ["technical", "business"] },
+    "target_maturity": { "enum": ["prototype", "private_beta", "production"], "description": "Target launch maturity. Intake persists this value in run state; it is not inferred from the chosen runtime." },
+    "readiness": { "$ref": "#/definitions/readiness" },
     "system": { "$ref": "#/definitions/systemDims" },
     "units": {
       "type": "object",
@@ -36,6 +38,26 @@
     }
   },
   "definitions": {
+    "readiness": {
+      "type": "object",
+      "description": "Control evidence for the selected maturity. Keys are the controls named in maturity-readiness.md; omitted values remain unknown and become gaps for beta/production.",
+      "additionalProperties": { "enum": ["met", "gap", "not_applicable", "unknown"] }
+    },
+    "currentRunVerifications": {
+      "type": "object",
+      "description": "Current-run evidence only. A seed may carry these records only when the invoking orchestration actually performed the verification in this run; cached evidence cannot be marked verified.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "verified_this_run"],
+        "properties": {
+          "status": { "enum": ["verified", "not_verified", "failed"] },
+          "verified_this_run": { "type": "boolean" },
+          "source": { "type": "string" },
+          "value": {}
+        }
+      }
+    },
     "systemDims": {
       "type": "object",
       "additionalProperties": false,
@@ -55,7 +77,8 @@
         },
         "existing_cluster": { "enum": ["eks", "ecs", "none", "unknown"] },
         "platform_fit": { "enum": ["ecs", "eks", "lambda", "none", "unknown"] },
-        "ops_preference": { "enum": ["minimal", "moderate", "full_control", "unknown"] }
+        "ops_preference": { "enum": ["minimal", "moderate", "full_control", "unknown"] },
+        "current_run_verifications": { "$ref": "#/definitions/currentRunVerifications" }
       }
     },
     "unitDims": {

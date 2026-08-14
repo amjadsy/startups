@@ -108,3 +108,9 @@ Choose the wording that matches what actually happened:
 The footer is a summary, not the only place a date belongs. A cached number quoted in the body —
 a service limit, a scaling ceiling, a price anchor — carries its own snapshot date at the point of
 use, so a reader who reads one section is not relying on a footer they may never reach.
+
+## Pre-scoring verification contract
+
+Before scoring, inspect every matching runtime hard constraint marked `verification_required`. For each, attempt its named current check using only public service facts. When the check succeeds in this run, write `answers.system.current_run_verifications[verification_key] = {"status":"verified","verified_this_run":true,"source":"<authoritative source>","value":<observed value>}`. Otherwise write no verified record (or an explicit `not_verified`/`failed` record).
+
+Cached profile values, a prior run, and unobserved documentation are useful context but are not current-run verification. They cannot hard-eliminate a runtime and cannot support final pricing, availability, quota, or I/O-wait billing claims. The scorer therefore emits deferred verification requirements and a `provisional` recommendation until evidence is supplied. This procedure is mandatory before any final recommendation or release decision.

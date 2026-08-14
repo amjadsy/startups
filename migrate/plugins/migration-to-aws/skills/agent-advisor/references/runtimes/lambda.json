@@ -5,8 +5,8 @@
   "launched": "2014-11-01",
   "service_card": "lambda.md",
   "hard_constraints": [
-    { "field": "session_duration", "value": "15min_to_8hr", "reason": "Lambda has a 15-minute timeout" },
-    { "field": "session_duration", "value": "over_8hr", "reason": "Lambda has a 15-minute timeout" }
+    { "field": "session_duration", "value": "15min_to_8hr", "reason": "Lambda has a 15-minute timeout", "verification_required": true, "verification_key": "lambda.timeout" },
+    { "field": "session_duration", "value": "over_8hr", "reason": "Lambda has a 15-minute timeout", "verification_required": true, "verification_key": "lambda.timeout" }
   ],
   "affinities": {
     "session_duration": { "under_15min": 5, "15min_to_8hr": 0, "over_8hr": 0, "unknown": 2 },
@@ -25,5 +25,5 @@
     "launch_concurrency": { "high": 4, "moderate": 3, "low": 2, "unknown": 2 }
   },
   "deployment_models": [],
-  "volatile_facts": [{ "key": "timeout", "value": "15m", "verify_via_mcp": false }]
+  "volatile_facts": [{ "key": "timeout", "verification_key": "lambda.timeout", "value": "15m", "verify_via_mcp": true }]
 }

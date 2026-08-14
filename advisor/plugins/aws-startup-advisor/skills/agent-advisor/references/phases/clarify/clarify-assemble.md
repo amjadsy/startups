@@ -21,3 +21,6 @@ _produces:
 > `answers.json` and `scoring-result.json`, and its postconditions (declared on
 > the phase) are the phase's completion gate. See `clarify.md` § Step 4–5 for
 > the legal answer keys/values and the scoring command.
+
+
+The assembled answers also preserve `target_maturity`, `readiness`, and current-run verification records. The scoring artifact must preserve its `recommendation_status` and `deferred_verification_requirements`; deferred verification is not silently converted into an elimination or a final recommendation.

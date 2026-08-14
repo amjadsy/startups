@@ -78,6 +78,35 @@ def test_hard_constraint_no_match():
     assert eliminated == {}
 
 
+def test_verification_required_constraint_is_deferred_and_provisional():
+    profiles = [{**_minimal("agentcore"), "hard_constraints": [{
+        "field": "session_duration", "value": "over_8hr", "reason": "8hr cap",
+        "verification_required": True, "verification_key": "agentcore.session_cap",
+    }]}]
+    result = scoring.score({"entry_point": "build_scratch", "answers": {
+        "session_duration": "over_8hr"}}, profiles=profiles)
+    assert result["eliminated"] == {}
+    assert result["recommendation_status"] == "provisional"
+    assert result["deferred_verification_requirements"] == [{
+        "runtime": "agentcore", "field": "session_duration", "value": "over_8hr",
+        "reason": "8hr cap", "verification_key": "agentcore.session_cap",
+    }]
+
+
+def test_current_run_verification_finalizes_constraint_elimination():
+    profiles = [{**_minimal("agentcore"), "hard_constraints": [{
+        "field": "session_duration", "value": "over_8hr", "reason": "8hr cap",
+        "verification_required": True, "verification_key": "agentcore.session_cap",
+    }]}]
+    result = scoring.score({"entry_point": "build_scratch", "answers": {
+        "session_duration": "over_8hr", "current_run_verifications": {
+            "agentcore.session_cap": {"status": "verified", "verified_this_run": True}
+        }}}, profiles=profiles)
+    assert result["eliminated"] == {"agentcore": "8hr cap"}
+    assert result["deferred_verification_requirements"] == []
+    assert result["recommendation_status"] == "final"
+
+
 def test_compute_scores_uses_affinity_and_neutral_default():
     profiles = [
         {**_minimal("agentcore"), "affinities": {
@@ -219,7 +248,7 @@ def test_warning_fires_for_microvms_high_launch():
     warnings = scoring._collect_warnings(
         {"launch_concurrency": "high"}, "lambda_microvms")
     assert len(warnings) == 1
-    assert "5 TPS" in warnings[0]
+    assert "current-run verification" in warnings[0]
 
 
 def test_warning_fires_for_microvms_in_co_recommend():
@@ -227,7 +256,7 @@ def test_warning_fires_for_microvms_in_co_recommend():
         {"launch_concurrency": "high"}, "co_recommend",
         co_recommend=["agentcore", "lambda_microvms"])
     assert len(warnings) == 1
-    assert "5 TPS" in warnings[0]
+    assert "current-run verification" in warnings[0]
 
 
 def test_no_warning_when_microvms_not_in_co_recommend():
@@ -309,13 +338,21 @@ def test_golden_loads_five_ga_runtimes():
     assert ids == {"agentcore", "lambda_microvms", "ecs", "eks", "lambda"}
 
 
-def test_golden_over_8hr_eliminates_agentcore_and_microvms():
-    # Regression against the old PM decision-tree bug (spec §7.1).
+def test_golden_over_8hr_eliminates_agentcore_and_microvms_after_verification():
+    # Volatile caps become final eliminations only after current-run verification.
     result = scoring.score({
         "entry_point": "migrate",
-        "answers": {"session_duration": "over_8hr"}}, profiles=_real_profiles())
+        "answers": {
+            "session_duration": "over_8hr",
+            "current_run_verifications": {
+                "agentcore.session_cap": {"status": "verified", "verified_this_run": True},
+                "lambda_microvms.session_cap": {"status": "verified", "verified_this_run": True},
+                "lambda.timeout": {"status": "verified", "verified_this_run": True},
+            },
+        }}, profiles=_real_profiles())
     assert "agentcore" in result["eliminated"]
     assert "lambda_microvms" in result["eliminated"]
+    assert result["recommendation_status"] == "final"
     assert result["verdict"] in ("ecs", "eks", "co_recommend")
 
 
@@ -328,11 +365,15 @@ def test_golden_microvms_wins_process_level_resume():
     assert result["verdict"] == "lambda_microvms"
 
 
-def test_golden_microvms_wins_heavy_non_gpu():
+def test_golden_microvms_wins_heavy_non_gpu_after_verification():
     result = scoring.score({
         "entry_point": "build_deploy",
-        "answers": {"compute_tier": "heavy_non_gpu", "session_duration": "15min_to_8hr"}},
-        profiles=_real_profiles())
+        "answers": {
+            "compute_tier": "heavy_non_gpu", "session_duration": "15min_to_8hr",
+            "current_run_verifications": {
+                "agentcore.compute_cap": {"status": "verified", "verified_this_run": True},
+            },
+        }}, profiles=_real_profiles())
     assert "agentcore" in result["eliminated"]
     assert result["verdict"] == "lambda_microvms"
 
@@ -348,13 +389,19 @@ def test_golden_agentic_io_wait_favors_agentcore():
     assert result["deployment_model"] == "harness"
 
 
-def test_golden_microvms_high_launch_emits_warning():
+def test_golden_microvms_high_launch_emits_verified_warning():
     result = scoring.score({
         "entry_point": "build_deploy",
-        "answers": {"compute_tier": "heavy_non_gpu", "session_duration": "15min_to_8hr",
-                    "launch_concurrency": "high"}}, profiles=_real_profiles())
+        "answers": {
+            "compute_tier": "heavy_non_gpu", "session_duration": "15min_to_8hr",
+            "launch_concurrency": "high",
+            "current_run_verifications": {
+                "agentcore.compute_cap": {"status": "verified", "verified_this_run": True},
+                "lambda_microvms.launch_tps": {"status": "verified", "verified_this_run": True},
+            },
+        }}, profiles=_real_profiles())
     assert result["verdict"] == "lambda_microvms"
-    assert any("5 TPS" in w for w in result["warnings"])
+    assert any("verified in this run" in w for w in result["warnings"])
 
 
 VALID_STATUSES = {"ga", "preview", "coming_soon"}
@@ -379,9 +426,16 @@ def test_profile_is_well_formed(profile):
             f"must declare all of {sorted(legal)}")
     # hard-constraint fields must be answerable keys
     answerable = set(scoring.DIMENSIONS) | {"compliance"}
+    # Verification-required constraints must name a profile fact that can be checked.
+    verification_keys = {
+        fact["verification_key"] for fact in profile["volatile_facts"]
+        if "verification_key" in fact
+    }
     for constraint in profile["hard_constraints"]:
         assert constraint["field"] in answerable
         assert "reason" in constraint and constraint["reason"]
+        if constraint.get("verification_required"):
+            assert constraint.get("verification_key") in verification_keys
 
 
 # --- Drift detection: our model pool must stay Active vs the source lifecycle file ---

@@ -41,6 +41,7 @@ DEFAULTS = {
     **{dim: "unknown" for dim in DIMENSIONS},
     "compliance": ["none"],
     "region": "unknown",
+    "current_run_verifications": {},
 }
 
 
@@ -60,20 +61,48 @@ def load_profiles(runtimes_dir=RUNTIMES_DIR, statuses=frozenset({"ga"})):
     return sorted(profiles, key=lambda p: p["id"])
 
 
-def _apply_hard_constraints(answers, profiles):
-    eliminated = {}
-    compliance = answers.get("compliance", ["none"])
+def _constraint_matches(answers, constraint):
+    field, trigger = constraint["field"], constraint["value"]
+    if field == "compliance":
+        return trigger in answers.get("compliance", ["none"])
+    return answers.get(field) == trigger
+
+
+def _is_current_run_verified(answers, verification_key):
+    record = answers.get("current_run_verifications", {}).get(verification_key)
+    return (
+        isinstance(record, dict)
+        and record.get("status") == "verified"
+        and record.get("verified_this_run") is True
+    )
+
+
+def _evaluate_hard_constraints(answers, profiles):
+    """Return final eliminations and matched constraints awaiting verification."""
+    eliminated, deferred = {}, []
     for profile in profiles:
         for constraint in profile.get("hard_constraints", []):
-            field, trigger = constraint["field"], constraint["value"]
-            if field == "compliance":
-                matched = trigger in compliance
-            else:
-                matched = answers.get(field) == trigger
-            if matched:
-                eliminated[profile["id"]] = constraint["reason"]
+            if not _constraint_matches(answers, constraint):
+                continue
+            if constraint.get("verification_required") and not _is_current_run_verified(
+                answers, constraint["verification_key"]
+            ):
+                deferred.append({
+                    "runtime": profile["id"],
+                    "field": constraint["field"],
+                    "value": constraint["value"],
+                    "reason": constraint["reason"],
+                    "verification_key": constraint["verification_key"],
+                })
                 break
-    return eliminated
+            eliminated[profile["id"]] = constraint["reason"]
+            break
+    return eliminated, deferred
+
+
+def _apply_hard_constraints(answers, profiles):
+    """Compatibility helper returning only final hard eliminations."""
+    return _evaluate_hard_constraints(answers, profiles)[0]
 
 
 def _compute_scores(answers, profiles, eliminated):
@@ -161,11 +190,14 @@ def _collect_warnings(answers, verdict, co_recommend=None):
         or (verdict == "co_recommend" and "lambda_microvms" in (co_recommend or []))
     )
     if microvms_is_winner and answers.get("launch_concurrency") == "high":
-        warnings.append(
-            "Lambda MicroVMs RunMicrovm is capped at 5 TPS and is not "
-            "adjustable; high-concurrency launch storms will queue. If launch "
-            "rate matters at scale, reconsider AgentCore Runtime (25 TPS, "
-            "adjustable).")
+        if _is_current_run_verified(answers, "lambda_microvms.launch_tps"):
+            warnings.append(
+                "High launch concurrency requires capacity planning against the Lambda "
+                "MicroVMs launch-rate value verified in this run.")
+        else:
+            warnings.append(
+                "High launch concurrency requires current-run verification of Lambda "
+                "MicroVMs launch capacity before selection.")
     return warnings
 
 
@@ -179,7 +211,7 @@ def score(input_data, profiles=None):
     answers.update({k: v for k, v in raw_answers.items() if v is not None})
     answers["_entry_point"] = entry_point
 
-    eliminated = _apply_hard_constraints(answers, profiles)
+    eliminated, deferred = _evaluate_hard_constraints(answers, profiles)
     scores = _compute_scores(answers, profiles, eliminated)
     verdict, co_recommend = _determine_verdict(scores, eliminated)
 
@@ -197,6 +229,8 @@ def score(input_data, profiles=None):
         "verdict": verdict,
         "scores": scores,
         "eliminated": eliminated,
+        "deferred_verification_requirements": deferred,
+        "recommendation_status": "provisional" if deferred else "final",
         "deployment_model": deployment_model,
         "agentcore_services": _select_agentcore_services(answers),
         "assumptions_used": _collect_assumptions(raw_answers),

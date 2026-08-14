@@ -338,3 +338,9 @@ Set `phases.clarify` = completed (leave `phases["model-recommend"]` and `phases.
 pending). Do NOT jump to Confirm or Design. The state machine now routes to **Model Recommend**
 (`references/phases/model-recommend/model-recommend.md`), which creates the per-workload
 Bedrock model/path contract before Confirm asks the user to accept runtime and model together.
+
+## Maturity, readiness, and pre-scoring verification extension
+
+Load `references/decision-refs/maturity-readiness.md`. Resolve `target_maturity` from the seed first, else from Intake state; write it top-level in `answers.json`. For `private_beta` or `production`, ask only the missing tier controls (identity/tenant boundary, durable state, guardrails and tool authorization, observability, evaluation, release/rollback, and ownership). Write a readable top-level `readiness` object: `{ "status": "ready|gaps|unknown", "gaps": [...], "controls": {...}, "release_gates": [...] }`. Prototype records only controls relevant to its bounded scope.
+
+Before Step 5, follow freshness.md's pre-scoring procedure. Put genuine current-run evidence in `system.current_run_verifications`, keyed by the runtime profile's `verification_key`, with `{ "status": "verified", "verified_this_run": true, "source": "...", "value": ... }`. Do not mark cached documentation or an earlier run as verified. Scoring may defer a matching verification-required constraint rather than eliminate a runtime; preserve `deferred_verification_requirements` and `recommendation_status` in `scoring-result.json`. A recommendation with any deferred requirement is `provisional` and must name the verification needed before a final selection.
