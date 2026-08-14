@@ -195,38 +195,64 @@ skill's parser expects — a bare key without the `NAME=` prefix will NOT be par
 - `anthropic` → `ANTHROPIC_API_KEY`
 - `google` / `gemini` → `GEMINI_API_KEY`
 
+**The key must never enter this conversation (HARD RULE).** Do not ask the user to paste the
+key in chat, and never echo, cat, or interpolate its VALUE into any command, question, or
+output — the agent only ever handles the file path. If the user pastes a key into the chat
+unprompted, do not use it: tell them it is now part of the transcript, recommend rotating it,
+and continue with one of the paths below.
+
+First check whether the key is already present in the shell environment (each Bash call
+initializes from the user's profile, so a profile-exported key is visible to every call).
+POSIX-safe — `printenv` works in bash and zsh alike (`${!VAR}` indirection is bash-only and
+zsh errors on it). This prints presence only, never the value:
+
+```bash
+[ -n "$(printenv "$KEY_ENV_VAR")" ] && echo ENV_KEY_PRESENT || echo ENV_KEY_ABSENT
+```
+
 **AskUserQuestion:** "Do you have an API key for the source model (e.g. OpenAI key for GPT-4o)?
 Providing it enables side-by-side quality comparison. Without it, evaluation uses absolute scoring only."
 
-Options:
+Options (offer the first only on `ENV_KEY_PRESENT`):
 
-- **Yes — I'll paste my key** → warn first: "Note: the key will pass through this chat
-  transcript. If you prefer, choose 'I'll write it to a file myself' instead." Then a second
-  AskUserQuestion to collect it (free-text via Other). Then write it in `KEY=VALUE` form:
-
-  ```bash
-  printf "%s=%s\n" "$KEY_ENV_VAR" "<key>" > "$REPO/.saws-migrate/.source-provider-env" && chmod 600 "$REPO/.saws-migrate/.source-provider-env"
-  ```
-
-  Verify the format before proceeding (catches a stray paste without the prefix):
+- **Use the `$KEY_ENV_VAR` already in my environment** → materialize env var to file in one
+  command — the value never appears in the transcript:
 
   ```bash
-  grep -qE '^(OPENAI|ANTHROPIC|GEMINI)_API_KEY=.+' "$REPO/.saws-migrate/.source-provider-env" && echo KEY_FORMAT_OK || echo KEY_FORMAT_BAD
+  printf '%s=%s\n' "$KEY_ENV_VAR" "$(printenv "$KEY_ENV_VAR")" > "$REPO/.saws-migrate/.source-provider-env" && chmod 600 "$REPO/.saws-migrate/.source-provider-env"
   ```
 
-  On `KEY_FORMAT_BAD`, rewrite the file (do not echo its contents). Then set
-  `sourceBaselineAvailable = true`, `sourceKeyRef = "$REPO/.saws-migrate/.source-provider-env"`.
-- **I'll write it to a file myself** → tell the user to create
-  `$REPO/.saws-migrate/.source-provider-env` containing a single `$KEY_ENV_VAR=...` line,
-  then run the same `grep -qE` format check above (it never prints the key).
-  Set the same flags as above.
+  Then run the format check below and set `sourceBaselineAvailable = true`,
+  `sourceKeyRef = "$REPO/.saws-migrate/.source-provider-env"`.
+- **I'll write it to a file myself** → give the user this command to run in THEIR OWN terminal
+  (not through the agent; in Claude Code an `!` prefix runs it in-session) — `read -rs` collects
+  the key without echoing it:
+
+  ```bash
+  read -rs k && printf '%s=%s\n' "<KEY_ENV_VAR>" "$k" > "<REPO>/.saws-migrate/.source-provider-env" && chmod 600 "<REPO>/.saws-migrate/.source-provider-env" && unset k
+  ```
+
+  Substitute the literal env-var name and repo path when presenting it (those are not secrets).
+  Then run the format check below and set the same flags as above.
 - **Skip** → `sourceBaselineAvailable = false`, `sourceKeyRef = ""`.
+
+Whichever path wrote the file, verify the format (never prints the key; catches a value
+written without the `NAME=` prefix, which the baseline parser would silently miss):
+
+```bash
+grep -qE '^(OPENAI|ANTHROPIC|GEMINI)_API_KEY=.+' "$REPO/.saws-migrate/.source-provider-env" && echo KEY_FORMAT_OK || echo KEY_FORMAT_BAD
+```
+
+On `KEY_FORMAT_BAD`, have the same path that wrote the file rewrite it (do not echo its
+contents).
 
 (`.saws-migrate/` is already self-ignoring from the first command above; the rewriter
 re-asserts this before any commit as a second layer.)
 
-**IMPORTANT:** Do NOT use `export` or environment variables for the key. They do not persist
-across Bash tool calls or into workflow subagents. Write to the file path above.
+**IMPORTANT:** The file is the handoff mechanism — do NOT rely on `export` to carry the key
+into later steps. Shell state set in one Bash call does not persist into other calls or into
+workflow subagents; only a profile-exported variable (the `ENV_KEY_PRESENT` path above) is
+reliably visible, and even that must be materialized to the file for the baseline runner.
 
 ### B4 — Bedrock preflight
 
@@ -491,7 +517,7 @@ user's own pre-existing branch and deleting it would destroy their work):
 
 > To discard: `git checkout <your original branch>`, `git branch -D <rewrite.branch_name>`,
 > `git tag -d saws-migrate-baseline`, and `rm -rf .saws-migrate .migration` removes all
-> migration artifacts (including the API key file — also consider rotating the key you pasted).
+> migration artifacts (including the API key file).
 
 ---
 
