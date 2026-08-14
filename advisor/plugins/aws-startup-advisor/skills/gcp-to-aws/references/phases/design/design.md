@@ -95,7 +95,7 @@ After outer-run `HANDOFF_OK`, present a compact card built from the design artif
 | [top 3-5 PRIMARY mappings] | [aws_service] | [Standard pairing / Tailored to your setup / Estimated from billing only] |
 
 [If any resource is "Deferred — specialist engagement":]
-Deferred (specialist engagement): [service names] — excluded from automated design and TCO.
+Deferred (specialist engagement): [service names] — excluded from automated design and estimated AWS monthly run rate.
 
 What Estimate answers next: your GCP baseline vs estimated AWS monthly cost
 (three scenarios), per-service breakdown, and the migrate/stay recommendation.
@@ -110,7 +110,9 @@ output message below:
 - Set `phases.design` to `"completed"`
 - Set `current_phase` to `"estimate"`
 
-Output to user: "AWS Architecture designed. Proceeding to Phase 4: Estimate Costs."
+Output to user: "Phase 3 of 6 complete (Design). AWS architecture designed. Remaining: Estimate → Generate (+ optional Feedback). Next artifact: estimation-infra.json (and estimation-ai.json for AI workloads). Proceeding to Phase 4: Estimate Costs."
+
+_Breadcrumbs are emitted only after outer-run `HANDOFF_OK` — never on `GATE_FAIL`, never from inner workshop reprices._
 
 ## Reference Files
 

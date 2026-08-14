@@ -1,5 +1,13 @@
 # Phase 5: Generate Migration Artifacts (Orchestrator)
 
+> **CONSENT GUARD (check before Step 1):** This phase runs only by explicit
+> opt-in. If `.phase-status.json` → `run_mode` is not `"decide_and_execute"`:
+> when this turn's user message is an explicit Execute request ("generate the
+> Terraform", "create the migration scripts", gate choice C), set
+> `run_mode: "decide_and_execute"` (read-merge-write) and proceed; otherwise
+> STOP — do not generate anything — and re-present the Decision gate (or the
+> decide-complete resume offer) from `estimate.md` / `SKILL.md`.
+
 **Execute ALL steps in order. Do not skip or optimize.**
 
 ## Overview
@@ -193,5 +201,7 @@ After the structured block, include:
 
 Output to user:
 
-- If `migration-report.html` exists: "Migration artifact generation complete. All phases of the GCP-to-AWS migration analysis are complete. Your migration report is ready at $MIGRATION_DIR/migration-report.html"
-- If `migration-report.html` is missing: "Migration artifact generation complete. All phases of the GCP-to-AWS migration analysis are complete. Markdown documentation is available at $MIGRATION_DIR/MIGRATION_GUIDE.md and $MIGRATION_DIR/README.md. (HTML report generation is optional and non-blocking.)"
+- If `migration-report.html` exists: "Phase 5 of 6 complete (Generate). All required phases of the GCP-to-AWS migration analysis are complete. Your migration report is ready at $MIGRATION_DIR/migration-report.html. Optional: Phase 6 (Feedback)."
+- If `migration-report.html` is missing: "Phase 5 of 6 complete (Generate). All required phases of the GCP-to-AWS migration analysis are complete. Markdown documentation is available at $MIGRATION_DIR/MIGRATION_GUIDE.md and $MIGRATION_DIR/README.md. (HTML report generation is optional and non-blocking.) Optional: Phase 6 (Feedback)."
+
+_Breadcrumbs are emitted only after outer-run `HANDOFF_OK` — never on `GATE_FAIL`, never from inner workshop reprices._
