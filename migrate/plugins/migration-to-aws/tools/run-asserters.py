@@ -31,6 +31,7 @@ ASSERTERS = {
     "heroku-workshop/check_expected_workshop.py": "heroku-workshop/after-arm64-reprice",
     "heroku-nonweb-scaling/check_expected_nonweb_scaling.py": "heroku-nonweb-scaling/after-design",
     "gcp-workshop/check_expected_workshop.py": "gcp-workshop/after-graviton-reprice",
+    "gcp-decision-gate/check_expected_decide.py": "gcp-decision-gate/after-decide-complete",
     "heroku-live-capture/check_expected_drift.py": None,
     "heroku-live-capture/check_expected_estimate.py": None,
     "gcp-live-capture/check_expected_drift.py": None,
