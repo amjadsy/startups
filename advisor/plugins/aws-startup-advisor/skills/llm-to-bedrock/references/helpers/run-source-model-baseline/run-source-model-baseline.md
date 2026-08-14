@@ -44,7 +44,7 @@ grep -qE '^(OPENAI|ANTHROPIC|GEMINI)_API_KEY=.+' <REPO>/.saws-migrate/.source-pr
 
 - `absent` → return immediately with `status: "skipped"`.
 - `present` + `format_bad` → the file exists but has no parseable `KEY=VALUE` line (e.g. a bare
-  key was pasted without the env-var prefix). Do NOT proceed — the resolver would silently hit
+  key was written without the env-var prefix). Do NOT proceed — the resolver would silently hit
   the `no_key` path. Return `status: "skipped"` with a note telling the caller the env file is
   malformed and needs re-collection in `KEY=VALUE` form. Never print the file's contents.
 - `present` + `format_ok` → continue.
@@ -67,12 +67,14 @@ migration report's pass rate is meaningful only when the live baseline
 is the SAME deterministic model the customer said they were running. A
 cross-line swap or a moving alias is worse than no baseline.
 
-Write a small resolver script and run it. The resolver:
+Run the committed resolver script `<scriptsDir>/resolve_source_model.py` (do NOT write an
+ad-hoc script — instructions only ever run committed scripts, with paths passed as
+arguments). The resolver:
 
 1. Calls the provider's list-models endpoint with the env key:
    - OpenAI: `GET https://api.openai.com/v1/models`
    - Anthropic: `GET https://api.anthropic.com/v1/models`
-   - Gemini: `GET https://generativelanguage.googleapis.com/v1beta/models?key=...`
+   - Gemini: `GET https://generativelanguage.googleapis.com/v1beta/models` (key via `x-goog-api-key` header, never a query parameter)
 2. Looks for, in order:
    - **Exact match** for `source_model_id` → use unchanged.
    - **Safe prefix match**: a catalog ID that starts with
@@ -94,116 +96,22 @@ Write a small resolver script and run it. The resolver:
      whose names share the longest common prefix with
      `source_model_id`, for the caller to show the user.
 
-Example resolver script (OpenAI shown; adapt headers/path for
-Anthropic / Gemini). Use the `Write` tool to save it to a local temp file
-(e.g. `<REPO>/.saws-migrate/eval-results/resolve_source_model.py`):
+The script detects the provider from whichever `*_API_KEY` the env file
+carries (all three are implemented — OpenAI, Anthropic, Gemini) and calls only
+that provider's list-models endpoint. The resolution rules above are the
+behavior contract, unit-locked in `test_resolve_source_model.py`.
 
-```python
-import json, os, sys, urllib.request
-
-with open("<REPO>/.saws-migrate/.source-provider-env") as f:
-    for line in f:
-        line = line.strip()
-        if "=" in line:
-            k, v = line.split("=", 1)
-            os.environ[k] = v
-
-PLAN_ID = os.environ["PLAN_MODEL_ID"]
-
-def list_openai():
-    req = urllib.request.Request(
-        "https://api.openai.com/v1/models",
-        headers={"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"},
-    )
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return [m["id"] for m in json.loads(r.read())["data"]]
-
-def list_anthropic():
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/models",
-        headers={
-            "x-api-key": os.environ["ANTHROPIC_API_KEY"],
-            "anthropic-version": "2023-06-01",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return [m["id"] for m in json.loads(r.read())["data"]]
-
-def list_gemini():
-    url = (f"https://generativelanguage.googleapis.com/v1beta/models"
-           f"?key={os.environ['GEMINI_API_KEY']}")
-    with urllib.request.urlopen(url, timeout=30) as r:
-        # Gemini returns names like "models/gemini-1.5-pro"; strip prefix
-        return [m["name"].split("/", 1)[-1] for m in json.loads(r.read()).get("models", [])]
-
-if "OPENAI_API_KEY" in os.environ:
-    catalog = list_openai()
-elif "ANTHROPIC_API_KEY" in os.environ:
-    catalog = list_anthropic()
-elif "GEMINI_API_KEY" in os.environ:
-    catalog = list_gemini()
-else:
-    print(json.dumps({"status": "no_key"})); sys.exit(2)
-
-if PLAN_ID in catalog:
-    print(json.dumps({"status": "exact", "resolved_id": PLAN_ID}))
-    sys.exit(0)
-
-prefix_hits = [m for m in catalog
-               if m == PLAN_ID
-               or m.startswith(PLAN_ID + "-")]
-
-# A bare prefix match is NOT enough to auto-resolve. "gpt-4o-mini",
-# "gpt-5-pro", "claude-3-5-sonnet-latest" all start with a plausible
-# plan ID's prefix but are different model lines / non-deterministic
-# aliases. Only auto-pick when the suffix after PLAN_ID is a date
-# (YYYY-MM-DD) or pure version number — these are the same model line,
-# just a date- or version-pinned variant. Any alphabetic suffix
-# (mini, nano, pro, turbo, codex, latest, ...) escalates to the user.
-import re
-SAFE_SUFFIX = re.compile(r"^\d{4}-\d{2}-\d{2}$|^\d[\d.]*$")
-
-def safe_variant(catalog_id):
-    if catalog_id == PLAN_ID:
-        return True
-    suffix = catalog_id[len(PLAN_ID) + 1:]  # strip "PLAN_ID-"
-    return bool(SAFE_SUFFIX.match(suffix))
-
-safe_hits = [m for m in prefix_hits if safe_variant(m)]
-if safe_hits:
-    safe_hits.sort(key=len)
-    print(json.dumps({"status": "prefix",
-                      "resolved_id": safe_hits[0],
-                      "all_hits": safe_hits}))
-    sys.exit(0)
-
-# Prefix matched but ONLY via unsafe suffixes — fall through to
-# user-pick path with the prefix hits surfaced as candidates so the
-# user can pick the right model line themselves.
-if prefix_hits:
-    print(json.dumps({"status": "not_found",
-                      "candidates": prefix_hits[:5],
-                      "ambiguous_prefix": True}))
-    sys.exit(0)
-
-# No prefix match — return top 5 nearest (longest common prefix len)
-def lcp(a, b):
-    n = min(len(a), len(b))
-    i = 0
-    while i < n and a[i] == b[i]:
-        i += 1
-    return i
-
-ranked = sorted(catalog, key=lambda m: -lcp(m, PLAN_ID))[:5]
-print(json.dumps({"status": "not_found", "candidates": ranked}))
-```
-
-Run it through the pinned toolchain, passing the plan model id via env:
+Run it, passing the plan model id via env and the env-file path as the argument:
 
 ```bash
-PLAN_MODEL_ID=<source_model_id> \
-  uv run --project <scriptsDir> python <REPO>/.saws-migrate/eval-results/resolve_source_model.py
+SOURCE_PROVIDER=<source_provider> \
+  PLAN_MODEL_ID=<source_model_id> \
+  uv run --project <scriptsDir> python <scriptsDir>/resolve_source_model.py <REPO>/.saws-migrate/.source-provider-env
 ```
+
+`SOURCE_PROVIDER` (this skill's declared input) is authoritative for provider selection —
+if the env file carries several provider keys, the stated provider's key is used and a
+missing key is a hard `no_key`, never a guess.
 
 Interpret the JSON output:
 
@@ -213,6 +121,7 @@ Interpret the JSON output:
 | `prefix`    | Use `resolved_id` as `SOURCE_MODEL_ID` for Step 2. Caller appends to the evaluator's returned notes field: `live baseline used <resolved_id> (resolved from plan id <source_model_id>)`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `not_found` | Do NOT auto-pick a catalog entry and do NOT prompt — the evaluator that loads this skill is non-interactive. Skip the live baseline: return `live_source_baseline: false` and record the situation in the evaluator's `notes` so the orchestration skill can surface the model choice to the user. Include up to 5 candidates from the JSON in the note, **using the raw catalog ID exactly as returned by the provider — do NOT add invented qualifiers like "(closest match)", "(latest stable)", "(recommended)", or any other editorializing tag. The skill has no basis to rank these; the user does.** Phrasing depends on the `ambiguous_prefix` flag in the JSON: if `true`, the candidates DO start with the plan ID but only via alphabetic / alias suffixes (e.g. `gpt-5.4-mini`, `gpt-5.4-pro`); note `plan source model <source_model_id> has prefix matches in the <provider> catalog but only as different model lines or non-deterministic aliases — orchestration skill should ask the user to pick the right model line or skip the live baseline; candidates: <list>`. Otherwise (no prefix hits at all): `plan source model <source_model_id> not in <provider> catalog — orchestration skill should ask the user to pick the closest match or skip the live baseline; candidates: <list>`. |
 | `no_key`    | env file malformed; return `live_source_baseline: false`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `error`     | catalog fetch failed (network/provider error; `detail` is redacted — it never carries the key). Return `live_source_baseline: false` and record the redacted detail in notes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 If the orchestration skill later re-invokes the baseline with a user-chosen
 candidate, the caller appends to notes: `live baseline used <chosen_id> (selected from candidates after plan id <source_model_id> not found, confirmed by user)`.
@@ -220,158 +129,28 @@ candidate, the caller appends to notes: `live baseline used <chosen_id> (selecte
 NEVER silently substitute a different model line. The `prefix` rule
 above is the only automatic substitution allowed.
 
-### Step 2: Write the runner script
+### Step 2: Run the baseline script
 
-Use the `Write` tool to save it to a local temp file
-(e.g. `<REPO>/.saws-migrate/eval-results/source_baseline.py`):
+Run the committed `<scriptsDir>/source_baseline.py` (do NOT write an ad-hoc
+script). It detects the provider from the env file, builds the
+provider-correct request shape (OpenAI `max_completion_tokens`, Anthropic
+top-level `system`, Gemini `systemInstruction` — shapes unit-locked in
+`test_source_baseline.py`), applies the partial-resume guard (prompts with a
+`live` row in the output are never re-billed; failed rows are retried), and
+writes the output contract below.
 
-```python
-import json, os, sys, urllib.request, urllib.error
-
-with open("<REPO>/.saws-migrate/.source-provider-env") as f:
-    for line in f:
-        line = line.strip()
-        if not line or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        os.environ[k] = v
-
-SOURCE_MODEL_ID = os.environ.get("SOURCE_MODEL_ID", "<source_model_id>")
-
-def call_openai(system, user_text):
-    # Note: requests intentionally use provider defaults for temperature/top_p —
-    # the golden dataset doesn't record per-request sampling params, and the same
-    # defaults-only shape is used for all three providers so the comparison is
-    # apples-to-apples. maxTokens 4096 matches the Bedrock eval side.
-    req_body = {
-        "model": SOURCE_MODEL_ID,
-        "messages": ([{"role": "system", "content": system}] if system else []) +
-                    [{"role": "user", "content": user_text}],
-        # gpt-5.x rejects max_tokens (HTTP 400 unsupported_parameter) and
-        # requires max_completion_tokens. The newer name is accepted by all
-        # current models (gpt-3.5-turbo / gpt-4-turbo / gpt-4.1 / gpt-4o too),
-        # so we send it unconditionally — no per-model fallback needed.
-        "max_completion_tokens": 4096,
-    }
-    req = urllib.request.Request(
-        "https://api.openai.com/v1/chat/completions",
-        data=json.dumps(req_body).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
-            "Content-Type": "application/json",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        data = json.loads(resp.read())
-    return data["choices"][0]["message"]["content"]
-
-def call_anthropic(system, user_text):
-    req_body = {
-        "model": SOURCE_MODEL_ID,
-        "max_tokens": 4096,
-        "messages": [{"role": "user", "content": user_text}],
-    }
-    if system:
-        req_body["system"] = system
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
-        data=json.dumps(req_body).encode("utf-8"),
-        headers={
-            "x-api-key": os.environ["ANTHROPIC_API_KEY"],
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        data = json.loads(resp.read())
-    return data["content"][0]["text"]
-
-def call_gemini(system, user_text):
-    req_body = {
-        "contents": [{"parts": [{"text": user_text}]}],
-        # parity with the other providers' 4096-token cap
-        "generationConfig": {"maxOutputTokens": 4096},
-    }
-    if system:
-        # systemInstruction mirrors how the customer's app passes system prompts —
-        # concatenating into the user turn would change model behavior vs production.
-        req_body["systemInstruction"] = {"parts": [{"text": system}]}
-    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-           f"{SOURCE_MODEL_ID}:generateContent?key={os.environ['GEMINI_API_KEY']}")
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(req_body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        data = json.loads(resp.read())
-    return data["candidates"][0]["content"]["parts"][0]["text"]
-
-if "OPENAI_API_KEY" in os.environ:
-    call = call_openai
-elif "ANTHROPIC_API_KEY" in os.environ:
-    call = call_anthropic
-elif "GEMINI_API_KEY" in os.environ:
-    call = call_gemini
-else:
-    print("FAIL: no recognized provider key in <REPO>/.saws-migrate/.source-provider-env",
-          file=sys.stderr)
-    sys.exit(2)
-
-with open(os.environ.get("GOLDEN_DATASET_PATH", "<REPO>/.saws-migrate/golden-dataset/prompts.jsonl")) as f:
-    prompts = [json.loads(line) for line in f]
-
-# Partial-resume guard: prompts whose id already has a LIVE row in the output
-# are skipped — re-calling the source provider for them would double-spend the
-# user's budget. Failed rows (non-"live" status) are retried.
-output_path = os.environ.get("OUTPUT_PATH", "<REPO>/.saws-migrate/eval-results/source_baselines.jsonl")
-results = []
-done_live = set()
-if os.path.exists(output_path):
-    with open(output_path) as f:
-        for line in f:
-            if line.strip():
-                row = json.loads(line)
-                if row.get("status") == "live":
-                    results.append(row)
-                    done_live.add(row["id"])
-prompts = [p for p in prompts if p["id"] not in done_live]
-if done_live:
-    print(f"RESUME: {len(done_live)} live baselines kept, {len(prompts)} to fetch")
-
-for p in prompts:
-    try:
-        out = call(p.get("system_prompt") or "", p["user_prompt"])
-        results.append({"id": p["id"], "source_response": out, "status": "live"})
-    except urllib.error.HTTPError as e:
-        results.append({"id": p["id"], "source_response": "",
-                        "status": f"http_{e.code}: {e.reason}"})
-    except Exception as e:
-        results.append({"id": p["id"], "source_response": "",
-                        "status": f"error: {type(e).__name__}: {e}"})
-
-os.makedirs(os.path.dirname(output_path), exist_ok=True)
-with open(output_path, "w") as f:
-    for r in results:
-        f.write(json.dumps(r) + "\n")
-
-ok = sum(1 for r in results if r["status"] == "live")
-print(f"live source baselines: {ok}/{len(results)}")
-```
-
-### Step 3: Execute
-
-Pass `SOURCE_MODEL_ID`, `GOLDEN_DATASET_PATH`, `OUTPUT_PATH` via env so the
-script does not need substitution:
+Pass `SOURCE_MODEL_ID`, `GOLDEN_DATASET_PATH`, `OUTPUT_PATH` via env and the
+env-file path as the argument:
 
 ```bash
-SOURCE_MODEL_ID=<source_model_id> \
+SOURCE_PROVIDER=<source_provider> \
+  SOURCE_MODEL_ID=<source_model_id> \
   GOLDEN_DATASET_PATH=<golden_dataset_path> \
   OUTPUT_PATH=<output_path> \
-  uv run --project <scriptsDir> python <REPO>/.saws-migrate/eval-results/source_baseline.py
+  uv run --project <scriptsDir> python <scriptsDir>/source_baseline.py <REPO>/.saws-migrate/.source-provider-env
 ```
 
-### Step 4: Classify the result
+### Step 3: Classify the result
 
 Parse the printed `live K/N` line and inspect the JSONL.
 
@@ -390,6 +169,11 @@ Parse the printed `live K/N` line and inspect the JSONL.
   `<REPO>/.saws-migrate/.source-provider-env` on the local host.
 - The script reads the key from the env file into `os.environ` only —
   never writes it to stdout or to the output JSONL.
+- The key is only ever sent as an auth header to its OWN provider's official
+  endpoint — `api.openai.com`, `api.anthropic.com`, or
+  `generativelanguage.googleapis.com` — never to any other host, and never as
+  a URL query parameter (query strings end up in logs). The endpoint set is
+  pinned by `test_source_baseline.py`.
 
 ## Output contract
 
