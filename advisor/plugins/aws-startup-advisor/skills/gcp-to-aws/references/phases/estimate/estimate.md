@@ -160,7 +160,7 @@ for Terraform/scripts).
 Present (values from the active estimate artifacts; one line each):
 
 ```
-Estimate complete.
+Phase 4 of 6 complete (Estimate). Remaining: Generate (+ optional Feedback).
 
 ### Decision pack ready
 
@@ -214,7 +214,11 @@ commit." Suggest at most one.
   Generate.
 
 For AI-only / billing-only runs (no infra inventory), present the gate without
-option B and set `phases.workshop` → `"completed"`.
+option B and set `phases.workshop` → `"completed"`. Prefix the presented gate
+with the same breadcrumb line: "Phase 4 of 6 complete (Estimate). Remaining:
+Generate (+ optional Feedback)."
+
+_Breadcrumbs are emitted only after outer-run `HANDOFF_OK` — never on `GATE_FAIL`, never from inner workshop reprices._
 
 ## Reference Files
 

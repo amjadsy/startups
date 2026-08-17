@@ -126,7 +126,7 @@ contract but never replaces it. Resolve each unit's model and `api_path` from IT
 never take one unit's decision from another or from a run-wide plan scalar.
 
 For each unit, `design.json.units[<id>].model_recommendation.model` carries the selected
-path-specific model ID (for example, `anthropic.claude-sonnet-4-6`).
+path-specific model ID (for example, `anthropic.claude-sonnet-5`).
 `model_recommendation.invocation_model_id` is the exact account-callable ID only after CRIS
 resolution. These identities must remain separate.
 
@@ -155,11 +155,11 @@ The block's `target_bedrock_model` and path should equal `model_recommendation` 
 validated them. If they differ, stop and return to Model Recommend; do not choose one silently.
 
 **Strip environment annotations from the model id.** The running assistant's model name may
-carry a context-window annotation like `[1m]` (e.g. `us.anthropic.claude-sonnet-4-6[1m]`).
+carry a context-window annotation like `[1m]` (e.g. `us.anthropic.claude-sonnet-5[1m]`).
 That suffix is a harness label, NOT a valid Bedrock model/inference-profile id — a Bedrock
 call with it 404s. Before writing the id into any generated file, strip any trailing
 `[...]` bracket annotation. The id you emit must be exactly what Bedrock accepts (e.g.
-`us.anthropic.claude-sonnet-4-6`). If unsure of the exact id, use the `TODO: verify model id`
+`us.anthropic.claude-sonnet-5`). If unsure of the exact id, use the `TODO: verify model id`
 placeholder rather than a bracket-tagged string.
 
 **Single-unit path:** when `units[]` length is 1, the above logic applies to the one unit —
