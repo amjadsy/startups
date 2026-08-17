@@ -111,8 +111,27 @@ use, so a reader who reads one section is not relying on a footer they may never
 
 ## Pre-scoring verification contract
 
-Before scoring, inspect every matching runtime hard constraint marked `verification_required`. A record may finalize an elimination only when it contains all of the following: `status: "verified"`; `verified_this_run: true`; a non-empty public AWS documentation URL in `source` that exactly matches one of that constraint's `verification_sources`; and the canonical observed string in `value`. The observed value must exactly equal that constraint's `verification_expected_value` in the runtime profile. Record it as `answers.system.current_run_verifications[verification_key] = {"status":"verified","verified_this_run":true,"source":"https://docs.aws.amazon.com/...","value":"<canonical observed value>"}`. Otherwise write no verified record (or an explicit `not_verified`/`failed` record).
+Before scoring, inspect every matching runtime hard constraint marked `verification_required`. Do not place verification records in `seed.json` or `answers.json`: those files are reusable workload input and cannot prove that a lookup happened in this run.
+
+After this run observes a verification result, write `$RUN_DIR/current-run-verifications.json` using `scripts/schemas/current-run-verifications.json`:
+
+```json
+{
+  "artifact_type": "agent-advisor.current-run-verifications",
+  "schema_version": 1,
+  "run_id": "<the $RUN_DIR directory name>",
+  "verifications": {
+    "<verification_key>": {
+      "status": "verified",
+      "source": "https://docs.aws.amazon.com/...",
+      "value": "<canonical observed value>"
+    }
+  }
+}
+```
+
+The artifact is run-materialized evidence: write it only after this run actually observes the source, and validate it before scoring. `score_units.py` verifies that its `run_id` matches the directory containing `answers.json`; absent or invalid evidence is ignored only by leaving the result provisional, while a mismatched artifact is a hard error. A verified record must use a public AWS documentation URL that exactly matches a constraint's `verification_sources`, and its `value` must exactly match that constraint's `verification_expected_value`. Otherwise omit the verified record or record `not_verified`/`failed`.
 
 One verification key represents exactly one service claim. Do not use CPU/memory evidence to certify GPU support, or a general service page to certify an unobserved limit. A changed observed value is evidence that the static profile needs review, not permission to apply the old elimination.
 
-Cached profile values, a prior run, and unobserved documentation are useful context but are not current-run verification. They cannot hard-eliminate a runtime and cannot support final pricing, availability, quota, or I/O-wait billing claims. The scorer therefore emits deferred verification requirements (including the exact expected value) and a `provisional` recommendation until valid evidence is supplied. This procedure is mandatory before any final recommendation or release decision.
+Cached profile values, a prior run, and unobserved documentation are useful context but are not current-run verification. They cannot hard-eliminate a runtime and cannot support final pricing, availability, quota, or I/O-wait billing claims. The scorer therefore emits deferred verification requirements (including the exact expected value) and a `provisional` recommendation until valid run-materialized evidence is supplied. This procedure is mandatory before any final recommendation or release decision.

@@ -14,6 +14,7 @@ _assemble:
   _file: phases/clarify/clarify-assemble.md
 _produces:
   - answers.json
+  - current-run-verifications.json
   - scoring-result.json
 _advances_to: model-recommend
 _preconditions:
@@ -23,6 +24,10 @@ _postconditions:
   - _check_file_exists: answers.json
     _on_failure: _halt_and_inform
   - _validate_json: answers.json
+    _on_failure: _halt_and_inform
+  - _check_file_exists: current-run-verifications.json
+    _on_failure: _halt_and_inform
+  - _validate_json: current-run-verifications.json
     _on_failure: _halt_and_inform
   - _check_file_exists: scoring-result.json
     _on_failure: _halt_and_inform
@@ -314,11 +319,13 @@ guaranteed, so `units{}` is never empty and there is always a scored primary to 
 ```bash
 # score_units.py loops the agent_session units, calling scoring.py (a pure function) once per
 # unit, and mirrors the primary unit's result at the top level (what single-unit consumers and
-# the legacy scoring-result.verdict read). Everything the loop needs is in answers.json (ALWAYS
-# present): each unit carries its own workload_class (persisted in Step 4) and entry_point is at
-# the top level. It reads NO other file, so it works on runs that skipped Discover (no
-# context-signals.json). Do NOT inline this logic as an ad-hoc interpreter one-liner — instructions must only run
-# committed scripts, with paths passed as arguments.
+# the legacy scoring-result.verdict read). Workload answers come from answers.json (ALWAYS
+# present); run-materialized verification evidence comes only from the sibling
+# current-run-verifications.json artifact, never from answers.json or seed.json. Each unit carries
+# its own workload_class (persisted in Step 4) and entry_point is at the top level. It works on
+# runs that skipped Discover (no context-signals.json). Do NOT inline this logic as an ad-hoc
+# interpreter one-liner — instructions must only run committed scripts, with paths passed as
+# arguments.
 SCRIPTS="${CLAUDE_PLUGIN_ROOT}/skills/agent-advisor/scripts"
 uv run "$SCRIPTS/score_units.py" "$RUN_DIR/answers.json" > $RUN_DIR/scoring-result.json
 ```
@@ -343,4 +350,4 @@ Bedrock model/path contract before Confirm asks the user to accept runtime and m
 
 Load `references/decision-refs/maturity-readiness.md`. Resolve `target_maturity` from the seed first, else from Intake state; write it top-level in `answers.json`. For `private_beta` or `production`, ask only the missing tier controls (identity/tenant boundary, durable state, guardrails and tool authorization, observability, evaluation, release/rollback, and ownership). Write a readable top-level `readiness` object: `{ "status": "ready|gaps|unknown", "gaps": [...], "controls": {...}, "release_gates": [...] }`. Prototype records only controls relevant to its bounded scope.
 
-Before Step 5, follow freshness.md's pre-scoring procedure. Put genuine current-run evidence in `system.current_run_verifications`, keyed by the runtime profile's `verification_key`, with `{ "status": "verified", "verified_this_run": true, "source": "https://docs.aws.amazon.com/...", "value": "<canonical observed value>" }`. A verified record must use a public AWS documentation URL that exactly matches the constraint's `verification_sources`, and its `value` must exactly match that constraint's `verification_expected_value`; cached documentation, a prior run, a missing source/value, or a changed value remain unverified. Scoring may defer a matching verification-required constraint rather than eliminate a runtime; preserve `deferred_verification_requirements` and `recommendation_status` in `scoring-result.json`. A recommendation with any deferred requirement is `provisional` and must name the verification needed before a final selection.
+Before Step 5, follow freshness.md's pre-scoring procedure. Never put current-run verification evidence in `seed.json`, `answers.json`, or `system`: those are reusable workload answers. Initialize `$RUN_DIR/current-run-verifications.json` using `scripts/schemas/current-run-verifications.json` with the artifact type, schema version, the `$RUN_DIR` directory name as `run_id`, and an empty `verifications` object. After this run actually observes a source, add the record keyed by that runtime profile's `verification_key`: `{ "status": "verified", "source": "https://docs.aws.amazon.com/...", "value": "<canonical observed value>" }`. A verified record must use a public AWS documentation URL that exactly matches the constraint's `verification_sources`, and its `value` must exactly match that constraint's `verification_expected_value`; cached documentation, a prior run, missing source/value, or a changed value remain unverified. `score_units.py` loads only this sibling run artifact and rejects a mismatched one. Scoring may defer a matching verification-required constraint rather than eliminate a runtime; preserve `deferred_verification_requirements` and `recommendation_status` in `scoring-result.json`. A recommendation with any deferred requirement is `provisional` and must name the verification needed before a final selection.

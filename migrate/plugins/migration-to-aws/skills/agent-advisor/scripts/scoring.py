@@ -41,8 +41,10 @@ DEFAULTS = {
     **{dim: "unknown" for dim in DIMENSIONS},
     "compliance": ["none"],
     "region": "unknown",
-    "current_run_verifications": {},
 }
+
+RUN_EVIDENCE_ARTIFACT_TYPE = "agent-advisor.current-run-verifications"
+RUN_EVIDENCE_SCHEMA_VERSION = 1
 
 
 def load_profiles(runtimes_dir=RUNTIMES_DIR, statuses=frozenset({"ga"})):
@@ -75,12 +77,37 @@ def _is_authoritative_aws_source(source):
     ))
 
 
+def is_run_materialized_evidence(evidence):
+    """Return whether an artifact satisfies the run-evidence schema contract."""
+    if not (
+        isinstance(evidence, dict)
+        and set(evidence) == {"artifact_type", "schema_version", "run_id", "verifications"}
+        and evidence.get("artifact_type") == RUN_EVIDENCE_ARTIFACT_TYPE
+        and evidence.get("schema_version") == RUN_EVIDENCE_SCHEMA_VERSION
+        and isinstance(evidence.get("run_id"), str)
+        and bool(evidence["run_id"].strip())
+        and isinstance(evidence.get("verifications"), dict)
+    ):
+        return False
+    for record in evidence["verifications"].values():
+        if not isinstance(record, dict) or not set(record) <= {"status", "source", "value"}:
+            return False
+        if record.get("status") not in {"verified", "not_verified", "failed"}:
+            return False
+        if record["status"] == "verified" and (
+            not isinstance(record.get("source"), str)
+            or not isinstance(record.get("value"), str)
+            or not record["value"].strip()
+        ):
+            return False
+    return True
+
+
 def _has_current_run_evidence(record):
-    """Require a current-run, source-backed, non-empty observation."""
+    """Require a source-backed, non-empty observation in a trusted artifact."""
     return (
         isinstance(record, dict)
         and record.get("status") == "verified"
-        and record.get("verified_this_run") is True
         and _is_authoritative_aws_source(record.get("source"))
         and isinstance(record.get("value"), str)
         and bool(record["value"].strip())
@@ -88,10 +115,10 @@ def _has_current_run_evidence(record):
 
 
 def _is_current_run_verified(
-    answers, verification_key, expected_value, verification_sources
+    verifications, verification_key, expected_value, verification_sources
 ):
-    """Return whether evidence is current, source-bound, and exactly value-matching."""
-    record = answers.get("current_run_verifications", {}).get(verification_key)
+    """Return whether run-materialized evidence exactly verifies a constraint."""
+    record = verifications.get(verification_key)
     return (
         _has_current_run_evidence(record)
         and isinstance(expected_value, str)
@@ -103,7 +130,7 @@ def _is_current_run_verified(
     )
 
 
-def _evaluate_hard_constraints(answers, profiles):
+def _evaluate_hard_constraints(answers, profiles, verifications):
     """Return final eliminations and matched constraints awaiting valid evidence."""
     eliminated, deferred = {}, []
     for profile in profiles:
@@ -111,7 +138,7 @@ def _evaluate_hard_constraints(answers, profiles):
             if not _constraint_matches(answers, constraint):
                 continue
             if constraint.get("verification_required") and not _is_current_run_verified(
-                answers,
+                verifications,
                 constraint["verification_key"],
                 constraint.get("verification_expected_value"),
                 constraint.get("verification_sources"),
@@ -131,9 +158,14 @@ def _evaluate_hard_constraints(answers, profiles):
     return eliminated, deferred
 
 
-def _apply_hard_constraints(answers, profiles):
+def _apply_hard_constraints(answers, profiles, run_evidence=None):
     """Compatibility helper returning only final hard eliminations."""
-    return _evaluate_hard_constraints(answers, profiles)[0]
+    verifications = (
+        run_evidence["verifications"]
+        if is_run_materialized_evidence(run_evidence)
+        else {}
+    )
+    return _evaluate_hard_constraints(answers, profiles, verifications)[0]
 
 
 def _compute_scores(answers, profiles, eliminated):
@@ -214,16 +246,14 @@ def _collect_assumptions(raw_answers):
     return out
 
 
-def _collect_warnings(answers, verdict, co_recommend=None):
+def _collect_warnings(answers, verifications, verdict, co_recommend=None):
     warnings = []
     microvms_is_winner = (
         verdict == "lambda_microvms"
         or (verdict == "co_recommend" and "lambda_microvms" in (co_recommend or []))
     )
     if microvms_is_winner and answers.get("launch_concurrency") == "high":
-        if _has_current_run_evidence(
-            answers.get("current_run_verifications", {}).get("lambda_microvms.launch_tps")
-        ):
+        if _has_current_run_evidence(verifications.get("lambda_microvms.launch_tps")):
             warnings.append(
                 "High launch concurrency requires capacity planning against the Lambda "
                 "MicroVMs launch-rate value verified in this run.")
@@ -234,17 +264,22 @@ def _collect_warnings(answers, verdict, co_recommend=None):
     return warnings
 
 
-def score(input_data, profiles=None):
+def score(input_data, profiles=None, run_evidence=None):
     if profiles is None:
         profiles = load_profiles()
     entry_point = input_data.get("entry_point", "build_scratch")
     raw_answers = input_data.get("answers", {})
+    verifications = (
+        run_evidence["verifications"]
+        if is_run_materialized_evidence(run_evidence)
+        else {}
+    )
 
     answers = dict(DEFAULTS)
     answers.update({k: v for k, v in raw_answers.items() if v is not None})
     answers["_entry_point"] = entry_point
 
-    eliminated, deferred = _evaluate_hard_constraints(answers, profiles)
+    eliminated, deferred = _evaluate_hard_constraints(answers, profiles, verifications)
     scores = _compute_scores(answers, profiles, eliminated)
     verdict, co_recommend = _determine_verdict(scores, eliminated)
 
@@ -267,7 +302,7 @@ def score(input_data, profiles=None):
         "deployment_model": deployment_model,
         "agentcore_services": _select_agentcore_services(answers),
         "assumptions_used": _collect_assumptions(raw_answers),
-        "warnings": _collect_warnings(answers, verdict, co_recommend),
+        "warnings": _collect_warnings(answers, verifications, verdict, co_recommend),
     }
     if verdict == "co_recommend":
         result["co_recommend"] = co_recommend

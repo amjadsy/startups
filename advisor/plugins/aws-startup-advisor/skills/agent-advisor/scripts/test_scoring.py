@@ -4,6 +4,7 @@ import pathlib
 import pytest
 
 import scoring
+import score_units
 
 
 def _write_profile(directory, profile):
@@ -85,6 +86,15 @@ _AGENTCORE_COMPUTE_SOURCE = "https://docs.aws.amazon.com/bedrock-agentcore/lates
 _MICROVMS_SOURCE = "https://docs.aws.amazon.com/lambda/latest/dg/"
 
 
+def _run_evidence(verifications, run_id="test-run"):
+    return {
+        "artifact_type": scoring.RUN_EVIDENCE_ARTIFACT_TYPE,
+        "schema_version": scoring.RUN_EVIDENCE_SCHEMA_VERSION,
+        "run_id": run_id,
+        "verifications": verifications,
+    }
+
+
 def test_verification_required_constraint_is_deferred_and_provisional():
     profiles = [{**_minimal("agentcore"), "hard_constraints": [{
         "field": "session_duration", "value": "over_8hr", "reason": "8hr cap",
@@ -103,14 +113,7 @@ def test_verification_required_constraint_is_deferred_and_provisional():
     }]
 
 
-@pytest.mark.parametrize("record", [
-    {"status": "verified", "verified_this_run": True},
-    {"status": "verified", "verified_this_run": True, "source": _AWS_DOCS_SOURCE},
-    {"status": "verified", "verified_this_run": True, "value": "8h"},
-    {"status": "verified", "verified_this_run": True,
-     "source": "https://example.com/agentcore", "value": "8h"},
-])
-def test_incomplete_current_run_evidence_cannot_finalize_elimination(record):
+def test_seed_controlled_evidence_cannot_finalize_elimination():
     profiles = [{**_minimal("agentcore"), "hard_constraints": [{
         "field": "session_duration", "value": "over_8hr", "reason": "8hr cap",
         "verification_required": True, "verification_key": "agentcore.session_cap",
@@ -118,8 +121,34 @@ def test_incomplete_current_run_evidence_cannot_finalize_elimination(record):
     }]}]
     result = scoring.score({"entry_point": "build_scratch", "answers": {
         "session_duration": "over_8hr",
-        "current_run_verifications": {"agentcore.session_cap": record},
+        "current_run_verifications": {
+            "agentcore.session_cap": {
+                "status": "verified", "verified_this_run": True,
+                "source": _AWS_DOCS_SOURCE, "value": "8h",
+            },
+        },
     }}, profiles=profiles)
+    assert result["eliminated"] == {}
+    assert result["recommendation_status"] == "provisional"
+
+
+@pytest.mark.parametrize("record", [
+    {"status": "verified"},
+    {"status": "verified", "source": _AWS_DOCS_SOURCE},
+    {"status": "verified", "value": "8h"},
+    {"status": "verified", "source": "https://example.com/agentcore", "value": "8h"},
+])
+def test_incomplete_run_materialized_evidence_cannot_finalize_elimination(record):
+    profiles = [{**_minimal("agentcore"), "hard_constraints": [{
+        "field": "session_duration", "value": "over_8hr", "reason": "8hr cap",
+        "verification_required": True, "verification_key": "agentcore.session_cap",
+        "verification_expected_value": "8h", "verification_sources": [_AWS_DOCS_SOURCE],
+    }]}]
+    result = scoring.score(
+        {"entry_point": "build_scratch", "answers": {"session_duration": "over_8hr"}},
+        profiles=profiles,
+        run_evidence=_run_evidence({"agentcore.session_cap": record}),
+    )
     assert result["eliminated"] == {}
     assert result["recommendation_status"] == "provisional"
 
@@ -130,12 +159,13 @@ def test_changed_lambda_value_cannot_apply_stale_elimination():
         "verification_required": True, "verification_key": "lambda.timeout",
         "verification_expected_value": "15m", "verification_sources": [_AWS_DOCS_SOURCE],
     }]}]
-    result = scoring.score({"entry_point": "build_scratch", "answers": {
-        "session_duration": "15min_to_8hr", "current_run_verifications": {
-            "lambda.timeout": {"status": "verified", "verified_this_run": True,
-                               "source": _AWS_DOCS_SOURCE, "value": "30m"},
-        },
-    }}, profiles=profiles)
+    result = scoring.score(
+        {"entry_point": "build_scratch", "answers": {"session_duration": "15min_to_8hr"}},
+        profiles=profiles,
+        run_evidence=_run_evidence({"lambda.timeout": {
+            "status": "verified", "source": _AWS_DOCS_SOURCE, "value": "30m",
+        }}),
+    )
     assert result["eliminated"] == {}
     assert result["recommendation_status"] == "provisional"
 
@@ -146,31 +176,84 @@ def test_agentcore_compute_evidence_cannot_certify_gpu_constraint():
         "verification_required": True, "verification_key": "agentcore.gpu_support",
         "verification_expected_value": "unsupported", "verification_sources": [_AGENTCORE_GPU_SOURCE],
     }]}]
-    result = scoring.score({"entry_point": "build_scratch", "answers": {
-        "compute_tier": "gpu", "current_run_verifications": {
-            "agentcore.gpu_support": {"status": "verified", "verified_this_run": True,
-                                        "source": _AGENTCORE_COMPUTE_SOURCE, "value": "unsupported"},
-        },
-    }}, profiles=profiles)
+    result = scoring.score(
+        {"entry_point": "build_scratch", "answers": {"compute_tier": "gpu"}},
+        profiles=profiles,
+        run_evidence=_run_evidence({"agentcore.gpu_support": {
+            "status": "verified", "source": _AGENTCORE_COMPUTE_SOURCE,
+            "value": "unsupported",
+        }}),
+    )
     assert result["eliminated"] == {}
     assert result["recommendation_status"] == "provisional"
 
 
-def test_source_backed_matching_evidence_finalizes_constraint_elimination():
+def test_source_backed_matching_run_materialized_evidence_finalizes_constraint():
     profiles = [{**_minimal("agentcore"), "hard_constraints": [{
         "field": "session_duration", "value": "over_8hr", "reason": "8hr cap",
         "verification_required": True, "verification_key": "agentcore.session_cap",
         "verification_expected_value": "8h", "verification_sources": [_AWS_DOCS_SOURCE],
     }]}]
-    result = scoring.score({"entry_point": "build_scratch", "answers": {
-        "session_duration": "over_8hr", "current_run_verifications": {
-            "agentcore.session_cap": {"status": "verified", "verified_this_run": True,
-                                        "source": _AWS_DOCS_SOURCE, "value": "8h"},
-        },
-    }}, profiles=profiles)
+    result = scoring.score(
+        {"entry_point": "build_scratch", "answers": {"session_duration": "over_8hr"}},
+        profiles=profiles,
+        run_evidence=_run_evidence({"agentcore.session_cap": {
+            "status": "verified", "source": _AWS_DOCS_SOURCE, "value": "8h",
+        }}),
+    )
     assert result["eliminated"] == {"agentcore": "8hr cap"}
     assert result["deferred_verification_requirements"] == []
     assert result["recommendation_status"] == "final"
+
+
+def test_seed_schema_rejects_current_run_verifications():
+    import jsonschema
+
+    schema_path = pathlib.Path(scoring.__file__).parent / "schemas" / "seed.json"
+    schema = json.loads(schema_path.read_text())
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"system": {"current_run_verifications": {}}}, schema)
+
+
+def test_score_units_ignores_seed_evidence_and_uses_run_artifact(tmp_path, capsys):
+    answers_path = tmp_path / "answers.json"
+    answers_path.write_text(json.dumps({
+        "entry_point": "build_scratch",
+        "system": {"current_run_verifications": {"lambda.timeout": {
+            "status": "verified", "verified_this_run": True,
+            "source": _AWS_DOCS_SOURCE, "value": "15m",
+        }}},
+        "primary_unit": "primary-agent",
+        "units": {"primary-agent": {
+            "workload_class": "agent_session", "session_duration": "15min_to_8hr",
+        }},
+    }))
+
+    assert score_units.main([str(answers_path)]) == 0
+    seed_only = json.loads(capsys.readouterr().out)
+    assert "lambda" not in seed_only["eliminated"]
+    assert seed_only["recommendation_status"] == "provisional"
+
+    (tmp_path / score_units.RUN_EVIDENCE_FILENAME).write_text(json.dumps(
+        _run_evidence({"lambda.timeout": {
+            "status": "verified", "source": _AWS_DOCS_SOURCE, "value": "15m",
+        }}, run_id=tmp_path.name)
+    ))
+    assert score_units.main([str(answers_path)]) == 0
+    materialized = json.loads(capsys.readouterr().out)
+    assert "lambda" in materialized["eliminated"]
+    assert materialized["recommendation_status"] == "final"
+
+
+def test_score_units_rejects_evidence_from_another_run(tmp_path):
+    answers_path = tmp_path / "answers.json"
+    answers_path.write_text(json.dumps({"system": {}, "units": {}}))
+    (tmp_path / score_units.RUN_EVIDENCE_FILENAME).write_text(json.dumps(
+        _run_evidence({}, run_id="another-run")
+    ))
+
+    with pytest.raises(ValueError, match="run_id must match"):
+        score_units.main([str(answers_path)])
 
 
 def test_compute_scores_uses_affinity_and_neutral_default():
@@ -312,14 +395,14 @@ def test_assumptions_lists_unknown_dimensions():
 
 def test_warning_fires_for_microvms_high_launch():
     warnings = scoring._collect_warnings(
-        {"launch_concurrency": "high"}, "lambda_microvms")
+        {"launch_concurrency": "high"}, {}, "lambda_microvms")
     assert len(warnings) == 1
     assert "current-run verification" in warnings[0]
 
 
 def test_warning_fires_for_microvms_in_co_recommend():
     warnings = scoring._collect_warnings(
-        {"launch_concurrency": "high"}, "co_recommend",
+        {"launch_concurrency": "high"}, {}, "co_recommend",
         co_recommend=["agentcore", "lambda_microvms"])
     assert len(warnings) == 1
     assert "current-run verification" in warnings[0]
@@ -327,13 +410,13 @@ def test_warning_fires_for_microvms_in_co_recommend():
 
 def test_no_warning_when_microvms_not_in_co_recommend():
     assert scoring._collect_warnings(
-        {"launch_concurrency": "high"}, "co_recommend",
+        {"launch_concurrency": "high"}, {}, "co_recommend",
         co_recommend=["ecs", "eks"]) == []
 
 
 def test_no_warning_for_other_verdict():
     assert scoring._collect_warnings(
-        {"launch_concurrency": "high"}, "agentcore") == []
+        {"launch_concurrency": "high"}, {}, "agentcore") == []
 
 
 def test_score_end_to_end_with_fixture_profiles(tmp_path):
@@ -406,19 +489,18 @@ def test_golden_loads_five_ga_runtimes():
 
 def test_golden_over_8hr_eliminates_agentcore_and_microvms_after_verification():
     # Volatile caps become final eliminations only after current-run verification.
-    result = scoring.score({
-        "entry_point": "migrate",
-        "answers": {
-            "session_duration": "over_8hr",
-            "current_run_verifications": {
-                "agentcore.session_cap": {"status": "verified", "verified_this_run": True,
-                                          "source": _AGENTCORE_SESSION_SOURCE, "value": "8h"},
-                "lambda_microvms.session_cap": {"status": "verified", "verified_this_run": True,
-                                                  "source": _MICROVMS_SOURCE, "value": "8h"},
-                "lambda.timeout": {"status": "verified", "verified_this_run": True,
-                                   "source": _AWS_DOCS_SOURCE, "value": "15m"},
-            },
-        }}, profiles=_real_profiles())
+    result = scoring.score(
+        {"entry_point": "migrate", "answers": {"session_duration": "over_8hr"}},
+        profiles=_real_profiles(),
+        run_evidence=_run_evidence({
+            "agentcore.session_cap": {"status": "verified",
+                                      "source": _AGENTCORE_SESSION_SOURCE, "value": "8h"},
+            "lambda_microvms.session_cap": {"status": "verified",
+                                              "source": _MICROVMS_SOURCE, "value": "8h"},
+            "lambda.timeout": {"status": "verified",
+                               "source": _AWS_DOCS_SOURCE, "value": "15m"},
+        }),
+    )
     assert "agentcore" in result["eliminated"]
     assert "lambda_microvms" in result["eliminated"]
     assert result["recommendation_status"] == "final"
@@ -435,15 +517,16 @@ def test_golden_microvms_wins_process_level_resume():
 
 
 def test_golden_microvms_wins_heavy_non_gpu_after_verification():
-    result = scoring.score({
-        "entry_point": "build_deploy",
-        "answers": {
+    result = scoring.score(
+        {"entry_point": "build_deploy", "answers": {
             "compute_tier": "heavy_non_gpu", "session_duration": "15min_to_8hr",
-            "current_run_verifications": {
-                "agentcore.max_compute": {"status": "verified", "verified_this_run": True,
-                                          "source": _AGENTCORE_COMPUTE_SOURCE, "value": "2vCPU/8GB"},
-            },
-        }}, profiles=_real_profiles())
+        }},
+        profiles=_real_profiles(),
+        run_evidence=_run_evidence({"agentcore.max_compute": {
+            "status": "verified", "source": _AGENTCORE_COMPUTE_SOURCE,
+            "value": "2vCPU/8GB",
+        }}),
+    )
     assert "agentcore" in result["eliminated"]
     assert result["verdict"] == "lambda_microvms"
 
@@ -460,18 +543,20 @@ def test_golden_agentic_io_wait_favors_agentcore():
 
 
 def test_golden_microvms_high_launch_emits_verified_warning():
-    result = scoring.score({
-        "entry_point": "build_deploy",
-        "answers": {
+    result = scoring.score(
+        {"entry_point": "build_deploy", "answers": {
             "compute_tier": "heavy_non_gpu", "session_duration": "15min_to_8hr",
             "launch_concurrency": "high",
-            "current_run_verifications": {
-                "agentcore.max_compute": {"status": "verified", "verified_this_run": True,
-                                          "source": _AGENTCORE_COMPUTE_SOURCE, "value": "2vCPU/8GB"},
-                "lambda_microvms.launch_tps": {"status": "verified", "verified_this_run": True,
-                                                 "source": _AWS_DOCS_SOURCE, "value": "5 (not adjustable)"},
-            },
-        }}, profiles=_real_profiles())
+        }},
+        profiles=_real_profiles(),
+        run_evidence=_run_evidence({
+            "agentcore.max_compute": {"status": "verified",
+                                      "source": _AGENTCORE_COMPUTE_SOURCE, "value": "2vCPU/8GB"},
+            "lambda_microvms.launch_tps": {"status": "verified",
+                                             "source": _AWS_DOCS_SOURCE,
+                                             "value": "5 (not adjustable)"},
+        }),
+    )
     assert result["verdict"] == "lambda_microvms"
     assert any("verified in this run" in w for w in result["warnings"])
 
