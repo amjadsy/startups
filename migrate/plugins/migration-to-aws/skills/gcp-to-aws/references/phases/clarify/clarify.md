@@ -26,13 +26,30 @@ Check `$MIGRATION_DIR/` for existing state:
 
 **Case 1 — Completed preferences exist** (`preferences.json` present):
 
+**Compatibility check (run BEFORE offering reuse):** The existing file may predate the current flow, and the Completion Handoff Gate forbids patching artifacts to pass — so an incompatible file offered for reuse dead-ends at `GATE_FAIL`. Check:
+
+1. **Schema currency** — `metadata.clarify_mode` is present; every constraint has `value`, `chosen_by`, `prompt`, and `design_consequence`; every constraint with `chosen_by: "extracted"` or `"default"` has a `source` field; `design_constraints.cpu_architecture` is present when compute resources exist in the current inventory.
+2. **Discovery match** — the file's `metadata.discovery_artifacts` is consistent with what exists in `$MIGRATION_DIR` now: if `ai-workload-profile.json` exists but the file has no `ai_constraints` (or the reverse), or the inventory has database/compute resources whose required constraints (`availability`, `db_size`) are absent, the file is stale relative to current discovery.
+
+**If both pass**, offer:
+
 > "I found existing migration preferences from a previous run. Would you like to:"
 >
 > A) Re-use these preferences and skip questions
 > B) Start fresh and re-answer all questions
 
 - If A: Run Step 2 item 6 only (BigQuery detection) on current discovery artifacts. If `bigquery_present` is **true**, output the Step 4 **BigQuery / deferred analytics** advisory block once (even though questions are skipped), then skip to Validation Checklist with the existing `preferences.json`.
-- If B: delete `preferences.json`, continue to Step 1.
+- If B: rename `preferences.json` to `preferences-superseded.json` (do not delete — prior answers are unrecoverable otherwise), continue to Step 1.
+
+**If either check fails**, do NOT offer plain reuse — it would fail the gate. Instead:
+
+> "I found preferences from a previous run, but they predate the current flow (missing: [list]). Would you like to:"
+>
+> A) Keep your previous answers where they're still valid — I'll confirm them on the assumption sheet and only ask what's new or missing
+> B) Start fresh and re-answer all questions
+
+- If A: rename the old file to `preferences-superseded.json`, seed the wizard from it — carry each still-valid constraint value forward with its original `chosen_by` (backfilling `prompt`/`design_consequence`/`source` from the current catalog), treat missing constraints as unresolved — and continue to Step 1 (the wizard fills the gaps; carried-forward values appear on the Assumption Sheet for confirmation).
+- If B: rename to `preferences-superseded.json`, continue to Step 1.
 
 **Case 2 — Draft preferences exist** (`preferences-draft.json` present, no `preferences.json`):
 
@@ -472,13 +489,39 @@ _Present each question's options via the structured question tool (e.g. AskUserQ
 - Q3 defaults to B ($1K–$5K) with a report caveat that spend was not confirmed.
 - **Q27 must not be silently defaulted in wizard mode** when Category H fired — if the user skips it, record `startup_program_status: "unknown"` with `chosen_by: "default"` and `source: "default:Q27"`; downstream artifacts must use neutral Activate copy (both tiers, no "your status: eligible_*").
 - Q3.5, Q23–Q25, and unresolved multi-instance conflicts fall back to their documented defaults (Q3.5 → E; Q23 → framework-based; Q24 → session; Q25 → medium; conflicts → most conservative posture) with `chosen_by: "default"`.
-  Then skip to Category E opt-in, then Step 5.
+  Then run the **Answer Recap** (below) with the defaulted rows included, then Category E opt-in, then Step 5.
 
 **Interpret answers** using the interpret rules in the category files. Apply early-exit rules triggered by answers (e.g., Q5 correction to multi-cloud → `compute: "eks"`, Q8 → N/A).
 
+### Answer Recap (Check Your Answers)
+
+After the last essential batch is answered and interpreted (and after Q27 when it fired), play back what was recorded — the essentials are the only answers in the flow the user states rather than confirms, and shorthand ("1A 2C") plus plain-word answers pass through an interpretation step the user never sees. One compact table, questions asked in Step 4 only (sheet rows were already confirmed at Step 2.5 — do not repeat them):
+
+```
+### What I recorded — last check before design
+
+| Question | Your answer | Recorded as |
+| -------- | ----------- | ----------- |
+| Compliance (Q2) | "2A" | None |
+| Cutover window (Q7) | "monthly is fine" | Monthly maintenance window |
+| AI spend (Q15) | "about a grand" | $500–$2K/month |
+
+Anything wrong? Name it ("cutover: weekly") — or say "looks good" and I'll proceed to design.
+```
+
+**Always wait.** Present the recap and **wait for the user's response** ("looks good" or a correction) before continuing — interpretation is exactly where a misread silently becomes a design constraint, and the batch opener invites shorthand and plain-word answers, so nearly every real run involves interpretation. One extra turn at the single highest-stakes commit in the flow is the intended cost. Corrections use the Step 2.5 override grammar and set `chosen_by: "user"`.
+
+**Sequence (fixed — do not reorder or combine):**
+
+1. Answer Recap → wait for the user's response
+2. Category E opt-in (if `billing-profile.json` exists) → wait
+3. Step 5 — write `preferences.json`
+
+**"Use defaults for the rest" still gets a recap:** when the user defaults remaining questions, include those rows with `(default applied)` in the "Your answer" column and the defaulted value in "Recorded as" — bulk-defaulting is the highest-risk interpretation of all, and this is the user's one chance to see what "the rest" actually meant. Then wait as above.
+
 ### Full Flow variant ("ask me everything")
 
-When the user opted out of the wizard, run the progressive-batch flow: present ALL active questions (no dispositions) in up to three batches — Strategic (Q1–Q7, minus Q4), Infrastructure (Q8–Q13b incl. Q11b Graviton + Category B), AI (Q14–Q27, Q23–Q26 only if agentic) — writing `preferences-draft.json` between batches with `metadata.batches_completed` / `metadata.batches_remaining` (values: `"strategic"`, `"infrastructure"`, `"ai"`). Per-question skip and "use defaults for the rest" behave as documented. Set `metadata.clarify_mode: "full"`.
+When the user opted out of the wizard, run the progressive-batch flow: present ALL active questions (no dispositions) in up to three batches — Strategic (Q1–Q7, minus Q4), Infrastructure (Q8–Q13b incl. Q11b Graviton + Category B), AI (Q14–Q27, Q23–Q26 only if agentic) — writing `preferences-draft.json` between batches with `metadata.batches_completed` / `metadata.batches_remaining` (values: `"strategic"`, `"infrastructure"`, `"ai"`). Per-question skip and "use defaults for the rest" behave as documented. Set `metadata.clarify_mode: "full"`. The **Answer Recap** above runs after the final batch here too (all answered questions as rows; skipped/defaulted ones summarized in one line, not per-row — intentional compression so a 20+ question full-flow recap stays scannable; the wizard already shows every defaulted essential as a `(default applied)` row because that set is small. Do not silently drop answered questions into the one-liner).
 
 ### Category E Opt-In
 
@@ -747,7 +790,7 @@ Full schema and constraint catalog: `references/shared/schema-preferences.md`.
 15. `ai_constraints.ai_framework` is an array (Q14 is select-all-that-apply). If auto-detected, `chosen_by` is `"extracted"` with `source`.
 16. `metadata.clarify_mode` is one of `"wizard"`, `"full"`, `"fast_path"`, `"simple_hybrid"`.
 
-After writing `preferences.json`, delete `$MIGRATION_DIR/preferences-draft.json` if it exists.
+After writing `preferences.json`, delete `$MIGRATION_DIR/preferences-draft.json` and `$MIGRATION_DIR/preferences-superseded.json` if they exist (the superseded backup has served its purpose once a new complete file exists).
 
 ---
 
@@ -803,6 +846,7 @@ Before handing off to Design:
 - [ ] In wizard mode, the Step 2.5 Assumption Sheet was shown (detected + assumed sections) and the user responded before any essential question was asked
 - [ ] Every constraint with `chosen_by: "extracted"` or `chosen_by: "default"` has a `source` field with the correct prefix (`terraform:`, `billing:`, `inventory:`, `ai-profile:`, or `default:<Qid>`)
 - [ ] Essential questions (Q2, Q7, and conditional Q1/Q3/Q3.5/**Q27**/Q15/Q23–Q25/conflicts) were asked, answered, or explicitly defaulted via "use defaults for the rest"
+- [ ] The Answer Recap was shown after the final Step 4 batch (including defaulted rows on "use defaults for the rest") and the user responded to it before Category E / `preferences.json`
 - [ ] If `bigquery_present` was **true**, the Step 4 BigQuery specialist advisory was shown before questions — **or**, if Step 0 option A (reuse preferences), the same advisory was shown after BigQuery detection
 - [ ] `preferences.json` written to `$MIGRATION_DIR/`
 - [ ] `design_constraints.target_region` is populated with `value` and `chosen_by`

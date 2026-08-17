@@ -175,7 +175,12 @@ If the command fails with dependency errors, investigate the listed resources be
 | High latency after migration                             | Suboptimal instance sizing                          | Review CloudWatch metrics and right-size                                                                                   |
 | `validation-report.json` shows `passed_degraded_offline` | Provider registry was unreachable when Generate ran | From a network-connected shell, run `cd terraform/ && terraform init && terraform validate` to complete the skipped checks |
 
-Rollback Procedure subsection (from generation plan — rollback triggers, steps, and RTO).
+Rollback Procedure subsection (from generation plan). A one-line "rollback via DNS" note is NOT sufficient — cutover is the highest-stress, lowest-judgment moment of the migration, and this subsection is the runbook the reader executes at 2am. It MUST contain:
+
+1. **Triggers — when to pull it:** concrete criteria, not vibes (e.g., "error rate > X% for 10 minutes on the validation checks in `05-validate-migration.sh`", "data validation row counts diverge", "p99 latency > 2x GCP baseline after 30 minutes"). State who decides if the team is more than one person.
+2. **Steps — exact commands:** the literal DNS change to restore (record, old value, new value, TTL implications given the cutover TTL), what to stop on the AWS side, and how to confirm traffic is back on GCP.
+3. **The data question — answer it explicitly:** rows written to the AWS database after cutover do NOT exist in Cloud SQL. State the chosen posture for this stack: (a) brief write-freeze before rollback + export the delta, (b) accept loss of the post-cutover window (viable for low-write apps — say so if Q12 said `steady`/low), or (c) reverse sync required (name the tool). Never leave this implicit — a DNS rollback with unresolved writes silently loses customer data.
+4. **RTO:** how long the rollback takes end-to-end, dominated by DNS TTL.
 
 ### Footer
 
@@ -323,12 +328,27 @@ combined GCP total or overall savings percentage.
 
 Bullet list from design and generation artifacts: Compute, Database, Storage, and AI/ML (if applicable) with GCP service, AWS service, and rationale. For each GCP→AWS mapping, add how it was chosen using `design-refs/fast-path.md` → **User-facing vocabulary**: **Standard pairing**, **Tailored to your setup**, or **Estimated from billing only** (from the design artifact’s `confidence` field). For any service with `human_expertise_required: true`, append: "(Specialist guidance recommended — contact your AWS account team)".
 
-#### TODO Items
+#### Fill-In Checklist (replaces the old "TODO Items" grep hint)
 
-Include a command to find all TODO markers:
+Scan every generated artifact (`terraform/`, `scripts/`, `ai-migration/`) for placeholders (`TODO`, `ACCOUNT_ID`, `<...>` tokens, `example.com` values) and render them as ONE consolidated table — this is the reader's single "before you can apply" list. One row per **value**, not per occurrence (the same billing email appearing in four places is one row listing all four locations). **Step 2b generates only `terraform.tfvars.example`** (the real `terraform.tfvars` is gitignored and never generated), so row 0 is always the copy step — every other row that points at `terraform.tfvars` depends on it having been done first:
+
+```markdown
+## Fill-in checklist — [N] values needed before `terraform plan`
+
+| #   | Value                               | Where to set it                    | Where to get it                                                |
+| --- | ----------------------------------- | ---------------------------------- | -------------------------------------------------------------- |
+| 0   | Create your real tfvars file        | `terraform/`                       | `cp terraform.tfvars.example terraform.tfvars` — do this first |
+| 1   | AWS account ID                      | `terraform/main.tf` backend bucket | `aws sts get-caller-identity --query Account --output text`    |
+| 2   | Ops/billing/security contact emails | `terraform.tfvars`                 | Your team — real inboxes, not aliases you don't read           |
+| 3   | ECR image URI                       | `terraform.tfvars`                 | After first `docker push` — see Phase 2                        |
+| 4   | Cloud SQL source host               | env var for `scripts/02-*.sh`      | Cloud SQL console → instance → Public/Private IP               |
+| ... |                                     |                                    |                                                                |
+```
+
+Every "Where to get it" cell must contain a concrete command, console path, or artifact reference — never just "your value here". Include the same table (or a link to it) in MIGRATION_GUIDE.md's Prerequisites section, and keep the grep one-liner underneath as a verification aid:
 
 ```bash
-grep -rn "TODO" terraform/ scripts/ ai-migration/ 2>/dev/null
+grep -rn "TODO" terraform/ scripts/ ai-migration/ 2>/dev/null   # should return nothing when the checklist is done
 ```
 
 #### Footer
@@ -351,10 +371,10 @@ After generating documentation, verify:
 1. **Commands are syntactically correct**: All bash commands use correct syntax
 1. **No unresolved placeholders**: All `[placeholder]` values are replaced with actual data from artifacts
 1. **Conditional sections match**: Only sections for tracks that actually ran are included
-1. **TODO count is accurate**: Count matches actual TODO markers in generated artifacts
+1. **Fill-in checklist is complete**: row 0 is the `cp terraform.tfvars.example terraform.tfvars` step, every placeholder (`TODO`, `ACCOUNT_ID`, `<...>`, `example.com`) present in generated artifacts appears in the Fill-in checklist table, and every row's "Where to get it" cell contains a concrete command, console path, or artifact reference
 1. **Cost figures match**: Values in README.md match estimation artifacts
 1. **Timeline matches**: Week counts match generation plan artifacts
-1. **Rollback instructions match**: Rollback steps match generation plan
+1. **Rollback instructions match**: Rollback Procedure subsection contains all four contract elements from above — (1) triggers with concrete criteria tied to `05-validate-migration.sh` checks, (2) exact DNS/restore commands with TTL implications, (3) an explicit post-cutover-writes data posture (write-freeze + delta / accepted loss / reverse sync by name), and (4) RTO — and those steps match the generation plan. A one-line "rollback via DNS" fails this check.
 
 ## Phase Completion
 
