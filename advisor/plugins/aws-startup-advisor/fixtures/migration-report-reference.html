@@ -42,6 +42,9 @@
     .metric strong { display: block; font-size: 1.45rem; line-height: 1.2; }
     .metric span { font-size: 0.78rem; color: #656d76; text-transform: uppercase; letter-spacing: 0.02em; }
     .metric small { display: block; color: #656d76; font-size: 0.78rem; margin-top: 0.2rem; }
+    .metric-hero { border: 2px solid #0d7377; }
+    .metric-hero strong { font-size: 1.9rem; }
+    .share-card { background: #f1f8ff; border: 1px solid #54aeff; border-left: 4px solid var(--blue); border-radius: 6px; padding: 0.9rem 1rem; font-size: 0.95rem; }
     .savings { color: var(--green); font-weight: 600; }
     .increase { color: var(--red); font-weight: 600; }
     section { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 1.35rem 1.5rem; margin-bottom: 1.25rem; }
@@ -98,34 +101,6 @@
       <span class="badge badge-draft">Draft preview — not plugin output</span>
     </p>
 
-    <nav class="toc" aria-label="Table of contents">
-      <strong>Contents</strong>
-      <div class="toc-group">Executive summary</div>
-      <ol>
-        <li><a href="#decision-summary">Migration Decision Summary</a></li>
-        <li><a href="#exec-tco">Estimated AWS Monthly Run Rate</a></li>
-        <li><a href="#exec-services">Current Stack Overview</a></li>
-        <li><a href="#exec-costs">Infrastructure Cost Comparison</a></li>
-        <li><a href="#exec-architecture">Architecture Overview</a></li>
-        <li><a href="#exec-security-teaser">Security Posture</a></li>
-        <li><a href="#exec-timeline">Migration Shape</a></li>
-        <li><a href="#exec-risks">Top Risks</a></li>
-        <li><a href="#exec-assumptions">What This Assessment Rests On</a></li>
-        <li><a href="#appendix-assumptions">Assumptions, Exclusions &amp; Validation</a></li>
-      </ol>
-      <div class="toc-group">Appendices</div>
-      <ul class="toc-appendix">
-        <li><a href="#appendix-services">Appendix A — Service Recommendations</a></li>
-        <li><a href="#appendix-costs">Appendix B — Cost Estimates</a></li>
-        <li><a href="#appendix-steps">Appendix C — Migration Steps &amp; Rollback</a></li>
-        <li><a href="#appendix-ai">Appendix D — AI Migration</a></li>
-        <li><a href="#appendix-config">Your Configuration Choices</a></li>
-        <li><a href="#appendix-security">Appendix E — AWS Security Posture</a></li>
-        <li><a href="#appendix-security-gap">Appendix F — Security Gap Analysis</a></li>
-        <li><a href="#appendix-artifacts">Appendix G — Generated Artifacts Catalog</a></li>
-      </ul>
-    </nav>
-
     <!-- EXECUTIVE SUMMARY -->
     <section id="decision-summary">
       <h2>Migration Decision Summary</h2>
@@ -146,12 +121,12 @@
       </div>
 
       <div class="metrics">
-        <div class="metric">
+        <div class="metric metric-hero">
           <span>Infra (Balanced vs GCP)</span>
           <strong class="savings">-32%</strong>
           <small>Est. $112/mo AWS vs $165/mo GCP infra</small>
         </div>
-        <div class="metric">
+        <div class="metric metric-hero">
           <span>Combined AWS run rate (Balanced)</span>
           <strong class="savings">-35%</strong>
           <small>Est. $912/mo AWS vs $1,415/mo GCP (excl. BigQuery)</small>
@@ -166,11 +141,11 @@
           <strong class="savings">-36%</strong>
           <small>Est. ~$800/mo Bedrock vs $1,250/mo GCP AI</small>
         </div>
-        <div class="metric">
-          <span>Activate credits</span>
-          <strong>Up to $5K</strong>
-          <small>Eligible Founders tier · <a href="https://aws.amazon.com/startups/credits/">Apply for credits</a></small>
-        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <strong>AWS Activate:</strong> Eligible for up to $5K in Founders credits.
+        <a href="https://aws.amazon.com/startups/credits/">Apply for AWS Activate credits</a>.
       </div>
 
       <div class="callout callout-warn">
@@ -188,7 +163,7 @@
         <li>You can engage AWS account team for BigQuery analytics in parallel</li>
       </ul>
 
-      <h3>Stay if</h3>
+      <h3>Stay entirely if</h3>
       <ul class="compact">
         <li>You require BigQuery analytics in the <strong>same cutover window</strong> as app infra and cannot run a phased analytics track with specialist planning</li>
         <li>GCP Committed Use Discounts (CUDs) or team GCP expertise outweigh savings</li>
@@ -211,6 +186,51 @@
         <li>Apply for AWS Activate Founders credits before ramping usage</li>
         <li>Schedule phased cutover per cluster creation order</li>
       </ol>
+    </section>
+
+    <nav class="toc" id="toc" aria-label="Table of contents">
+      <strong>Contents</strong>
+      <div class="toc-group">Executive summary</div>
+      <ol>
+        <li><a href="#decision-summary">Migration Decision Summary</a></li>
+        <li><a href="#exec-share">Share With Your CFO</a></li>
+        <li><a href="#exec-tco">Estimated AWS Monthly Run Rate</a></li>
+        <li><a href="#exec-services">Current Stack Overview</a></li>
+        <li><a href="#exec-costs">Infrastructure Cost Comparison</a></li>
+        <li><a href="#exec-architecture">Architecture Overview</a></li>
+        <li><a href="#exec-security-teaser">Security Posture</a></li>
+        <li><a href="#exec-timeline">Migration Shape</a></li>
+        <li><a href="#exec-risks">Top Risks</a></li>
+        <li><a href="#exec-assumptions">What This Assessment Rests On</a></li>
+        <li><a href="#appendix-assumptions">Assumptions, Exclusions &amp; Validation</a></li>
+      </ol>
+      <div class="toc-group">Appendices</div>
+      <ul class="toc-appendix">
+        <li><a href="#appendix-services">Appendix A — Service Recommendations</a></li>
+        <li><a href="#appendix-costs">Appendix B — Cost Estimates</a></li>
+        <li><a href="#appendix-steps">Appendix C — Migration Steps &amp; Rollback</a></li>
+        <li><a href="#appendix-ai">Appendix D — AI Migration</a></li>
+        <li><a href="#appendix-config">Your Configuration Choices</a></li>
+        <li><a href="#appendix-security">Appendix E — AWS Security Posture</a></li>
+        <li><a href="#appendix-security-gap">Appendix F — Security Gap Analysis</a></li>
+        <li><a href="#appendix-artifacts">Appendix G — Generated Artifacts Catalog</a></li>
+        <li><a href="#appendix-glossary">Appendix H — Glossary</a></li>
+      </ul>
+    </nav>
+
+    <section id="exec-share">
+      <h2>Share With Your CFO</h2>
+      <p>The one-paragraph version, ready to forward:</p>
+      <div class="share-card">
+        <p><strong>SF Beach to AWS:</strong> Go, with conditions. The estimated
+        AWS monthly run rate is $912 for infrastructure and AI, compared with a
+        comparable $1,415 GCP baseline, excluding BigQuery on both sides. The
+        migration is phased in dependency order; the database cutover is the
+        binding duration driver and the AI track runs in parallel. Before
+        committing, confirm database availability, the GCP committed-use
+        discount expiration, and the specialist-led BigQuery plan. Confidence:
+        medium.</p>
+      </div>
     </section>
 
     <!-- Combined monthly cloud-service run rate (legacy exec-tco ID) -->
@@ -352,7 +372,7 @@
       </table>
 
       <h3>Architecture diagram</h3>
-      <figure class="diagram-fig">
+      <figure class="diagram-fig" role="img" aria-label="Proposed AWS architecture and migration cluster order">
         <div class="diagram" role="img" aria-label="Internet users reach a public Application Load Balancer over HTTPS in AWS us-west-2. The ALB routes to ECS Fargate running sf-beach-ratings (1 vCPU, 512 MB, up to 10 tasks). Fargate connects to RDS PostgreSQL db.t4g.micro single-AZ, an S3 bucket for images and build artifacts, and Amazon Bedrock (Claude Sonnet plus Nova Canvas). An account-wide security baseline from baseline.tf provides CloudTrail, GuardDuty, Budgets, IAM roles, security groups, NAT Gateway and VPC. BigQuery sf_beach_analytics is deferred to a specialist engagement.">&#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
 &#9474;                         Internet / Users                                 &#9474;
 &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
@@ -497,23 +517,6 @@
         <strong>validation-report.json:</strong> Status <code>passed</code> — fmt, init, and validate all passed.
         Provider: <code>hashicorp/aws v5.100.0</code>. Generated stack aligns with Balanced cost tier.
       </div>
-
-      <h3>Glossary</h3>
-      <table class="glossary-table">
-        <caption>Terms used in this report.</caption>
-        <thead><tr><th scope="col">Term</th><th scope="col">Meaning</th></tr></thead>
-        <tbody>
-          <tr><td>Monthly run rate</td><td>Estimated recurring cloud-service charges; excludes staffing, support, migration labor, and other ownership costs</td></tr>
-          <tr><td>DMS</td><td>AWS Database Migration Service</td></tr>
-          <tr><td>OAI</td><td>CloudFront Origin Access Identity</td></tr>
-          <tr><td>RTO</td><td>Recovery Time Objective</td></tr>
-          <tr><td>CUD</td><td>Committed Use Discount (GCP)</td></tr>
-          <tr><td>SCC</td><td>Security Command Center (GCP)</td></tr>
-          <tr><td>IMDSv2</td><td>EC2 Instance Metadata Service version 2</td></tr>
-          <tr><td>P95</td><td>95th-percentile latency</td></tr>
-          <tr><td>RAG</td><td>Retrieval-Augmented Generation</td></tr>
-        </tbody>
-      </table>
 
       <h3>Design warnings</h3>
       <ul class="compact">
@@ -1063,6 +1066,25 @@ terraform apply</pre>
           <tr><td><code>MIGRATION_GUIDE.md</code></td><td>Step-by-step runbook</td></tr>
           <tr><td><code>STARTUP_PROGRAMS.md</code></td><td>AWS Activate credits guidance</td></tr>
           <tr><td><code>migration-report.html</code></td><td>This comprehensive report</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="appendix-glossary">
+      <h2>Appendix H — Glossary</h2>
+      <table class="glossary-table">
+        <caption>Terms used in this report.</caption>
+        <thead><tr><th scope="col">Term</th><th scope="col">Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>Monthly run rate</td><td>Estimated recurring cloud-service charges; excludes staffing, support, migration labor, and other ownership costs</td></tr>
+          <tr><td>DMS</td><td>AWS Database Migration Service</td></tr>
+          <tr><td>OAI</td><td>CloudFront Origin Access Identity</td></tr>
+          <tr><td>RTO</td><td>Recovery Time Objective</td></tr>
+          <tr><td>CUD</td><td>Committed Use Discount (GCP)</td></tr>
+          <tr><td>SCC</td><td>Security Command Center (GCP)</td></tr>
+          <tr><td>IMDSv2</td><td>EC2 Instance Metadata Service version 2</td></tr>
+          <tr><td>P95</td><td>95th-percentile latency</td></tr>
+          <tr><td>RAG</td><td>Retrieval-Augmented Generation</td></tr>
         </tbody>
       </table>
     </section>
