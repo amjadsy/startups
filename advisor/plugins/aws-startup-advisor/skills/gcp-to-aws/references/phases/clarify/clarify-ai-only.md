@@ -144,13 +144,13 @@ Interpret → `design_constraints.compliance` array (same format as the full flo
 
 > A) Best quality/reasoning | B) Fastest speed | C) Lowest cost | D) Specialized capability (→ Q10) | E) Balanced | F) I don't know
 
-| Answer   | Model Impact                                                |
-| -------- | ----------------------------------------------------------- |
-| Quality  | Claude Sonnet 4.6 primary; Opus 4.7 / 4.6 for hardest tasks |
-| Speed    | Claude Haiku 4.5; also Nova Micro/Lite                      |
-| Cost     | Claude Haiku 4.5 or Nova Micro                              |
-| Special  | Deferred to Q10                                             |
-| Balanced | Claude Sonnet 4.6                                           |
+| Answer   | Model Impact                                        |
+| -------- | --------------------------------------------------- |
+| Quality  | Claude Sonnet 5 primary; Opus 4.8 for hardest tasks |
+| Speed    | Claude Haiku 4.5; also Nova Micro/Lite              |
+| Cost     | Claude Haiku 4.5 or Nova Micro                      |
+| Special  | Deferred to Q10                                     |
+| Balanced | Claude Sonnet 5                                     |
 
 Interpret → `ai_priority`. Default: E → `"balanced"`.
 
@@ -183,23 +183,23 @@ _Skip when:_ `models[].model_id` is populated in `ai-workload-profile.json` **wi
 
 > A) Gemini Flash | B) Gemini Pro | C) GPT-3.5 Turbo | D) GPT-4/4 Turbo | E) GPT-4o | F) GPT-5.4/Mini/Nano | G) GPT-5/5.x (older) | H) GPT-5.5/Pro | I) o-series | J) Claude (Anthropic SDK) | K) Other/Multiple | L) Don't know
 
-| Source         | Baseline Recommendation           | Pricing Context                    |
-| -------------- | --------------------------------- | ---------------------------------- |
-| Gemini Flash   | Claude Haiku 4.5 ($1/$5)          | Strong savings                     |
-| Gemini Pro     | Claude Sonnet 4.6 ($3/$15)        | Comparable tier                    |
-| GPT-3.5 Turbo  | Claude Haiku 4.5 ($1/$5)          | Faster and cheaper                 |
-| GPT-4/4 Turbo  | Claude Sonnet 4.6 ($3/$15)        | Major savings (GPT-4T: $10/$30)    |
-| GPT-4o         | Claude Sonnet 4.6 ($3/$15)        | Modest savings on output           |
-| GPT-5.4        | Claude Sonnet 4.6 ($3/$15)        | ~5% cheaper on OpenAI; near parity |
-| GPT-5.4 Mini   | Nova Lite ($0.06/$0.24)           | 94% cheaper on Bedrock             |
-| GPT-5.4 Nano   | Nova Micro ($0.035/$0.14)         | 87% cheaper on Bedrock             |
-| GPT-5.4 Pro    | Nova 2 Pro ($1.38/$11)            | 94% cheaper on Bedrock             |
-| GPT-5/5.x      | Claude Sonnet 4.6 ($3/$15)        | Savings story is quality, not cost |
-| GPT-5 flagship | Claude Opus 4.7 / 4.6 ($5/$25)    | Cheaper than GPT-5 Pro ($15/$120)  |
-| o-series       | Sonnet 4.6 with extended thinking | o1 $15/$60 → significant savings   |
-| Claude (any)   | Same model on Bedrock             | Client swap only — no model change |
+| Source         | Baseline Recommendation         | Pricing Context                    |
+| -------------- | ------------------------------- | ---------------------------------- |
+| Gemini Flash   | Claude Haiku 4.5 ($1/$5)        | Strong savings                     |
+| Gemini Pro     | Claude Sonnet 5 ($3/$15)        | Comparable tier                    |
+| GPT-3.5 Turbo  | Claude Haiku 4.5 ($1/$5)        | Faster and cheaper                 |
+| GPT-4/4 Turbo  | Claude Sonnet 5 ($3/$15)        | Major savings (GPT-4T: $10/$30)    |
+| GPT-4o         | Claude Sonnet 5 ($3/$15)        | Modest savings on output           |
+| GPT-5.4        | Claude Sonnet 5 ($3/$15)        | ~5% cheaper on OpenAI; near parity |
+| GPT-5.4 Mini   | Nova Lite ($0.06/$0.24)         | 94% cheaper on Bedrock             |
+| GPT-5.4 Nano   | Nova Micro ($0.035/$0.14)       | 87% cheaper on Bedrock             |
+| GPT-5.4 Pro    | Nova 2 Pro ($1.38/$11)          | 94% cheaper on Bedrock             |
+| GPT-5/5.x      | Claude Sonnet 5 ($3/$15)        | Savings story is quality, not cost |
+| GPT-5 flagship | Claude Opus 4.8 ($5/$25)        | Cheaper than GPT-5 Pro ($15/$120)  |
+| o-series       | Sonnet 5 with extended thinking | o1 $15/$60 → significant savings   |
+| Claude (any)   | Same model on Bedrock           | Client swap only — no model change |
 
-Override examples: GPT-4 + Q2=cost → Haiku; Flash + Q10=extended thinking → Sonnet; GPT-4o + Q10=speech → Nova 2 Sonic; GPT-5.5 + Q2=cost → Sonnet 4.6.
+Override examples: GPT-4 + Q2=cost → Haiku; Flash + Q10=extended thinking → Sonnet; GPT-4o + Q10=speech → Nova 2 Sonic; GPT-5.5 + Q2=cost → Sonnet 5.
 
 Interpret → `ai_model_baseline`. Default: auto-detect, fallback Q2 priority-based.
 
@@ -278,7 +278,7 @@ Present with concrete anchors: Critical = autocomplete/live chat; Important = ch
 | Answer    | Impact                                                       |
 | --------- | ------------------------------------------------------------ |
 | Critical  | Haiku/Nova Micro; streaming required; provisioned throughput |
-| Important | Sonnet 4.6 with streaming; standard on-demand                |
+| Important | Sonnet 5 with streaming; standard on-demand                  |
 | Flexible  | Any model; batch inference for cost savings                  |
 
 Interpret → `ai_latency`. Default: B → `"important"`.
@@ -289,11 +289,11 @@ Present with concrete examples: Simple = classify/extract/summarize; Moderate = 
 
 > A) Simple | B) Moderate | C) Complex
 
-| Answer   | Impact                                                                        |
-| -------- | ----------------------------------------------------------------------------- |
-| Simple   | Haiku/Nova Micro sufficient; significant cost savings                         |
-| Moderate | Sonnet 4.6 recommended; Haiku may suffice with prompt engineering             |
-| Complex  | Sonnet 4.6 required; extended thinking considered; Opus 4.7 / 4.6 for hardest |
+| Answer   | Impact                                                                |
+| -------- | --------------------------------------------------------------------- |
+| Simple   | Haiku/Nova Micro sufficient; significant cost savings                 |
+| Moderate | Sonnet 5 recommended; Haiku may suffice with prompt engineering       |
+| Complex  | Sonnet 5 required; extended thinking considered; Opus 4.8 for hardest |
 
 Interpret → `ai_complexity`. Default: B → `"moderate"`.
 
