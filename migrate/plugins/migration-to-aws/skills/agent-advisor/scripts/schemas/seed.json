@@ -45,7 +45,7 @@
     },
     "currentRunVerifications": {
       "type": "object",
-      "description": "Current-run evidence only. A seed may carry these records only when the invoking orchestration actually performed the verification in this run; cached evidence cannot be marked verified.",
+      "description": "Current-run evidence only. A verified record must include a public AWS documentation URL and the non-empty observed canonical value; cached evidence cannot be marked verified.",
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
@@ -53,9 +53,13 @@
         "properties": {
           "status": { "enum": ["verified", "not_verified", "failed"] },
           "verified_this_run": { "type": "boolean" },
-          "source": { "type": "string" },
-          "value": {}
-        }
+          "source": { "type": "string", "pattern": "^https://([A-Za-z0-9-]+\\.)*aws\\.amazon\\.com(/|$)" },
+          "value": { "type": "string", "minLength": 1 }
+        },
+        "allOf": [{
+          "if": { "properties": { "status": { "const": "verified" } } },
+          "then": { "required": ["source", "value"] }
+        }]
       }
     },
     "systemDims": {

@@ -78,10 +78,18 @@ def test_hard_constraint_no_match():
     assert eliminated == {}
 
 
+_AWS_DOCS_SOURCE = "https://docs.aws.amazon.com/lambda/latest/dg/configuration-timeout.html"
+_AGENTCORE_SESSION_SOURCE = "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agents-tools-runtime.html"
+_AGENTCORE_GPU_SOURCE = "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-instances-how-it-works.html"
+_AGENTCORE_COMPUTE_SOURCE = "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-how-it-works.html"
+_MICROVMS_SOURCE = "https://docs.aws.amazon.com/lambda/latest/dg/"
+
+
 def test_verification_required_constraint_is_deferred_and_provisional():
     profiles = [{**_minimal("agentcore"), "hard_constraints": [{
         "field": "session_duration", "value": "over_8hr", "reason": "8hr cap",
         "verification_required": True, "verification_key": "agentcore.session_cap",
+        "verification_expected_value": "8h", "verification_sources": [_AWS_DOCS_SOURCE],
     }]}]
     result = scoring.score({"entry_point": "build_scratch", "answers": {
         "session_duration": "over_8hr"}}, profiles=profiles)
@@ -90,18 +98,76 @@ def test_verification_required_constraint_is_deferred_and_provisional():
     assert result["deferred_verification_requirements"] == [{
         "runtime": "agentcore", "field": "session_duration", "value": "over_8hr",
         "reason": "8hr cap", "verification_key": "agentcore.session_cap",
+        "verification_expected_value": "8h",
+        "verification_sources": [_AWS_DOCS_SOURCE],
     }]
 
 
-def test_current_run_verification_finalizes_constraint_elimination():
+@pytest.mark.parametrize("record", [
+    {"status": "verified", "verified_this_run": True},
+    {"status": "verified", "verified_this_run": True, "source": _AWS_DOCS_SOURCE},
+    {"status": "verified", "verified_this_run": True, "value": "8h"},
+    {"status": "verified", "verified_this_run": True,
+     "source": "https://example.com/agentcore", "value": "8h"},
+])
+def test_incomplete_current_run_evidence_cannot_finalize_elimination(record):
     profiles = [{**_minimal("agentcore"), "hard_constraints": [{
         "field": "session_duration", "value": "over_8hr", "reason": "8hr cap",
         "verification_required": True, "verification_key": "agentcore.session_cap",
+        "verification_expected_value": "8h", "verification_sources": [_AWS_DOCS_SOURCE],
+    }]}]
+    result = scoring.score({"entry_point": "build_scratch", "answers": {
+        "session_duration": "over_8hr",
+        "current_run_verifications": {"agentcore.session_cap": record},
+    }}, profiles=profiles)
+    assert result["eliminated"] == {}
+    assert result["recommendation_status"] == "provisional"
+
+
+def test_changed_lambda_value_cannot_apply_stale_elimination():
+    profiles = [{**_minimal("lambda"), "hard_constraints": [{
+        "field": "session_duration", "value": "15min_to_8hr", "reason": "15m cap",
+        "verification_required": True, "verification_key": "lambda.timeout",
+        "verification_expected_value": "15m", "verification_sources": [_AWS_DOCS_SOURCE],
+    }]}]
+    result = scoring.score({"entry_point": "build_scratch", "answers": {
+        "session_duration": "15min_to_8hr", "current_run_verifications": {
+            "lambda.timeout": {"status": "verified", "verified_this_run": True,
+                               "source": _AWS_DOCS_SOURCE, "value": "30m"},
+        },
+    }}, profiles=profiles)
+    assert result["eliminated"] == {}
+    assert result["recommendation_status"] == "provisional"
+
+
+def test_agentcore_compute_evidence_cannot_certify_gpu_constraint():
+    profiles = [{**_minimal("agentcore"), "hard_constraints": [{
+        "field": "compute_tier", "value": "gpu", "reason": "no GPU support",
+        "verification_required": True, "verification_key": "agentcore.gpu_support",
+        "verification_expected_value": "unsupported", "verification_sources": [_AGENTCORE_GPU_SOURCE],
+    }]}]
+    result = scoring.score({"entry_point": "build_scratch", "answers": {
+        "compute_tier": "gpu", "current_run_verifications": {
+            "agentcore.gpu_support": {"status": "verified", "verified_this_run": True,
+                                        "source": _AGENTCORE_COMPUTE_SOURCE, "value": "unsupported"},
+        },
+    }}, profiles=profiles)
+    assert result["eliminated"] == {}
+    assert result["recommendation_status"] == "provisional"
+
+
+def test_source_backed_matching_evidence_finalizes_constraint_elimination():
+    profiles = [{**_minimal("agentcore"), "hard_constraints": [{
+        "field": "session_duration", "value": "over_8hr", "reason": "8hr cap",
+        "verification_required": True, "verification_key": "agentcore.session_cap",
+        "verification_expected_value": "8h", "verification_sources": [_AWS_DOCS_SOURCE],
     }]}]
     result = scoring.score({"entry_point": "build_scratch", "answers": {
         "session_duration": "over_8hr", "current_run_verifications": {
-            "agentcore.session_cap": {"status": "verified", "verified_this_run": True}
-        }}}, profiles=profiles)
+            "agentcore.session_cap": {"status": "verified", "verified_this_run": True,
+                                        "source": _AWS_DOCS_SOURCE, "value": "8h"},
+        },
+    }}, profiles=profiles)
     assert result["eliminated"] == {"agentcore": "8hr cap"}
     assert result["deferred_verification_requirements"] == []
     assert result["recommendation_status"] == "final"
@@ -345,9 +411,12 @@ def test_golden_over_8hr_eliminates_agentcore_and_microvms_after_verification():
         "answers": {
             "session_duration": "over_8hr",
             "current_run_verifications": {
-                "agentcore.session_cap": {"status": "verified", "verified_this_run": True},
-                "lambda_microvms.session_cap": {"status": "verified", "verified_this_run": True},
-                "lambda.timeout": {"status": "verified", "verified_this_run": True},
+                "agentcore.session_cap": {"status": "verified", "verified_this_run": True,
+                                          "source": _AGENTCORE_SESSION_SOURCE, "value": "8h"},
+                "lambda_microvms.session_cap": {"status": "verified", "verified_this_run": True,
+                                                  "source": _MICROVMS_SOURCE, "value": "8h"},
+                "lambda.timeout": {"status": "verified", "verified_this_run": True,
+                                   "source": _AWS_DOCS_SOURCE, "value": "15m"},
             },
         }}, profiles=_real_profiles())
     assert "agentcore" in result["eliminated"]
@@ -371,7 +440,8 @@ def test_golden_microvms_wins_heavy_non_gpu_after_verification():
         "answers": {
             "compute_tier": "heavy_non_gpu", "session_duration": "15min_to_8hr",
             "current_run_verifications": {
-                "agentcore.compute_cap": {"status": "verified", "verified_this_run": True},
+                "agentcore.max_compute": {"status": "verified", "verified_this_run": True,
+                                          "source": _AGENTCORE_COMPUTE_SOURCE, "value": "2vCPU/8GB"},
             },
         }}, profiles=_real_profiles())
     assert "agentcore" in result["eliminated"]
@@ -396,8 +466,10 @@ def test_golden_microvms_high_launch_emits_verified_warning():
             "compute_tier": "heavy_non_gpu", "session_duration": "15min_to_8hr",
             "launch_concurrency": "high",
             "current_run_verifications": {
-                "agentcore.compute_cap": {"status": "verified", "verified_this_run": True},
-                "lambda_microvms.launch_tps": {"status": "verified", "verified_this_run": True},
+                "agentcore.max_compute": {"status": "verified", "verified_this_run": True,
+                                          "source": _AGENTCORE_COMPUTE_SOURCE, "value": "2vCPU/8GB"},
+                "lambda_microvms.launch_tps": {"status": "verified", "verified_this_run": True,
+                                                 "source": _AWS_DOCS_SOURCE, "value": "5 (not adjustable)"},
             },
         }}, profiles=_real_profiles())
     assert result["verdict"] == "lambda_microvms"

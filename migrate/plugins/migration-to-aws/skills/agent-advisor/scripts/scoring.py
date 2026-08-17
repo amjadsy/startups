@@ -68,24 +68,53 @@ def _constraint_matches(answers, constraint):
     return answers.get(field) == trigger
 
 
-def _is_current_run_verified(answers, verification_key):
-    record = answers.get("current_run_verifications", {}).get(verification_key)
+def _is_authoritative_aws_source(source):
+    """Return whether source is a canonical public AWS documentation URL."""
+    return isinstance(source, str) and source.startswith((
+        "https://aws.amazon.com/", "https://docs.aws.amazon.com/"
+    ))
+
+
+def _has_current_run_evidence(record):
+    """Require a current-run, source-backed, non-empty observation."""
     return (
         isinstance(record, dict)
         and record.get("status") == "verified"
         and record.get("verified_this_run") is True
+        and _is_authoritative_aws_source(record.get("source"))
+        and isinstance(record.get("value"), str)
+        and bool(record["value"].strip())
+    )
+
+
+def _is_current_run_verified(
+    answers, verification_key, expected_value, verification_sources
+):
+    """Return whether evidence is current, source-bound, and exactly value-matching."""
+    record = answers.get("current_run_verifications", {}).get(verification_key)
+    return (
+        _has_current_run_evidence(record)
+        and isinstance(expected_value, str)
+        and bool(expected_value)
+        and isinstance(verification_sources, list)
+        and bool(verification_sources)
+        and record["source"] in verification_sources
+        and record["value"] == expected_value
     )
 
 
 def _evaluate_hard_constraints(answers, profiles):
-    """Return final eliminations and matched constraints awaiting verification."""
+    """Return final eliminations and matched constraints awaiting valid evidence."""
     eliminated, deferred = {}, []
     for profile in profiles:
         for constraint in profile.get("hard_constraints", []):
             if not _constraint_matches(answers, constraint):
                 continue
             if constraint.get("verification_required") and not _is_current_run_verified(
-                answers, constraint["verification_key"]
+                answers,
+                constraint["verification_key"],
+                constraint.get("verification_expected_value"),
+                constraint.get("verification_sources"),
             ):
                 deferred.append({
                     "runtime": profile["id"],
@@ -93,6 +122,8 @@ def _evaluate_hard_constraints(answers, profiles):
                     "value": constraint["value"],
                     "reason": constraint["reason"],
                     "verification_key": constraint["verification_key"],
+                    "verification_expected_value": constraint.get("verification_expected_value"),
+                    "verification_sources": constraint.get("verification_sources"),
                 })
                 break
             eliminated[profile["id"]] = constraint["reason"]
@@ -190,7 +221,9 @@ def _collect_warnings(answers, verdict, co_recommend=None):
         or (verdict == "co_recommend" and "lambda_microvms" in (co_recommend or []))
     )
     if microvms_is_winner and answers.get("launch_concurrency") == "high":
-        if _is_current_run_verified(answers, "lambda_microvms.launch_tps"):
+        if _has_current_run_evidence(
+            answers.get("current_run_verifications", {}).get("lambda_microvms.launch_tps")
+        ):
             warnings.append(
                 "High launch concurrency requires capacity planning against the Lambda "
                 "MicroVMs launch-rate value verified in this run.")
