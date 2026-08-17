@@ -144,6 +144,7 @@ Generate `ai-migration/setup_bedrock.sh`.
 - Dry-run by default (`--execute` flag to run for real)
 - Step 1 — Request model access: List each model from `aws-design-ai.json` → `bedrock_models[].aws_model_id` and the embedding model
 - Step 2 — Create IAM role: Trust policy for the compute platform (Lambda, ECS, or EC2 based on `aws-design.json` if present). Bedrock policy: `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` scoped to `arn:aws:bedrock:*::foundation-model/*`
+- Compliance carry-through: if `preferences.json` → `design_constraints.compliance` is set and not `none`/`unknown` (full-flow Q2 / AI-only Q1.5), the script and its printed notes MUST reflect the design's Step 0.7 constraints — `AWS_REGION` from the compliance-constrained region (GovCloud for fedramp, EU for gdpr), `eu.` inference-profile model IDs for gdpr, and for hipaa a printed warning that Bedrock invocation logs retain original content (KMS-encrypt + restrict IAM on the log group before enabling)
 - Step 3 — Print required environment variables: `AWS_REGION`, `AI_PROVIDER=bedrock`, model IDs
 - Step 4 — Check quota: Query current TPM quota for the primary model via `aws service-quotas get-service-quota`. If `aws-design-ai.json` → `ai_architecture.quota_risk` is `"high"` or `"medium"`, print warning: "⚠️ Your token volume may exceed default Bedrock quotas. Request a quota increase via Service Quotas console (allow 1–5 business days)." Include the `aws service-quotas request-service-quota-increase` command template.
 - Step 5 — Verification: Test Bedrock access with a simple `converse` call using the primary model
@@ -702,7 +703,7 @@ resource "aws_ce_anomaly_subscription" "bedrock_alert" {
 # Tags on these profiles appear in Cost Explorer; tags on API calls do not.
 # copy_from must be a full foundation-model ARN or cross-region inference profile ARN.
 # For Claude models, use the cross-region inference profile ARN format:
-#   arn:aws:bedrock:{region}:{account_id}:inference-profile/us.anthropic.claude-sonnet-4-6
+#   arn:aws:bedrock:{region}:{account_id}:inference-profile/us.anthropic.claude-sonnet-5
 # For Amazon Nova models, use:
 #   arn:aws:bedrock:{region}:{account_id}:inference-profile/us.amazon.nova-pro-v1:0
 # [AGENT: generate one block per model in aws-design-ai.json → ai_architecture.bedrock_models[]]
@@ -714,7 +715,7 @@ resource "aws_bedrock_inference_profile" "primary" {
     copy_from = "arn:aws:bedrock:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:inference-profile/{cross_region_inference_profile_id}"
     # AGENT: replace {cross_region_inference_profile_id} with the correct ID from
     # aws-design-ai.json bedrock_models[].aws_model_id, prefixed with "us." for US regions
-    # e.g., us.anthropic.claude-sonnet-4-6 or us.amazon.nova-pro-v1:0
+    # e.g., us.anthropic.claude-sonnet-5 or us.amazon.nova-pro-v1:0
   }
 
   tags = {
