@@ -14,6 +14,10 @@ The validator script ships with the plugin at:
 
 `migrate/plugins/migration-to-aws/scripts/validate-migration-report.py`
 
+**Runtime dependency:** Python 3 only. Do not require or recommend Vale, Pa11y,
+axe, Lighthouse, or browser tooling for skill users. Accessibility and
+readability checks that matter for this report live inside this script.
+
 ```bash
 python3 "$PLUGIN_ROOT/scripts/validate-migration-report.py" \
   "$MIGRATION_DIR/migration-report.html" \
@@ -85,7 +89,11 @@ decision reports.
 | 17 | Configuration provenance           | When `<section id="appendix-config">` exists: table includes Question/Assumption and Design consequence columns; ≥2 data rows                                                                                                                                                                 |
 | 18 | What-if scenarios                  | With `--migration-dir`: if `scenarios/index.json` lists ≥2 scenarios, exactly one `<section id="what-if-scenarios">` (workshop compare table)                                                                                                                                                 |
 | 19 | Activate action link               | If `decision-summary` mentions AWS Activate, that section includes a clickable link to `https://aws.amazon.com/startups/credits/`; an appendix-only link is insufficient                                                                                                                      |
-| 20 | Glossary table                     | Full reports contain a bordered `<table class="glossary-table">` with `Term` and `Meaning` columns and at least three rows; loose definition lists are rejected                                                                                                                               |
+| 20 | Glossary appendix                  | Full reports contain `<section id="appendix-glossary">` with a bordered `<table class="glossary-table">`, `Term` and `Meaning` columns, and at least three rows                                                                                                                               |
+| 21 | Decision-first order               | `decision-summary` appears before `nav.toc`, so the recommendation is visible before document navigation                                                                                                                                                                                      |
+| 22 | Whole-stack stay language          | The decision summary uses “Stay entirely if”; ambiguous “Stay if” headings and `badge-verdict-*` pills are rejected                                                                                                                                                                           |
+| 23 | Leadership brief                   | When an estimation artifact is passed, `exec-share` contains a static, copy-ready `share-card` without scripts or controls                                                                                                                                                                    |
+| 24 | Accessibility semantics            | Normal generated reports declare document language, contain exactly one `<h1>`, caption every table, scope table headers, and give every figure an image role, accessible name, and text alternative                                                                                          |
 
 Checks 10, 11, and 15 scan the `<body>` with `<style>` stripped, so CSS class names (e.g. `.rubric`) and selectors never trip them. The same readability scan rejects customer-facing "TCO" because modeled cloud charges do not include staffing or operating labor. Check 15 scopes to executive-flow sections only — appendices may carry artifact filenames and resource IDs by design. Disable checks 10, 11, and 15 with `--no-readability` only for non-customer fixtures. Check 14 is inert without `--migration-dir`, so validating the reference fixture (which legitimately contains the canary ID) never self-trips. Checks 16–17 apply whenever the corresponding sections/headings exist.
 
@@ -95,6 +103,7 @@ Checks 10, 11, and 15 scan the `<body>` with `<style>` stripped, so CSS class na
 
 | Section ID              | Include when                                                                                                   |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `exec-share`            | Any monthly estimation artifact exists — required when that trigger holds                                      |
 | `exec-tco`              | Both `estimation-infra.json` and `estimation-ai.json` exist                                                    |
 | `exec-architecture`     | `aws-design.json` with clusters exists                                                                         |
 | `exec-security-teaser`  | `estimation-infra.json` has `security_baseline` breakdown (compact summary; full table in `appendix-security`) |
@@ -103,7 +112,8 @@ Checks 10, 11, and 15 scan the `<body>` with `<style>` stripped, so CSS class na
 | `appendix-config`       | `preferences.json` exists — question/answer/consequence table from `prompt` and `design_consequence` fields    |
 | `appendix-security`     | Full security capabilities table (rendered in the appendix)                                                    |
 | `appendix-security-gap` | Infra track ran (rendered in the appendix)                                                                     |
-| `appendix-assumptions`  | Pricing confidence, exclusions, validation status, glossary (rendered in the executive flow by design)         |
+| `appendix-assumptions`  | Pricing confidence, exclusions, and validation status (rendered in the executive flow by design)               |
+| `appendix-glossary`     | Full reports — dedicated final glossary appendix                                                               |
 
 ---
 
