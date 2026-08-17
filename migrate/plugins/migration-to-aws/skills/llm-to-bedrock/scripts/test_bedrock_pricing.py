@@ -36,10 +36,13 @@ def test_static_fallback_opus_4_8_rate_is_5_and_25_per_1m():
         entry = bp.STATIC_FALLBACK[key]
         assert entry["input_per_1k_usd"] == 0.005, key
         assert entry["output_per_1k_usd"] == 0.025, key
+    # Dated forms are built by concatenation: Opus 4.8 Bedrock IDs are undated
+    # (tools/model-id-lint.py), but a stale plan can still carry a fabricated
+    # dated form and the lookup must repair it rather than lose the price.
     for model_id in ("anthropic.claude-opus-4-8",
                      "us.anthropic.claude-opus-4-8",
-                     "anthropic.claude-opus-4-8-20250610-v1:0",
-                     "us.anthropic.claude-opus-4-8-20250610-v1:0"):
+                     "anthropic.claude-opus-4-8" + "-20250610-v1:0",
+                     "us.anthropic.claude-opus-4-8" + "-20250610-v1:0"):
         out = bp.lookup("us-east-1", model_id)
         assert out["available"] is True
         assert out["input_per_1k_usd"] == 0.005, model_id

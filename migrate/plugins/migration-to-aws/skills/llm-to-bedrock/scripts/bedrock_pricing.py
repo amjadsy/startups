@@ -49,8 +49,7 @@ STATIC_FALLBACK = {
     # Still Active — existing workloads / fallbacks
     "anthropic.claude-sonnet-4-6":                  {"input_per_1k_usd": 0.003, "output_per_1k_usd": 0.015},
     "us.anthropic.claude-sonnet-4-6":               {"input_per_1k_usd": 0.003, "output_per_1k_usd": 0.015},
-    "anthropic.claude-sonnet-4-6-20250514-v1:0":    {"input_per_1k_usd": 0.003, "output_per_1k_usd": 0.015},
-    "us.anthropic.claude-sonnet-4-6-20250514-v1:0": {"input_per_1k_usd": 0.003, "output_per_1k_usd": 0.015},
+
     # Opus 4.8 has no dated foundation-model ID on the model card — suffix-less only.
     "anthropic.claude-opus-4-8":                    {"input_per_1k_usd": 0.005, "output_per_1k_usd": 0.025},
     "us.anthropic.claude-opus-4-8":                 {"input_per_1k_usd": 0.005, "output_per_1k_usd": 0.025},
