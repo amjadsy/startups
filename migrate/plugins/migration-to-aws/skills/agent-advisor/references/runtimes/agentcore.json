@@ -5,9 +5,39 @@
   "launched": "2025-12-01",
   "service_card": "agentcore.md",
   "hard_constraints": [
-    { "field": "session_duration", "value": "over_8hr", "reason": "AgentCore has an 8hr session cap", "verification_required": true, "verification_key": "agentcore.session_cap", "verification_expected_value": "8h", "verification_sources": ["https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agents-tools-runtime.html"] },
-    { "field": "compute_tier", "value": "gpu", "reason": "AgentCore has no GPU support", "verification_required": true, "verification_key": "agentcore.gpu_support", "verification_expected_value": "unsupported", "verification_sources": ["https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-instances-how-it-works.html"] },
-    { "field": "compute_tier", "value": "heavy_non_gpu", "reason": "AgentCore is capped at 2 vCPU / 8 GB", "verification_required": true, "verification_key": "agentcore.max_compute", "verification_expected_value": "2vCPU/8GB", "verification_sources": ["https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-how-it-works.html"] }
+    {
+      "field": "session_duration",
+      "value": "over_8hr",
+      "reason": "AgentCore has an 8hr session cap",
+      "verification_required": true,
+      "verification_key": "agentcore.session_cap",
+      "verification_expected_value": "8h",
+      "verification_sources": [
+        "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agents-tools-runtime.html"
+      ]
+    },
+    {
+      "field": "compute_tier",
+      "value": "gpu",
+      "reason": "AgentCore has no GPU support",
+      "verification_required": true,
+      "verification_key": "agentcore.gpu_support",
+      "verification_expected_value": "unsupported",
+      "verification_sources": [
+        "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-instances-how-it-works.html"
+      ]
+    },
+    {
+      "field": "compute_tier",
+      "value": "heavy_non_gpu",
+      "reason": "AgentCore is capped at 2 vCPU / 8 GB",
+      "verification_required": true,
+      "verification_key": "agentcore.max_compute",
+      "verification_expected_value": "2vCPU/8GB",
+      "verification_sources": [
+        "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-how-it-works.html"
+      ]
+    }
   ],
   "affinities": {
     "session_duration": { "under_15min": 3, "15min_to_8hr": 5, "over_8hr": 0, "unknown": 3 },
@@ -28,9 +58,19 @@
   "deployment_models": ["harness", "framework_on_runtime"],
   "volatile_facts": [
     { "key": "session_cap", "verification_key": "agentcore.session_cap", "value": "8h", "verify_via_mcp": true },
-    { "key": "gpu_support", "verification_key": "agentcore.gpu_support", "value": "unsupported", "verify_via_mcp": true },
+    {
+      "key": "gpu_support",
+      "verification_key": "agentcore.gpu_support",
+      "value": "unsupported",
+      "verify_via_mcp": true
+    },
     { "key": "max_compute", "verification_key": "agentcore.max_compute", "value": "2vCPU/8GB", "verify_via_mcp": true },
-    { "key": "io_wait_billing", "verification_key": "agentcore.io_wait_billing", "value": "verify current I/O-wait billing behavior", "verify_via_mcp": true },
+    {
+      "key": "io_wait_billing",
+      "verification_key": "agentcore.io_wait_billing",
+      "value": "verify current I/O-wait billing behavior",
+      "verify_via_mcp": true
+    },
     { "key": "fedramp", "value": "in_progress (WIP — verify current status)", "verify_via_mcp": true },
     { "key": "regions", "value": [], "verify_via_mcp": true }
   ]

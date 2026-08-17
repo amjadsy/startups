@@ -366,7 +366,7 @@ Serverless inference: $0.0000200 per second per GB memory.
 
 ## Bedrock Models (On-Demand)
 
-**Anthropic Claude (Standard on-demand)** figures below match **US East (N. Virginia)** on [Amazon Bedrock pricing](https://aws.amazon.com/bedrock/pricing/) as of cache refresh. **Claude Fable 5** is the most expensive Anthropic model at $10/$50 per 1M tokens (Mythos-class). **Claude Opus 4.8** keeps the same $5/$25 rate as Opus 4.6/4.7. **Claude Sonnet 5** launched June 30 with introductory pricing of $2/$10 through Aug 31, 2026, then $3/$15 (same as Sonnet 4.6). **Claude Opus 4.7** lists the same headline on-demand input/output as **Opus 4.6** on that page; confirm **batch** availability per model (Opus 4.7 batch was **not** listed on the global cross-region table when this row was added). **Claude Opus 4.1** entered **Legacy** on Jul 8, 2026 (EOL Jan 8, 2027). **Batch**, **prompt cache** (5m / 1h write + cache read), and **geo / in-region cross-region** rows on that page can differ; e.g. **US East (Ohio)** cross-region inference for Claude Sonnet 4.6 is listed at **$3.30 / $16.50** per 1M input/output (≈10% above N. Virginia). Long-context SKUs **do not** all use the same multiplier: **Sonnet 4.6** and **Opus 4.6** long-context modes share the same on-demand rates as the non–long-context rows on the standard table; **Sonnet 4.5** and **Sonnet 4** long-context rows are priced higher on that same table.
+**Anthropic Claude (Standard on-demand)** figures below match **US East (N. Virginia)** on [Amazon Bedrock pricing](https://aws.amazon.com/bedrock/pricing/) as of cache refresh. **Recommend defaults (new migrations):** Claude Sonnet 5 (flagship), Claude Opus 4.8 (hardest reasoning), Claude Haiku 4.5 (cost/speed). Do not default to Claude Fable 5 (frontier). **Claude Fable 5** is the most expensive Anthropic model at $10/$50 per 1M tokens (Mythos-class). **Claude Opus 4.8** keeps the same $5/$25 rate as Opus 4.6/4.7. **Claude Sonnet 5** launched June 30 with introductory pricing of $2/$10 through Aug 31, 2026, then $3/$15 (same as Sonnet 4.6). **Claude Opus 4.7** lists the same headline on-demand input/output as **Opus 4.6** on that page; confirm **batch** availability per model (Opus 4.7 batch was **not** listed on the global cross-region table when this row was added). **Claude Opus 4.1** entered **Legacy** on Jul 8, 2026 (EOL Jan 8, 2027). **Batch**, **prompt cache** (5m / 1h write + cache read), and **geo / in-region cross-region** rows on that page can differ; e.g. **US East (Ohio)** cross-region inference for Claude Sonnet 4.6 is listed at **$3.30 / $16.50** per 1M input/output (≈10% above N. Virginia). Long-context SKUs **do not** all use the same multiplier: **Sonnet 4.6** and **Opus 4.6** long-context modes share the same on-demand rates as the non–long-context rows on the standard table; **Sonnet 4.5** and **Sonnet 4** long-context rows are priced higher on that same table.
 
 ### Multi-provider quick reference (per 1M tokens)
 
@@ -403,6 +403,9 @@ See `shared/ai-model-lifecycle.md` for lifecycle details. **Do not recommend Leg
 | DeepSeek-V3.1                    | —                                        | DeepSeek  | 0.58       | 1.68        | —       | mid       | active (Sydney only)                                |
 | gpt-oss-20b                      | openai.gpt-oss-20b-1:0                   | OpenAI    | 0.07       | 0.30        | 128K    | budget    | active                                              |
 | gpt-oss-120b                     | openai.gpt-oss-120b-1:0                  | OpenAI    | 0.15       | 0.60        | 128K    | efficient | active                                              |
+| GPT-5.6 Sol                      | openai.gpt-5.6-sol                       | OpenAI    | 5.50       | 33.00       | 1M      | flagship  | active (Mantle/Responses API only)                  |
+| GPT-5.6 Terra                    | openai.gpt-5.6-terra                     | OpenAI    | 2.20       | 13.20       | 1M      | mid       | active (Mantle/Responses API only)                  |
+| GPT-5.6 Luna                     | openai.gpt-5.6-luna                      | OpenAI    | 0.22       | 1.32        | 1M      | fast      | active (Mantle/Responses API only)                  |
 | Gemma 3 4B IT                    | google.gemma-3-4b-it                     | Google    | 0.04       | 0.08        | 128K    | budget    | active                                              |
 | Gemma 3 12B IT                   | google.gemma-3-12b-it                    | Google    | 0.09       | 0.29        | 128K    | budget    | active                                              |
 | Gemma 3 27B IT                   | google.gemma-3-27b-it                    | Google    | 0.23       | 0.38        | 128K    | efficient | active                                              |
@@ -506,9 +509,19 @@ Per [Amazon Bedrock pricing](https://aws.amazon.com/bedrock/pricing/) (DeepSeek)
 - **Asia Pacific (Mumbai)**, **São Paulo**, **Jakarta**, **Tokyo**, **Stockholm**: DeepSeek v3.2 **$0.74 / $2.22** per 1M.
 - **Asia Pacific (Sydney)**: DeepSeek v3.1 **$0.5974 / $1.7304**; v3.2 **$0.6386 / $1.9055** (and **Priority** / **Flex** tiers listed separately on the page).
 
-### OpenAI on Bedrock (gpt-oss)
+### OpenAI on Bedrock (GPT-5.6 and gpt-oss)
 
 **Standard tier** per [Amazon Bedrock pricing](https://aws.amazon.com/bedrock/pricing/) (OpenAI).
+
+**GPT-5.6 frontier models** (Sol / Terra / Luna, GA July 13, 2026) — served on the `bedrock-mantle` endpoint via the OpenAI Responses API path only (no Converse / bedrock-runtime, no geo/global inference profiles). In-region rates below reflect the July 30, 2026 price reduction (Luna −80%, Terra −20%) and are at parity with OpenAI's data-residency tier. Breakpoint pricing at 272K input tokens: >272K (up to 1M) is 2× input / 1.5× output.
+
+| Model         | Region                                         | Input $/1M (≤272K) | Output $/1M (≤272K) | Input $/1M (>272K) | Output $/1M (>272K) |
+| ------------- | ---------------------------------------------- | ------------------ | ------------------- | ------------------ | ------------------- |
+| GPT-5.6 Sol   | US East (N. Virginia / Ohio)                   | 5.50               | 33.00               | 11.00              | 49.50               |
+| GPT-5.6 Terra | US East (N. Virginia / Ohio), US West (Oregon) | 2.20               | 13.20               | 4.40               | 19.80               |
+| GPT-5.6 Luna  | US East (N. Virginia / Ohio), US West (Oregon) | 0.22               | 1.32                | 0.44               | 1.98                |
+
+**gpt-oss open-weight models:**
 
 | Model        | Region                | Input $/1M | Output $/1M |
 | ------------ | --------------------- | ---------- | ----------- |

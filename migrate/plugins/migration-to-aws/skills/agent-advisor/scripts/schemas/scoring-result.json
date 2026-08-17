@@ -4,7 +4,15 @@
   "$defs": {
     "deferredVerificationRequirement": {
       "type": "object",
-      "required": ["runtime", "field", "value", "reason", "verification_key", "verification_expected_value", "verification_sources"],
+      "required": [
+        "runtime",
+        "field",
+        "value",
+        "reason",
+        "verification_key",
+        "verification_expected_value",
+        "verification_sources"
+      ],
       "additionalProperties": false,
       "properties": {
         "runtime": { "type": "string" },
@@ -25,7 +33,10 @@
         },
         "scores": { "type": "object", "additionalProperties": { "type": "integer" } },
         "eliminated": { "type": "object", "additionalProperties": { "type": "string" } },
-        "deferred_verification_requirements": { "type": "array", "items": { "$ref": "#/$defs/deferredVerificationRequirement" } },
+        "deferred_verification_requirements": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/deferredVerificationRequirement" }
+        },
         "recommendation_status": { "enum": ["provisional", "final"] },
         "deployment_model": { "type": ["string", "null"], "enum": ["harness", "framework_on_runtime", null] },
         "agentcore_services": { "type": "array", "items": { "type": "string" } },

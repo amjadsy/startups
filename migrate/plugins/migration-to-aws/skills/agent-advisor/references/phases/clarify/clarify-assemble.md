@@ -23,7 +23,6 @@ _produces:
 > three phase artifacts. See `clarify.md` § Step 4–5 for legal answer keys,
 > the verification-evidence contract, and the scoring command.
 
-
 The assembled workload answers preserve `target_maturity` and `readiness` but
 never contain current-run verification evidence. The scoring artifact preserves
 its `recommendation_status` and `deferred_verification_requirements`; deferred

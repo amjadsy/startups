@@ -5,8 +5,24 @@
   "launched": "2026-06-22",
   "service_card": "lambda-microvms.md",
   "hard_constraints": [
-    { "field": "session_duration", "value": "over_8hr", "reason": "Lambda MicroVMs max session is 8 hours", "verification_required": true, "verification_key": "lambda_microvms.session_cap", "verification_expected_value": "8h", "verification_sources": ["https://docs.aws.amazon.com/lambda/latest/dg/"] },
-    { "field": "compute_tier", "value": "gpu", "reason": "Lambda MicroVMs has no documented GPU support", "verification_required": true, "verification_key": "lambda_microvms.gpu_support", "verification_expected_value": "unsupported", "verification_sources": ["https://docs.aws.amazon.com/lambda/latest/dg/"] }
+    {
+      "field": "session_duration",
+      "value": "over_8hr",
+      "reason": "Lambda MicroVMs max session is 8 hours",
+      "verification_required": true,
+      "verification_key": "lambda_microvms.session_cap",
+      "verification_expected_value": "8h",
+      "verification_sources": ["https://docs.aws.amazon.com/lambda/latest/dg/"]
+    },
+    {
+      "field": "compute_tier",
+      "value": "gpu",
+      "reason": "Lambda MicroVMs has no documented GPU support",
+      "verification_required": true,
+      "verification_key": "lambda_microvms.gpu_support",
+      "verification_expected_value": "unsupported",
+      "verification_sources": ["https://docs.aws.amazon.com/lambda/latest/dg/"]
+    }
   ],
   "affinities": {
     "session_duration": { "under_15min": 3, "15min_to_8hr": 5, "over_8hr": 0, "unknown": 3 },
@@ -28,8 +44,18 @@
   "volatile_facts": [
     { "key": "session_cap", "verification_key": "lambda_microvms.session_cap", "value": "8h", "verify_via_mcp": true },
     { "key": "max_compute", "value": "16vCPU/32GB", "verify_via_mcp": true },
-    { "key": "gpu_support", "verification_key": "lambda_microvms.gpu_support", "value": "verify current GPU support", "verify_via_mcp": true },
-    { "key": "launch_tps", "verification_key": "lambda_microvms.launch_tps", "value": "5 (not adjustable)", "verify_via_mcp": true },
+    {
+      "key": "gpu_support",
+      "verification_key": "lambda_microvms.gpu_support",
+      "value": "verify current GPU support",
+      "verify_via_mcp": true
+    },
+    {
+      "key": "launch_tps",
+      "verification_key": "lambda_microvms.launch_tps",
+      "value": "5 (not adjustable)",
+      "verify_via_mcp": true
+    },
     { "key": "fedramp", "value": "unknown", "verify_via_mcp": true },
     { "key": "regions", "value": [], "verify_via_mcp": true }
   ]

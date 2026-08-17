@@ -7,7 +7,10 @@
   "properties": {
     "entry_point": { "enum": ["build_scratch", "build_deploy", "migrate", "add_capabilities"] },
     "audience": { "enum": ["technical", "business"] },
-    "target_maturity": { "enum": ["prototype", "private_beta", "production"], "description": "Target launch maturity. Intake persists this value in run state; it is not inferred from the chosen runtime." },
+    "target_maturity": {
+      "enum": ["prototype", "private_beta", "production"],
+      "description": "Target launch maturity. Intake persists this value in run state; it is not inferred from the chosen runtime."
+    },
     "readiness": { "$ref": "#/definitions/readiness" },
     "system": { "$ref": "#/definitions/systemDims" },
     "units": {

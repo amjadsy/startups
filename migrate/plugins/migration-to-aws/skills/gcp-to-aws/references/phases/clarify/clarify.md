@@ -10,13 +10,13 @@ The question catalog spans **six named categories (A–F)** plus agentic (G) and
 
 ## Category Reference Files
 
-| File                  | Category                                  | Questions | Loaded When                                     |
-| --------------------- | ----------------------------------------- | --------- | ----------------------------------------------- |
-| `clarify-global.md`   | A — Global/Strategic                      | Q1–Q7     | Always                                          |
-| `clarify-compute.md`  | B — Config Gaps, C — Compute              | Q8–Q11b   | Compute or billing-source resources present     |
-| `clarify-database.md` | D — Database                              | Q12–Q13b  | Database resources present                      |
-| `clarify-ai.md`       | F — AI/Bedrock, G — Agentic, H — Programs | Q14–Q27   | `ai-workload-profile.json` exists               |
-| `clarify-ai-only.md`  | _(standalone)_                            | Q1–Q10    | AI-only migration (no infrastructure artifacts) |
+| File                  | Category                                  | Questions                  | Loaded When                                     |
+| --------------------- | ----------------------------------------- | -------------------------- | ----------------------------------------------- |
+| `clarify-global.md`   | A — Global/Strategic                      | Q1–Q7                      | Always                                          |
+| `clarify-compute.md`  | B — Config Gaps, C — Compute              | Q8–Q11b                    | Compute or billing-source resources present     |
+| `clarify-database.md` | D — Database                              | Q12–Q13b                   | Database resources present                      |
+| `clarify-ai.md`       | F — AI/Bedrock, G — Agentic, H — Programs | Q14–Q27                    | `ai-workload-profile.json` exists               |
+| `clarify-ai-only.md`  | _(standalone)_                            | Q1–Q11 (+ Q1.5 compliance) | AI-only migration (no infrastructure artifacts) |
 
 ---
 
@@ -26,13 +26,30 @@ Check `$MIGRATION_DIR/` for existing state:
 
 **Case 1 — Completed preferences exist** (`preferences.json` present):
 
+**Compatibility check (run BEFORE offering reuse):** The existing file may predate the current flow, and the Completion Handoff Gate forbids patching artifacts to pass — so an incompatible file offered for reuse dead-ends at `GATE_FAIL`. Check:
+
+1. **Schema currency** — `metadata.clarify_mode` is present; every constraint has `value`, `chosen_by`, `prompt`, and `design_consequence`; every constraint with `chosen_by: "extracted"` or `"default"` has a `source` field; `design_constraints.cpu_architecture` is present when compute resources exist in the current inventory.
+2. **Discovery match** — the file's `metadata.discovery_artifacts` is consistent with what exists in `$MIGRATION_DIR` now: if `ai-workload-profile.json` exists but the file has no `ai_constraints` (or the reverse), or the inventory has database/compute resources whose required constraints (`availability`, `db_size`) are absent, the file is stale relative to current discovery.
+
+**If both pass**, offer:
+
 > "I found existing migration preferences from a previous run. Would you like to:"
 >
 > A) Re-use these preferences and skip questions
 > B) Start fresh and re-answer all questions
 
 - If A: Run Step 2 item 6 only (BigQuery detection) on current discovery artifacts. If `bigquery_present` is **true**, output the Step 4 **BigQuery / deferred analytics** advisory block once (even though questions are skipped), then skip to Validation Checklist with the existing `preferences.json`.
-- If B: delete `preferences.json`, continue to Step 1.
+- If B: rename `preferences.json` to `preferences-superseded.json` (do not delete — prior answers are unrecoverable otherwise), continue to Step 1.
+
+**If either check fails**, do NOT offer plain reuse — it would fail the gate. Instead:
+
+> "I found preferences from a previous run, but they predate the current flow (missing: [list]). Would you like to:"
+>
+> A) Keep your previous answers where they're still valid — I'll confirm them on the assumption sheet and only ask what's new or missing
+> B) Start fresh and re-answer all questions
+
+- If A: rename the old file to `preferences-superseded.json`, seed the wizard from it — carry each still-valid constraint value forward with its original `chosen_by` (backfilling `prompt`/`design_consequence`/`source` from the current catalog), treat missing constraints as unresolved — and continue to Step 1 (the wizard fills the gaps; carried-forward values appear on the Assumption Sheet for confirmation).
+- If B: rename to `preferences-superseded.json`, continue to Step 1.
 
 **Case 2 — Draft preferences exist** (`preferences-draft.json` present, no `preferences.json`):
 
@@ -159,7 +176,7 @@ Before generating the Assumption Sheet, scan the inventory to extract values tha
 4. **Billing-only mode** — If `billing-profile.json` exists and `gcp-resource-inventory.json` does NOT exist, check `billing-profile.json → services[]` for Category B question matching.
 5. **AI framework detection** — If `ai-workload-profile.json` exists, check `integration.gateway_type` and `integration.frameworks` for auto-detection of Q14 answer.
 6. **BigQuery / analytics warehouse** — Set `bigquery_present` to **true** if **any** of: (a) a resource in `gcp-resource-inventory.json` has `gcp_type` (or equivalent type field) starting with `google_bigquery_`; (b) `billing-profile.json` lists a service/SKU that clearly indicates **BigQuery** (e.g., service name or SKU contains `BigQuery`). Otherwise `bigquery_present` is **false**.
-7. **Database size auto-detect (Q13b)** — For each `google_sql_database_instance`, read `config.disk_size`, `config.disk_size_gb`, or `gcp_config.disk_size_gb`. Map to Q13b band and **resolve Q13b** when unambiguous:
+7. **Database size auto-detect (Q13b)** — For each `google_sql_database_instance`, read `config.disk_size_gb` (canonical per `schema-discover-iac.md`; also accept legacy `config.disk_size` or `gcp_config.disk_size_gb` from older inventories). This is **allocated capacity — an upper bound on actual data size** (Cloud SQL's minimum allocation is 10 GB, so small dev databases still read as 10). The band is safe for tool selection (never underestimates), but present it on the sheet as allocated — "up to [N] GB (allocated)" — and accept a user's downward correction without pushback. Map to Q13b band and **resolve Q13b** when unambiguous:
 
 | Disk size (GB) | `db_size` value | Resolve Q13b?                  |
 | -------------- | --------------- | ------------------------------ |
@@ -335,7 +352,7 @@ Present the sheet in two sections (omit rows for questions that are ESSENTIAL or
 | ------- | ----- | ------ | --------------- |
 | Region | us-west-2 (GCP us-west1) | gcp-resource-inventory.json | All AWS resources deploy here |
 | Database availability | Single-AZ (Cloud SQL `ZONAL`) | Terraform `availability_type` | RDS single-AZ topology |
-| Database size | 10–100 GB (allocated: 10 GB) | Terraform `disk_size` | pgcopydb migration tooling |
+| Database size | up to 10 GB allocated (actual data may be less) | Terraform `disk_size` | Migration tool ceiling; script measures actual size |
 | DB traffic / I/O | Steady / Low (dev-tier `db-f1-micro`) | Terraform tier + ZONAL | gp3 storage, no replicas |
 | Cloud SQL HA | Zonal (1 instance) | billing-profile.json | No Aurora Multi-AZ failover |
 | AI model | gemini-2.5-flash | ai-workload-profile.json | Bedrock mapping baseline |
@@ -472,13 +489,39 @@ _Present each question's options via the structured question tool (e.g. AskUserQ
 - Q3 defaults to B ($1K–$5K) with a report caveat that spend was not confirmed.
 - **Q27 must not be silently defaulted in wizard mode** when Category H fired — if the user skips it, record `startup_program_status: "unknown"` with `chosen_by: "default"` and `source: "default:Q27"`; downstream artifacts must use neutral Activate copy (both tiers, no "your status: eligible_*").
 - Q3.5, Q23–Q25, and unresolved multi-instance conflicts fall back to their documented defaults (Q3.5 → E; Q23 → framework-based; Q24 → session; Q25 → medium; conflicts → most conservative posture) with `chosen_by: "default"`.
-  Then skip to Category E opt-in, then Step 5.
+  Then run the **Answer Recap** (below) with the defaulted rows included, then Category E opt-in, then Step 5.
 
 **Interpret answers** using the interpret rules in the category files. Apply early-exit rules triggered by answers (e.g., Q5 correction to multi-cloud → `compute: "eks"`, Q8 → N/A).
 
+### Answer Recap (Check Your Answers)
+
+After the last essential batch is answered and interpreted (and after Q27 when it fired), play back what was recorded — the essentials are the only answers in the flow the user states rather than confirms, and shorthand ("1A 2C") plus plain-word answers pass through an interpretation step the user never sees. One compact table, questions asked in Step 4 only (sheet rows were already confirmed at Step 2.5 — do not repeat them):
+
+```
+### What I recorded — last check before design
+
+| Question | Your answer | Recorded as |
+| -------- | ----------- | ----------- |
+| Compliance (Q2) | "2A" | None |
+| Cutover window (Q7) | "monthly is fine" | Monthly maintenance window |
+| AI spend (Q15) | "about a grand" | $500–$2K/month |
+
+Anything wrong? Name it ("cutover: weekly") — or say "looks good" and I'll proceed to design.
+```
+
+**Always wait.** Present the recap and **wait for the user's response** ("looks good" or a correction) before continuing — interpretation is exactly where a misread silently becomes a design constraint, and the batch opener invites shorthand and plain-word answers, so nearly every real run involves interpretation. One extra turn at the single highest-stakes commit in the flow is the intended cost. Corrections use the Step 2.5 override grammar and set `chosen_by: "user"`.
+
+**Sequence (fixed — do not reorder or combine):**
+
+1. Answer Recap → wait for the user's response
+2. Category E opt-in (if `billing-profile.json` exists) → wait
+3. Step 5 — write `preferences.json`
+
+**"Use defaults for the rest" still gets a recap:** when the user defaults remaining questions, include those rows with `(default applied)` in the "Your answer" column and the defaulted value in "Recorded as" — bulk-defaulting is the highest-risk interpretation of all, and this is the user's one chance to see what "the rest" actually meant. Then wait as above.
+
 ### Full Flow variant ("ask me everything")
 
-When the user opted out of the wizard, run the progressive-batch flow: present ALL active questions (no dispositions) in up to three batches — Strategic (Q1–Q7, minus Q4), Infrastructure (Q8–Q13b incl. Q11b Graviton + Category B), AI (Q14–Q27, Q23–Q26 only if agentic) — writing `preferences-draft.json` between batches with `metadata.batches_completed` / `metadata.batches_remaining` (values: `"strategic"`, `"infrastructure"`, `"ai"`). Per-question skip and "use defaults for the rest" behave as documented. Set `metadata.clarify_mode: "full"`.
+When the user opted out of the wizard, run the progressive-batch flow: present ALL active questions (no dispositions) in up to three batches — Strategic (Q1–Q7, minus Q4), Infrastructure (Q8–Q13b incl. Q11b Graviton + Category B), AI (Q14–Q27, Q23–Q26 only if agentic) — writing `preferences-draft.json` between batches with `metadata.batches_completed` / `metadata.batches_remaining` (values: `"strategic"`, `"infrastructure"`, `"ai"`). Per-question skip and "use defaults for the rest" behave as documented. Set `metadata.clarify_mode: "full"`. The **Answer Recap** above runs after the final batch here too (all answered questions as rows; skipped/defaulted ones summarized in one line, not per-row — intentional compression so a 20+ question full-flow recap stays scannable; the wizard already shows every defaulted essential as a `(default applied)` row because that set is small. Do not silently drop answered questions into the one-liner).
 
 ### Category E Opt-In
 
@@ -518,19 +561,19 @@ If user opts in, present Q-E1–Q-E2 (defined in **Category E — Migration Post
 | OpenAI Agents SDK                        | Q14 includes E                                                | Highest AI effort; AgentCore (Harness/Runtime); 2–4 weeks                                      |
 | Multi-agent + MCP                        | Q14 = D + F                                                   | AgentCore to unify orchestration + MCP (Gateway)                                               |
 | Voice platform AI                        | Q14 includes G                                                | Check native Bedrock support; Nova 2 Sonic if needed                                           |
-| GPT-5.5 migration                        | Q19 = GPT-5.5                                                 | Claude Opus 4.6 — Bedrock 17% cheaper on output; or Sonnet 4.6 for 53% savings                 |
+| GPT-5.5 migration                        | Q19 = GPT-5.5                                                 | Claude Opus 4.6 — Bedrock 17% cheaper on output; or Sonnet 5 for 53% savings                   |
 | GPT-5.5 Pro migration                    | Q19 = GPT-5.5 Pro                                             | Nova 2 Pro — 95% cheaper on Bedrock                                                            |
-| GPT-5.4 migration                        | Q19 = GPT-5.4                                                 | Claude Sonnet 4.6 — near price parity; AWS consolidation                                       |
+| GPT-5.4 migration                        | Q19 = GPT-5.4                                                 | Claude Sonnet 5 — near price parity; AWS consolidation                                         |
 | GPT-5.4 Mini/Nano migration              | Q19 = GPT-5.4 Mini or Nano                                    | Nova Lite/Micro — 87-94% cheaper on Bedrock                                                    |
-| GPT-4 Turbo migration                    | Q19 = GPT-4 Turbo                                             | Claude Sonnet 4.6 — 70% cheaper on input                                                       |
-| o-series migration                       | Q19 = o-series                                                | Claude Sonnet 4.6 with extended thinking                                                       |
+| GPT-4 Turbo migration                    | Q19 = GPT-4 Turbo                                             | Claude Sonnet 5 — 70% cheaper on input                                                         |
+| o-series migration                       | Q19 = o-series                                                | Claude Sonnet 5 with extended thinking                                                         |
 | High-volume cost-critical AI             | Q18 = High + cost critical                                    | Nova Micro or Haiku 4.5 + provisioned throughput                                               |
-| Reasoning/agent workload                 | Q17 = Extended thinking                                       | Claude Sonnet 4.6 extended thinking; Opus 4.6 for hardest                                      |
+| Reasoning/agent workload                 | Q17 = Extended thinking                                       | Claude Sonnet 5 extended thinking; Opus 4.6 for hardest                                        |
 | Speech-to-speech AI                      | Q17 = Real-time speech                                        | Nova 2 Sonic                                                                                   |
 | RAG workload                             | Q17 = RAG optimization                                        | Bedrock Knowledge Bases + Titan Embeddings                                                     |
-| Vision workload                          | Q20 = Vision required                                         | Claude Sonnet 4.6 (multimodal)                                                                 |
+| Vision workload                          | Q20 = Vision required                                         | Claude Sonnet 5 (multimodal)                                                                   |
 | Latency-critical AI                      | Q21 = Critical                                                | Haiku 4.5 or Nova Micro + streaming                                                            |
-| Complex reasoning tasks                  | Q22 = Complex                                                 | Claude Sonnet 4.6; Opus 4.6 for hardest                                                        |
+| Complex reasoning tasks                  | Q22 = Complex                                                 | Claude Sonnet 5; Opus 4.6 for hardest                                                          |
 
 ---
 
@@ -747,7 +790,7 @@ Full schema and constraint catalog: `references/shared/schema-preferences.md`.
 15. `ai_constraints.ai_framework` is an array (Q14 is select-all-that-apply). If auto-detected, `chosen_by` is `"extracted"` with `source`.
 16. `metadata.clarify_mode` is one of `"wizard"`, `"full"`, `"fast_path"`, `"simple_hybrid"`.
 
-After writing `preferences.json`, delete `$MIGRATION_DIR/preferences-draft.json` if it exists.
+After writing `preferences.json`, delete `$MIGRATION_DIR/preferences-draft.json` and `$MIGRATION_DIR/preferences-superseded.json` if they exist (the superseded backup has served its purpose once a new complete file exists).
 
 ---
 
@@ -803,6 +846,7 @@ Before handing off to Design:
 - [ ] In wizard mode, the Step 2.5 Assumption Sheet was shown (detected + assumed sections) and the user responded before any essential question was asked
 - [ ] Every constraint with `chosen_by: "extracted"` or `chosen_by: "default"` has a `source` field with the correct prefix (`terraform:`, `billing:`, `inventory:`, `ai-profile:`, or `default:<Qid>`)
 - [ ] Essential questions (Q2, Q7, and conditional Q1/Q3/Q3.5/**Q27**/Q15/Q23–Q25/conflicts) were asked, answered, or explicitly defaulted via "use defaults for the rest"
+- [ ] The Answer Recap was shown after the final Step 4 batch (including defaulted rows on "use defaults for the rest") and the user responded to it before Category E / `preferences.json`
 - [ ] If `bigquery_present` was **true**, the Step 4 BigQuery specialist advisory was shown before questions — **or**, if Step 0 option A (reuse preferences), the same advisory was shown after BigQuery detection
 - [ ] `preferences.json` written to `$MIGRATION_DIR/`
 - [ ] `design_constraints.target_region` is populated with `value` and `chosen_by`
@@ -836,6 +880,8 @@ Load `shared/handoff-gates.md`. **Re-read from disk** before checking.
 4. If `metadata.clarify_mode` is `"wizard"` → at least one constraint has a `source` field OR every active question was essential.
 5. **No sheet/question mixing:** `metadata.questions_asked` contains no question ID that also appears in `metadata.questions_skipped_extracted` or `metadata.questions_defaulted`. (A question may move between lists only if the user converted its sheet row — in which case the override handling moved it to `questions_asked`.)
 6. If compute resources are present (Cloud Run, Cloud Functions, GKE, GCE in `gcp-resource-inventory.json`, or billing-source compute) → `design_constraints.cpu_architecture.value` is set (`graviton` | `x86` | `mixed`), per the Q11b decision table in `clarify-compute.md` — written even when Q11b was auto-defaulted.
+7. **Extraction consistency — Q13b** _(skip this check when `metadata.clarify_mode` is `"full"` — the user explicitly opted into the full question flow)_: If every `google_sql_database_instance` in `gcp-resource-inventory.json` carries an unambiguous disk size (`config.disk_size_gb` or legacy variants, all mapping to the same Q13b band) → `Q13b` must NOT appear in `metadata.questions_asked` unless `design_constraints.db_size.chosen_by` is `"user"` (the user converted the sheet row via "ask me about X" or corrected it). If instances map to **different** bands (e.g. an 8 GB dev instance and a 200 GB prod instance), the size is ambiguous — this check does NOT fire, and asking Q13b is the expected behavior (matching the `clarify-database.md` auto-detect rule "if multiple instances disagree, ask Q13b"). Otherwise: `GATE_FAIL | phase=clarify | field=metadata.questions_asked | reason=extractable_question_asked_Q13b`.
+8. **Extraction consistency — Q19** _(skip when `metadata.clarify_mode` is `"full"`)_: If `ai-workload-profile.json` exists with `models[0].model_id` set at confidence ≥ 0.8 → `Q19` must NOT appear in `metadata.questions_asked` unless `ai_constraints.ai_model_baseline.chosen_by` is `"user"`. Otherwise: `GATE_FAIL | phase=clarify | field=metadata.questions_asked | reason=extractable_question_asked_Q19`. (Detect-confirm cards for sub-threshold or tied detection per `clarify-ai.md` are not affected — they fire only when confidence < 0.8.)
 
 **On any FAIL:** Emit `GATE_FAIL | phase=clarify | field=<path> | reason=missing`. **Do NOT modify artifacts to pass the gate.** **Do NOT update `.phase-status.json`.** Tell the user to answer the missing question or re-run Clarify.
 
@@ -845,7 +891,9 @@ Load `shared/handoff-gates.md`. **Re-read from disk** before checking.
 
 Only after `HANDOFF_OK`. In the **same turn** as the output message below, use the Phase Status Update Protocol (Write tool) to write `.phase-status.json` with `phases.clarify` set to `"completed"`.
 
-Output to user: "Clarification complete. Proceeding to Phase 3: Design AWS Architecture."
+Output to user: "Phase 2 of 6 complete (Clarify). Remaining: Design → Estimate → Generate (+ optional Feedback). Next artifact: aws-design.json. Proceeding to Phase 3: Design AWS Architecture."
+
+_Breadcrumbs are emitted only after outer-run `HANDOFF_OK` — never on `GATE_FAIL`, never from inner workshop reprices._
 
 ---
 

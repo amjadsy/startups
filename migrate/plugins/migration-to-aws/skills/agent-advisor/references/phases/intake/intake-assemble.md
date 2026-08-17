@@ -17,5 +17,4 @@ _produces:
 > state schema (`entry_point`, `audience`, `intake = completed`, later phases
 > pending/skipped per entry point).
 
-
 The state contract additionally includes `target_maturity` (`prototype`, `private_beta`, or `production`), collected with the Intake questions unless a validated seed supplies it. Intake persists it verbatim; it is neither a runtime inference nor a deployment outcome.

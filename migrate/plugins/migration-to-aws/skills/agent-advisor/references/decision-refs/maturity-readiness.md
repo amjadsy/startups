@@ -6,11 +6,11 @@ production launch.
 
 ## Tiers and required controls
 
-| Target maturity | Minimum controls | Evaluation and release gate |
-| --- | --- | --- |
-| `prototype` | Isolated test account, synthetic or approved test data, basic logs, named owner | Demonstrate the intended task on representative prompts; record known failure modes and rollback/delete instructions. |
-| `private_beta` | Prototype controls plus authenticated, allowlisted users, tenant/data boundaries, feedback path, cost guardrail, and human escalation/rollback | Pass representative task and safety evaluation; confirm beta audience, monitoring owner, rollback, and feedback triage before admitting users. |
-| `production` | Private-beta controls plus least-privilege access, secrets/retention review, SLOs and alerts, incident/runbook ownership, capacity/load evidence, and compliance evidence where applicable | Pass release evaluation and load/safety gates; close all critical readiness gaps; approve rollout, rollback, and on-call ownership before production traffic. |
+| Target maturity | Minimum controls                                                                                                                                                                           | Evaluation and release gate                                                                                                                                   |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prototype`     | Isolated test account, synthetic or approved test data, basic logs, named owner                                                                                                            | Demonstrate the intended task on representative prompts; record known failure modes and rollback/delete instructions.                                         |
+| `private_beta`  | Prototype controls plus authenticated, allowlisted users, tenant/data boundaries, feedback path, cost guardrail, and human escalation/rollback                                             | Pass representative task and safety evaluation; confirm beta audience, monitoring owner, rollback, and feedback triage before admitting users.                |
+| `production`    | Private-beta controls plus least-privilege access, secrets/retention review, SLOs and alerts, incident/runbook ownership, capacity/load evidence, and compliance evidence where applicable | Pass release evaluation and load/safety gates; close all critical readiness gaps; approve rollout, rollback, and on-call ownership before production traffic. |
 
 ## Evaluation rules
 
