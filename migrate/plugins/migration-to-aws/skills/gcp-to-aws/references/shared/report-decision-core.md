@@ -80,10 +80,11 @@ brief derived only from values already shown in the decision summary:
 - migration shape and binding duration driver;
 - at most three conditions or evidence gaps.
 
-Use `<div class="share-card">` with a short lead-in ("The one-paragraph version,
-ready to forward:"). Do not add JavaScript, a copy button, editable controls, or
-new calculations. The paragraph must stand alone when pasted into email or a
-planning document. Label every modeled amount as estimated and preserve the
+Use `<div class="share-card"><p>…</p></div>` with exactly one substantive
+paragraph (at least 20 words) and a short lead-in ("The one-paragraph version,
+ready to forward:"). Do not add JavaScript, a copy button, editable controls,
+or new calculations. The paragraph must stand alone when pasted into email or
+a planning document. Label every modeled amount as estimated and preserve the
 same comparability caveats as the cost section. In decision mode, omit
 Generate-only facts. Add `exec-share` to the TOC only when rendered.
 

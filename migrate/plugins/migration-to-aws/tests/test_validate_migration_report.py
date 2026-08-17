@@ -136,6 +136,22 @@ def test_reference_fixture_requires_copy_ready_share_section(tmp_path: Path) -> 
     assert "copy-ready leadership brief" in out
 
 
+def test_reference_fixture_rejects_empty_share_card(tmp_path: Path) -> None:
+    html = FIXTURE.read_text(encoding="utf-8")
+    html = re.sub(
+        r'(<div class="share-card">).*?(</div>)',
+        r"\1\2",
+        html,
+        count=1,
+        flags=re.DOTALL,
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert "exactly one standalone <p>" in out
+
+
 def test_ambiguous_stay_if_heading_is_rejected(tmp_path: Path) -> None:
     html = FIXTURE.read_text(encoding="utf-8").replace(
         "<h3>Stay entirely if</h3>",
@@ -147,6 +163,32 @@ def test_ambiguous_stay_if_heading_is_rejected(tmp_path: Path) -> None:
     code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
     assert code == 1, out
     assert "Stay entirely if" in out
+
+
+def test_renamed_stay_entirely_heading_is_rejected(tmp_path: Path) -> None:
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "<h3>Stay entirely if</h3>",
+        "<h3>Remain on GCP when</h3>",
+        1,
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert 'exactly one "Stay entirely if" heading' in out
+
+
+def test_missing_stay_entirely_heading_is_rejected(tmp_path: Path) -> None:
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "<h3>Stay entirely if</h3>",
+        "",
+        1,
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert 'exactly one "Stay entirely if" heading' in out
 
 
 def test_verdict_pills_are_rejected(tmp_path: Path) -> None:
@@ -174,6 +216,24 @@ def test_accessibility_requires_table_captions(tmp_path: Path) -> None:
     code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
     assert code == 1, out
     assert "must include a <caption>" in out
+
+
+def test_accessibility_runs_when_readability_is_disabled(tmp_path: Path) -> None:
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        '<html lang="en">',
+        "<html>",
+        1,
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(
+        path,
+        FIXTURE_EST_INFRA,
+        FIXTURE_EST_AI,
+        readability=False,
+    )
+    assert code == 1, out
+    assert "must declare a valid lang attribute" in out
 
 
 def test_decision_fixture_uses_shared_visual_shell() -> None:

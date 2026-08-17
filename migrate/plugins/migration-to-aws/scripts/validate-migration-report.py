@@ -23,6 +23,7 @@ import argparse
 import json
 import re
 import sys
+from html import unescape
 from pathlib import Path
 
 # Plugin root: migrate/plugins/migration-to-aws/
@@ -481,11 +482,28 @@ def _validate_action_lists(html: str) -> list[str]:
     return errors
 
 
-def _validate_decision_language(html: str) -> list[str]:
+def _validate_decision_language(
+    html: str, estimation_infra: dict | None
+) -> list[str]:
     """Keep whole-stack decisions distinct from track-scoped holds."""
     summary = _section_html(html, "decision-summary") or ""
     errors: list[str] = []
-    if re.search(r"<h[1-6][^>]*>\s*Stay\s+if\s*</h[1-6]>", summary, re.I):
+    recommendation = (estimation_infra or {}).get("recommendation") or {}
+    has_stay_reasons = bool(recommendation.get("stay_if"))
+    expected_heading_count = len(
+        re.findall(
+            r"<h[1-6][^>]*>\s*Stay\s+entirely\s+if\s*</h[1-6]>",
+            summary,
+            re.I,
+        )
+    )
+    if has_stay_reasons and expected_heading_count != 1:
+        errors.append(
+            "decision-summary has recommendation.stay_if reasons and must contain "
+            'exactly one "Stay entirely if" heading '
+            f"(found {expected_heading_count})"
+        )
+    elif re.search(r"<h[1-6][^>]*>\s*Stay\s+if\s*</h[1-6]>", summary, re.I):
         errors.append(
             'decision-summary heading "Stay if" is ambiguous — use '
             '"Stay entirely if" for whole-stack reasons'
@@ -513,8 +531,31 @@ def _validate_share_section(
             "copy-ready leadership brief was rendered"
         ]
     errors: list[str] = []
-    if not re.search(r'class=["\'][^"\']*\bshare-card\b', section, re.I):
+    card = re.search(
+        r'<(?P<tag>div|aside)\b[^>]*class=["\'][^"\']*\bshare-card\b[^"\']*["\'][^>]*>'
+        r"(?P<body>.*?)</(?P=tag)>",
+        section,
+        re.I | re.DOTALL,
+    )
+    if not card:
         errors.append('exec-share must contain a class="share-card" decision brief')
+        return errors
+    paragraphs = re.findall(
+        r"<p\b[^>]*>(.*?)</p>", card.group("body"), re.I | re.DOTALL
+    )
+    if len(paragraphs) != 1:
+        errors.append(
+            "exec-share share-card must contain exactly one standalone <p> "
+            f"(found {len(paragraphs)})"
+        )
+    else:
+        text = unescape(re.sub(r"<[^>]+>", " ", paragraphs[0]))
+        word_count = len(re.findall(r"\b[\w'-]+\b", text))
+        if word_count < 20:
+            errors.append(
+                "exec-share share-card paragraph must contain a substantive "
+                f"copy-ready brief of at least 20 words (found {word_count})"
+            )
     if re.search(r"<(?:button|script|input|textarea)\b", section, re.I):
         errors.append(
             "exec-share must be a static copy-ready paragraph without buttons, "
@@ -714,13 +755,17 @@ def validate_report(
     if check_readability:
         errors.extend(_validate_readability(html))
         errors.extend(_validate_exec_vocabulary(html))
-        errors.extend(_validate_decision_language(html))
+        errors.extend(_validate_decision_language(html, estimation_infra))
         # Normal generated reports require a TOC. Use the same signal to
         # enforce the visual shell while preserving --no-require-toc as the
         # lightweight escape hatch for deliberately minimal unit fixtures.
         if require_toc:
             errors.extend(_validate_visual_contract(html))
-            errors.extend(_validate_accessibility(html))
+    # Accessibility semantics are independent of prose/readability checks.
+    # --no-require-toc remains the deliberate escape hatch for minimal unit
+    # fixtures, but --no-readability must never disable HTML accessibility.
+    if require_toc:
+        errors.extend(_validate_accessibility(html))
 
     for section_id, min_depth in MIN_CONTENT_DEPTH.items():
         section = _section_html(html, section_id)
