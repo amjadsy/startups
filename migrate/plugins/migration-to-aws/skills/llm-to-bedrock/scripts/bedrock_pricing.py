@@ -43,9 +43,15 @@ def parse_price_dimensions(price_item: dict) -> dict:
 STATIC_FALLBACK = {
     "anthropic.claude-haiku-4-5-20251001-v1:0":     {"input_per_1k_usd": 0.001, "output_per_1k_usd": 0.005},
     "us.anthropic.claude-haiku-4-5-20251001-v1:0":  {"input_per_1k_usd": 0.001, "output_per_1k_usd": 0.005},
+    # Recommend default
+    "anthropic.claude-sonnet-5":                    {"input_per_1k_usd": 0.002, "output_per_1k_usd": 0.010},
+    "us.anthropic.claude-sonnet-5":                 {"input_per_1k_usd": 0.002, "output_per_1k_usd": 0.010},
+    # Still Active — existing workloads / fallbacks
     "anthropic.claude-sonnet-4-6":                  {"input_per_1k_usd": 0.003, "output_per_1k_usd": 0.015},
     "us.anthropic.claude-sonnet-4-6":               {"input_per_1k_usd": 0.003, "output_per_1k_usd": 0.015},
-    # Opus 4.8 is $5/$25 per 1M ($0.005/$0.025 per 1K) — see pricing-cache.md § Anthropic.
+    "anthropic.claude-sonnet-4-6-20250514-v1:0":    {"input_per_1k_usd": 0.003, "output_per_1k_usd": 0.015},
+    "us.anthropic.claude-sonnet-4-6-20250514-v1:0": {"input_per_1k_usd": 0.003, "output_per_1k_usd": 0.015},
+    # Opus 4.8 has no dated foundation-model ID on the model card — suffix-less only.
     "anthropic.claude-opus-4-8":                    {"input_per_1k_usd": 0.005, "output_per_1k_usd": 0.025},
     "us.anthropic.claude-opus-4-8":                 {"input_per_1k_usd": 0.005, "output_per_1k_usd": 0.025},
     "amazon.nova-micro-v1:0":                       {"input_per_1k_usd": 0.000035, "output_per_1k_usd": 0.00014},
@@ -64,10 +70,14 @@ def _static_fallback(model_id: str) -> dict | None:
     entry = STATIC_FALLBACK.get(model_id)
     if entry:
         return {**entry, "available": True, "note": "static fallback (PriceList API had no entry)"}
-    # Try stripping the version suffix for a partial match (e.g. us.anthropic.claude-sonnet-4-6)
+    # Try stripping the version suffix for a partial match (e.g. us.anthropic.claude-sonnet-5)
     base = model_id.rsplit("-v", 1)[0] if "-v" in model_id else model_id
     for key, val in STATIC_FALLBACK.items():
-        if key.startswith(base):
+        # Bidirectional: a dateless query must match a dated table key
+        # (key startswith base) AND a date-pinned query must match a dateless
+        # family key (base startswith key + "-"; the separator guard keeps
+        # ...opus-4-85 from matching the ...opus-4-8 family).
+        if key.startswith(base) or base == key or base.startswith(key + "-"):
             return {**val, "available": True, "note": f"static fallback (matched {key})"}
     # Also strip a trailing date stamp (e.g. ...-sonnet-4-6-20250514 -> ...-sonnet-4-6) so a
     # dated ID form still matches the undated table keys.

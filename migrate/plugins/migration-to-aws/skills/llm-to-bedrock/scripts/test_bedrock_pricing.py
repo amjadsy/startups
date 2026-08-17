@@ -28,15 +28,18 @@ def test_static_fallback_returns_known_model():
 
 def test_static_fallback_opus_4_8_rate_is_5_and_25_per_1m():
     """Opus 4.8 is $5/$25 per 1M tokens (0.005/0.025 per 1K), NOT Opus 4.1's legacy
-    $15/$75. Both the bare id and the us. inference profile carried the wrong rate,
-    so assert both — see references/shared/pricing-cache.md for the source rates.
-    (Keys are the undated forms; dated inputs resolve via the date-strip fallback,
-    covered by test_static_fallback_dated_id_matches_undated_key.)"""
+    $15/$75 — see references/shared/pricing-cache.md for the source rates. The table
+    now keys by dateless family id, so the raw entries are asserted on those keys and
+    ALL four id shapes (bare/us., dateless/date-pinned) must resolve behaviorally —
+    a date-pinned id failing to match the family key was a live regression."""
+    for key in ("anthropic.claude-opus-4-8", "us.anthropic.claude-opus-4-8"):
+        entry = bp.STATIC_FALLBACK[key]
+        assert entry["input_per_1k_usd"] == 0.005, key
+        assert entry["output_per_1k_usd"] == 0.025, key
     for model_id in ("anthropic.claude-opus-4-8",
-                     "us.anthropic.claude-opus-4-8"):
-        entry = bp.STATIC_FALLBACK[model_id]
-        assert entry["input_per_1k_usd"] == 0.005, model_id
-        assert entry["output_per_1k_usd"] == 0.025, model_id
+                     "us.anthropic.claude-opus-4-8",
+                     "anthropic.claude-opus-4-8-20250610-v1:0",
+                     "us.anthropic.claude-opus-4-8-20250610-v1:0"):
         out = bp.lookup("us-east-1", model_id)
         assert out["available"] is True
         assert out["input_per_1k_usd"] == 0.005, model_id
@@ -44,10 +47,16 @@ def test_static_fallback_opus_4_8_rate_is_5_and_25_per_1m():
 
 
 def test_static_fallback_partial_match():
-    # us.anthropic.claude-sonnet-4-6 (no version suffix) should match
-    out = bp._static_fallback("us.anthropic.claude-sonnet-4-6")
+    # us.anthropic.claude-sonnet-5 (no version suffix) should match intro rates
+    out = bp._static_fallback("us.anthropic.claude-sonnet-5")
     assert out is not None
     assert out["available"] is True
+    assert out["input_per_1k_usd"] == 0.002
+    assert out["output_per_1k_usd"] == 0.010
+
+def test_static_fallback_keeps_sonnet_4_6():
+    out = bp._static_fallback("us.anthropic.claude-sonnet-4-6")
+    assert out is not None
     assert out["input_per_1k_usd"] == 0.003
 
 def test_static_fallback_dated_id_matches_undated_key():
@@ -80,6 +89,7 @@ def test_display_name_guess_derives_pricing_api_display_names():
     assert bp.display_name_guess("us.anthropic.claude-haiku-4-5-20251001-v1:0") == "Claude Haiku 4.5"
     assert bp.display_name_guess("amazon.nova-lite-v1:0") == "Nova Lite"
     assert bp.display_name_guess("us.anthropic.claude-haiku-4-5-20251001-v1:0") == "Claude Haiku 4.5"
+    assert bp.display_name_guess("anthropic.claude-sonnet-5") == "Claude Sonnet 5"
 
 
 def test_parse_price_dimensions_ignores_cache_dimensions():
