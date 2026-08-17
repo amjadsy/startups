@@ -28,13 +28,18 @@ def test_static_fallback_returns_known_model():
 
 def test_static_fallback_opus_4_8_rate_is_5_and_25_per_1m():
     """Opus 4.8 is $5/$25 per 1M tokens (0.005/0.025 per 1K), NOT Opus 4.1's legacy
-    $15/$75. Both the bare id and the us. inference profile carried the wrong rate,
-    so assert both — see references/shared/pricing-cache.md for the source rates."""
-    for model_id in ("anthropic.claude-opus-4-8-20250610-v1:0",
+    $15/$75 — see references/shared/pricing-cache.md for the source rates. The table
+    now keys by dateless family id, so the raw entries are asserted on those keys and
+    ALL four id shapes (bare/us., dateless/date-pinned) must resolve behaviorally —
+    a date-pinned id failing to match the family key was a live regression."""
+    for key in ("anthropic.claude-opus-4-8", "us.anthropic.claude-opus-4-8"):
+        entry = bp.STATIC_FALLBACK[key]
+        assert entry["input_per_1k_usd"] == 0.005, key
+        assert entry["output_per_1k_usd"] == 0.025, key
+    for model_id in ("anthropic.claude-opus-4-8",
+                     "us.anthropic.claude-opus-4-8",
+                     "anthropic.claude-opus-4-8-20250610-v1:0",
                      "us.anthropic.claude-opus-4-8-20250610-v1:0"):
-        entry = bp.STATIC_FALLBACK[model_id]
-        assert entry["input_per_1k_usd"] == 0.005, model_id
-        assert entry["output_per_1k_usd"] == 0.025, model_id
         out = bp.lookup("us-east-1", model_id)
         assert out["available"] is True
         assert out["input_per_1k_usd"] == 0.005, model_id

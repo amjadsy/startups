@@ -73,7 +73,11 @@ def _static_fallback(model_id: str) -> dict | None:
     # Try stripping the version suffix for a partial match (e.g. us.anthropic.claude-sonnet-5)
     base = model_id.rsplit("-v", 1)[0] if "-v" in model_id else model_id
     for key, val in STATIC_FALLBACK.items():
-        if key.startswith(base):
+        # Bidirectional: a dateless query must match a dated table key
+        # (key startswith base) AND a date-pinned query must match a dateless
+        # family key (base startswith key + "-"; the separator guard keeps
+        # ...opus-4-85 from matching the ...opus-4-8 family).
+        if key.startswith(base) or base == key or base.startswith(key + "-"):
             return {**val, "available": True, "note": f"static fallback (matched {key})"}
     return None
 
