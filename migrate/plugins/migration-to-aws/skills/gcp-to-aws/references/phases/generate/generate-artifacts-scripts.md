@@ -65,6 +65,21 @@ $MIGRATION_DIR/
 - Scripts are numbered for execution order
 - Scripts use `set -euo pipefail` for safety
 - Scripts log all actions to `$MIGRATION_DIR/logs/`
+- **Fail fast on unset fill-ins at `--execute`:** every script that reads user-supplied env vars (`SOURCE_HOST`, `TARGET_DB_PASSWORD`, `ALB_DNS`, …) checks them at the top of the execute path and exits listing ALL missing ones at once — never fails midway on the first empty var after work has started. Dry-run mode runs without them (printing which are unset). Pattern (adjust the `for v in …` list to match **this** script's required env vars — it is a template, not a universal constant):
+
+  ```bash
+  if [ "$DRY_RUN" = false ]; then
+    missing=()
+    # Adjust the list below to match this script's required env vars
+    for v in SOURCE_HOST TARGET_HOST TARGET_DB_PASSWORD; do
+      [ -z "${!v:-}" ] && missing+=("$v")
+    done
+    if [ ${#missing[@]} -gt 0 ]; then
+      echo "Cannot execute — set these first (see MIGRATION_GUIDE.md fill-in checklist): ${missing[*]}"
+      exit 1
+    fi
+  fi
+  ```
 
 ### 01-validate-prerequisites.sh
 
