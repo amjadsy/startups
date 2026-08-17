@@ -14,6 +14,12 @@ Verify all pricing via AWS Pricing MCP or `references/shared/pricing-cache.md`. 
 
 ---
 
+## Key Insight: Same-Provider Migration Is Now First-Class (July 2026)
+
+**OpenAI GPT-5.6 (Sol, Terra, Luna) is generally available on Amazon Bedrock** ([announcement](https://aws.amazon.com/blogs/machine-learning/openai-gpt-5-6-sol-terra-and-luna-are-now-generally-available-on-amazon-bedrock/)). For OpenAI-sourced applications, the default recommendation is now **same-provider first**: migrate to the corresponding GPT-5.6 tier on Bedrock, and treat a cross-provider move (Claude / Nova) as the alternative to present alongside it — not the default. Same-provider migration eliminates the prompt-adaptation and behavior-delta risk that dominates cross-provider migration cost, and Sonnet 4.6 sits in the same capability tier as GPT-5.6 Terra, so there is no quality forcing function to switch families. See the "OpenAI GPT-5.6 on Bedrock" section below for IDs, pricing, and the Mantle-only constraint.
+
+**Cross-provider still wins when:** the workload needs Bedrock-native features GPT-5.6 does not support (Converse API, Guardrails, geo/global inference profiles), or cost is the driver — Nova Lite/Micro undercut Luna-tier workloads by a wide margin, and Sonnet 4.6 ($3/$15) beats Terra long-context rates.
+
 ## Key Insight: The Landscape Has Changed (April 2026)
 
 **It is no longer "Bedrock is always cheaper."** It depends on the model.
@@ -107,6 +113,27 @@ Percentages below are blended savings using a 2:1 input-to-output token ratio.
 | GPT-4         | $30.00 / $60.00       | Claude Sonnet 5    | $3.00 / $15.00 | Bedrock 82% cheaper                       |
 | GPT-3.5 Turbo | $0.50 / $1.50         | Llama 4 Maverick   | $0.24 / $0.97  | Bedrock 42% cheaper + much better quality |
 
+### OpenAI GPT-5.6 on Bedrock (Sol / Terra / Luna) — same-provider path
+
+GPT-5.6 launched July 13, 2026 and is GA on Bedrock. This is the preferred first mapping for OpenAI-sourced applications: the model family does not change, so prompt adaptation, behavior-delta analysis, and quality re-evaluation are largely unnecessary. Bedrock in-region pricing is at parity with OpenAI's data-residency tier (a ~10% premium over OpenAI Standard; rates below reflect the July 30 price reduction).
+
+| OpenAI Model (source)            | Bedrock GPT-5.6 Target | Model ID               | Bedrock Price (≤272K ctx) | Notes                                          |
+| -------------------------------- | ---------------------- | ---------------------- | ------------------------- | ---------------------------------------------- |
+| GPT-5.6 Sol / GPT-5.5 / o3-pro   | GPT-5.6 Sol            | `openai.gpt-5.6-sol`   | $5.50 / $33.00            | Flagship; frontier reasoning + agentic         |
+| GPT-5.6 Terra / GPT-5.4 / GPT-4o | GPT-5.6 Terra          | `openai.gpt-5.6-terra` | $2.20 / $13.20            | Balanced tier; ≈ GPT-5.5 quality at lower cost |
+| GPT-5.6 Luna / Mini & Nano tiers | GPT-5.6 Luna           | `openai.gpt-5.6-luna`  | $0.22 / $1.32             | Fast/affordable; high-volume inference         |
+
+Long-context (>272K, up to 1M) rates are 2× input / 1.5× output — see `pricing-cache.md` § OpenAI on Bedrock.
+
+**Hard constraints — check before recommending:**
+
+- **Mantle-only.** GPT-5.6 models are served exclusively on the `bedrock-mantle` endpoint via the OpenAI **Responses API** path (`openai/v1/responses`). No `bedrock-runtime`, no Converse API, no Invoke ([model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-terra.html)). Applications on the OpenAI SDK migrate with an env-var + model-string swap; applications you plan to rewrite onto boto3 `converse()` cannot target GPT-5.6.
+- **No geo/global inference profiles.** Model IDs are bare (`openai.gpt-5.6-terra`); geo-prefixed (`us.`) and global inference IDs are not supported.
+- **No Bedrock Guardrails / Knowledge Bases integration on the Mantle path.** If those are requirements, use a Converse-capable family (Claude, Nova) instead.
+- **Region availability.** Confirm the target region serves GPT-5.6 on Mantle (us-east-1, us-east-2, us-west-2 at minimum; check the pricing page for current list).
+
+**Cost cross-check vs Claude:** Sonnet 4.6 ($3.00/$15.00, Converse-capable, prompt caching, geo profiles) is in the same capability tier as Terra ($2.20/$13.20). Terra is ~15% cheaper on blended tokens; Sonnet 4.6 wins on Bedrock-native features and long-context pricing. Present both; let workload requirements decide.
+
 ### OpenAI Models on Bedrock (gpt-oss)
 
 OpenAI's open-source models are available directly on Bedrock, enabling migration without switching model families:
@@ -124,6 +151,8 @@ _Percentages are blended savings using a 2:1 input-to-output token ratio. Actual
 
 ## Migration Decision Framework
 
+**Same-provider first (OpenAI → GPT-5.6 on Bedrock):** When the application can use the Mantle Responses API path (see hard constraints above), map to the corresponding GPT-5.6 tier before considering a family switch — it removes prompt-adaptation and behavior-delta risk entirely. Present the cross-provider option (below) alongside it as the feature/cost alternative.
+
 **Migrate to Bedrock if:**
 
 - Using GPT-5.5 flagship → Bedrock 17% cheaper on output via Opus 4.6 ($5/$25 vs $5/$30); Sonnet 5 is 53% cheaper
@@ -133,7 +162,7 @@ _Percentages are blended savings using a 2:1 input-to-output token ratio. Actual
 - Need AWS infrastructure integration
 - Need prompt caching (Claude only, 90% savings on cached content)
 - Using o3 for reasoning → DeepSeek-R1 on Bedrock is 32% cheaper
-- Want to stay on OpenAI models → gpt-oss on Bedrock (same models, AWS infrastructure)
+- Want to stay on OpenAI models → GPT-5.6 Sol/Terra/Luna on Bedrock Mantle (frontier tier), or gpt-oss (open-weight budget tier) — same provider, AWS infrastructure
 
 **Consider staying on OpenAI if:**
 
