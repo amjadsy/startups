@@ -96,7 +96,7 @@ def main() -> int:
 
     run_dir = Path(sys.argv[1])
     fixture_dir = Path(__file__).resolve().parent
-    plugin_root = fixture_dir.parent.parent  # fixtures/<set>/ -> plugin root
+    plugin_root = fixture_dir.parent.parent  # fixtures/<set>/ -> migration-to-aws/
     exp = json.loads((fixture_dir / "expected-nonweb-scaling.json").read_text())
 
     check_sizing_tables(plugin_root, exp)
