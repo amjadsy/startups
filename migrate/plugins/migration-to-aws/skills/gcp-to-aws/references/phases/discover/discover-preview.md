@@ -85,14 +85,14 @@ from `references/shared/pricing-cache.md` (Source Provider Pricing + Bedrock Mod
 
 | Source model pattern                            | Bedrock equivalent         | Bedrock model ID                           |
 | ----------------------------------------------- | -------------------------- | ------------------------------------------ |
-| `gpt-4o`, `gpt-4.1`, `gpt-5.*` flagship         | Claude Sonnet 5          | `anthropic.claude-sonnet-5`              |
+| `gpt-4o`, `gpt-4.1`, `gpt-5.*` flagship         | Claude Sonnet 5            | `anthropic.claude-sonnet-5`                |
 | `gpt-4o-mini`, `gpt-4.1-mini`, `gpt-5.*-mini`   | Claude Haiku 4.5           | `anthropic.claude-haiku-4-5-20251001-v1:0` |
 | `gpt-3.5-turbo`, `gpt-4.1-nano`, `gpt-5.*-nano` | Amazon Nova Micro          | `amazon.nova-micro-v1:0`                   |
-| `o3`, `o4-mini`, reasoning models               | Claude Sonnet 5          | `anthropic.claude-sonnet-5`              |
-| `gemini-2.5-pro`, `gemini-3.*-pro`              | Claude Sonnet 5          | `anthropic.claude-sonnet-5`              |
+| `o3`, `o4-mini`, reasoning models               | Claude Sonnet 5            | `anthropic.claude-sonnet-5`                |
+| `gemini-2.5-pro`, `gemini-3.*-pro`              | Claude Sonnet 5            | `anthropic.claude-sonnet-5`                |
 | `gemini-2.5-flash`, `gemini-2.0-flash`          | Claude Haiku 4.5           | `anthropic.claude-haiku-4-5-20251001-v1:0` |
 | `gemini-2.0-flash-lite`                         | Amazon Nova Lite           | `amazon.nova-lite-v1:0`                    |
-| `claude-3-5-sonnet`, `claude-sonnet-*`          | Claude Sonnet 5          | `anthropic.claude-sonnet-5`              |
+| `claude-3-5-sonnet`, `claude-sonnet-*`          | Claude Sonnet 5            | `anthropic.claude-sonnet-5`                |
 | `claude-3-5-haiku`, `claude-haiku-*`            | Claude Haiku 4.5           | `anthropic.claude-haiku-4-5-20251001-v1:0` |
 | `claude-3-opus`, `claude-opus-*`                | Claude Opus 4.6            | `anthropic.claude-opus-4-6-v1`             |
 | `text-embedding-*`, `*-embedding-*`             | Amazon Titan Embeddings v2 | `amazon.titan-embed-text-v2:0`             |
