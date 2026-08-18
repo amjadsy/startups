@@ -351,8 +351,9 @@ def _collect_warnings(
             "(not indefinitely — an always-on service is still a better fit for "
             "ECS/EKS); pricing is EC2 in your account (Savings Plans/ODCRs "
             "apply) plus an AgentCore management fee, NOT consumption-based; "
-            "Linux only at launch; verify region availability via MCP "
-            "(8 regions at launch).")
+            "Linux only at launch; launch-region set is limited and volatile — "
+            "verify current availability via MCP (volatile_facts."
+            "instances_regions).")
     return warnings
 
 
