@@ -65,6 +65,21 @@ $MIGRATION_DIR/
 - Scripts are numbered for execution order
 - Scripts use `set -euo pipefail` for safety
 - Scripts log all actions to `$MIGRATION_DIR/logs/`
+- **Fail fast on unset fill-ins at `--execute`:** every script that reads user-supplied env vars (`SOURCE_HOST`, `TARGET_DB_PASSWORD`, `ALB_DNS`, …) checks them at the top of the execute path and exits listing ALL missing ones at once — never fails midway on the first empty var after work has started. Dry-run mode runs without them (printing which are unset). Pattern (adjust the `for v in …` list to match **this** script's required env vars — it is a template, not a universal constant):
+
+  ```bash
+  if [ "$DRY_RUN" = false ]; then
+    missing=()
+    # Adjust the list below to match this script's required env vars
+    for v in SOURCE_HOST TARGET_HOST TARGET_DB_PASSWORD; do
+      [ -z "${!v:-}" ] && missing+=("$v")
+    done
+    if [ ${#missing[@]} -gt 0 ]; then
+      echo "Cannot execute — set these first (see MIGRATION_GUIDE.md fill-in checklist): ${missing[*]}"
+      exit 1
+    fi
+  fi
+  ```
 
 ### 01-validate-prerequisites.sh
 
@@ -102,6 +117,37 @@ echo "Mode: $([ "$DRY_RUN" = true ] && echo 'DRY RUN' || echo 'EXECUTE')"
 
 Read `preferences.json` → `design_constraints.db_size.value` to select the migration tool:
 
+**Inventory cross-check (before selecting the tool):** If `gcp-resource-inventory.json` has a `google_sql_database_instance` with a disk size (`config.disk_size_gb` or legacy variants), map it to the Q13b band and compare against `db_size.value`. Terraform disk size is **allocated capacity — an upper bound on actual data**, so the comparison is asymmetric:
+
+- **`db_size.value` band is LARGER than the allocated band** — data cannot exceed its allocation, UNLESS the disk can autoresize. Branch on `config.disk_autoresize` (extracted by Discover only when explicitly set in HCL):
+  - Explicitly `true` — the allocation is a starting point, not a cap; the disk may have grown since the Terraform was written. Keep the user's answer; no warning. Note it in the script header comment (`# db_size source: user answer [value]; terraform disk_size_gb=[N] is autoresize-enabled, not a cap`).
+  - Explicitly `false`, or absent — treat the allocation as the effective bound. Warn and use the allocated band:
+
+  > **Database size inconsistency:** Clarify recorded `db_size: [value]` but Terraform only allocates `disk_size_gb: [N]` ([band]). Using the allocated band for tool selection — say "use my answer instead" if the disk has grown since this Terraform was written (e.g. autoresize is enabled outside this Terraform).
+
+- **`db_size.value` band is SMALLER than the allocated band** — plausible (actual data below allocation is the normal case). Keep the user's answer; no warning.
+
+Record any override in the script header comment (`# db_size source: terraform disk_size_gb=[N] (allocated), overrode preferences value [value]`).
+
+**Runtime size measurement (always emit, PostgreSQL path):** Because neither the Q13b answer nor the allocated disk measures actual data, the generated script must measure it before migrating. Emit this block in the shared preamble (after connection variables), tailoring the advisory to the tool the script was generated with:
+
+```bash
+# Allocated disk is an upper bound, not a measurement — check actual data size first.
+if [ -n "$SOURCE_HOST" ] && [ -n "${SOURCE_DB_PASSWORD:-}" ]; then
+  ACTUAL_GB=$(PGPASSWORD="$SOURCE_DB_PASSWORD" psql -h "$SOURCE_HOST" -U postgres -d "$DATABASE_NAME" -At \
+    -c "SELECT ceil(pg_database_size(current_database()) / 1024.0^3)")
+  echo "Actual database size: ${ACTUAL_GB} GB (this script was generated for the [band] band)"
+else
+  ACTUAL_GB=""
+  echo "SKIP: actual-size check needs SOURCE_HOST and SOURCE_DB_PASSWORD set."
+fi
+```
+
+Follow it with ONE tool-appropriate advisory branch:
+
+- pgcopydb script: `if [ -n "$ACTUAL_GB" ] && [ "$ACTUAL_GB" -lt 10 ]; then echo "NOTE: actual data is under 10 GB — plain pg_dump/pg_restore would be simpler (no pgcopydb install, no wal_level change). Consider regenerating."; fi`
+- pg_dump script: `if [ -n "$ACTUAL_GB" ] && [ "$ACTUAL_GB" -ge 10 ]; then echo "WARNING: actual data is ${ACTUAL_GB} GB — pg_dump may exceed your maintenance window above 10 GB. Regenerate with pgcopydb before proceeding."; exit 1; fi` (hard stop: undersized tooling is the dangerous direction; oversized is merely inconvenient. The guards run in both dry-run and execute mode; when connection variables are unset — typical first dry run — the check is skipped with a notice, and the operator must fill them in before `--execute` anyway)
+
 - `"<10GB"` → use **pg_dump/pg_restore**
 - `"10-100GB"` or `"100-500GB"` → use **pgcopydb** (parallel copy; requires `wal_level=logical` on Cloud SQL)
 - `">500GB"` → use **AWS DMS** (continuous replication; generate DMS task config instead of a shell export script)
@@ -116,7 +162,8 @@ Generate the script with conditional branches based on `db_size`:
 # 10-500GB: pgcopydb (parallel copy, 3-5x faster than pg_dump)
 # >500GB: AWS DMS recommended — see README-DMS.md if generated
 # unknown: pgcopydb (safer default at unknown scale)
-# TODO: Verify database size before running — wrong tool choice can exceed your maintenance window.
+# Note: band comes from Q13b / allocated disk (an upper bound) — the preamble below
+# measures ACTUAL data size and warns (or stops) if this tool choice doesn't fit it.
 
 echo "=== Database Migration: Cloud SQL → RDS ==="
 

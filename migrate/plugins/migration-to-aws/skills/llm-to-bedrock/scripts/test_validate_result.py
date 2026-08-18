@@ -29,7 +29,7 @@ GOLDEN_ANALYSIS = {
     "app_language": "Python", "ai_framework": "LangChain",
     "ai_framework_version": "langchain==0.1.14", "source_provider": "openai",
     "source_models": ["gpt-4o"],
-    "target_models": ["gpt-4o -> us.anthropic.claude-sonnet-4-20250514-v1:0"],
+    "target_models": ["gpt-4o -> us.anthropic.claude-sonnet-4-6"],
     "same_model_family": False, "bedrock_provider_available": True,
     "prompt_locations": ["app.py:42 : SYSTEM_PROMPT constant"],
     "prompt_patterns": "hardcoded",
@@ -64,7 +64,7 @@ GOLDEN_EVAL = {
     "eval_report_path": "/repo/.saws-migrate/eval-results/",
     "pass_rate": 0.89, "total_cases": 9, "failures": 1,
     "notes": "live_source_baseline_used_model: \n1 prompt needs manual review.",
-    "live_source_baseline": True, "judge_model": "claude-opus-4-7",
+    "live_source_baseline": True, "judge_model": "claude-opus-4-8",
     "source_baseline_quality": "good",
 }
 
@@ -241,7 +241,7 @@ RUN_CONTEXT = {
     "region": "us-east-1", "aws_profile": "", "aws_account": "123456789012",
     "repo_head_sha": SHA, "repo_branch": "main", "repo_dirty_sha256": "",
     "target_models": [{"source_model": "gpt-4o",
-                       "aws_model_id": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+                       "aws_model_id": "us.anthropic.claude-sonnet-4-6",
                        "use_case": "primary"}],
     "resolved_model_overrides": {},
     "source_provider": "openai", "source_baseline_available": True,

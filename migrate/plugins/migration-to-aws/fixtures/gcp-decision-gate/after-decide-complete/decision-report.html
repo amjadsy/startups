@@ -31,6 +31,7 @@
   }
   .verdict-meta { color: var(--muted); font-size: 0.92rem; margin: 0.2rem 0 0.6rem; }
   .verdict { background: #dafbe1; border: 1px solid #4ac26b; border-left: 4px solid var(--green); border-radius: 6px; padding: 0.85rem 1rem; margin: 0.85rem 0; }
+  .share-card { background: #f1f8ff; border: 1px solid #54aeff; border-left: 4px solid var(--blue); border-radius: 6px; padding: 0.9rem 1rem; font-size: 0.95rem; }
   .savings { color: var(--green); font-weight: 700; }
   .metrics {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -88,6 +89,7 @@
 </head>
 <body>
 <div class="report"><div class="executive-summary">
+<h1>GCP to AWS Migration Assessment</h1>
 <section id="decision-summary">
 <h2>Migration Decision Summary <a class="toplink" href="#toc">↑ contents</a></h2>
 <p class="verdict-headline">Go, with conditions</p>
@@ -102,11 +104,12 @@
 <div class="verdict"><strong>Recommendation:</strong> Proceed with a phased migration on the Balanced cost scenario once the availability assumption is confirmed.</div>
 <h3>Migrate if</h3>
 <ul><li>You want managed compute without Kubernetes operations</li><li>Consolidating AI usage onto Bedrock matters this year</li></ul>
-<h3>Stay if</h3>
+<h3>Stay entirely if</h3>
 <ul><li>Your GCP committed-use discounts run through 2027</li></ul>
 </section>
 <nav class="toc" id="toc">
 <a href="#decision-summary">Migration Decision Summary</a>
+<a href="#exec-share">Share With Your CFO</a>
 <a href="#exec-services">Current Stack</a>
 <a href="#exec-costs">Cost Comparison</a>
 <a href="#exec-timeline">Timeline</a>
@@ -114,6 +117,11 @@
 <a href="#exec-assumptions">What This Assessment Rests On</a>
 <a href="#decision-cta">Ready to Execute?</a>
 </nav>
+<section id="exec-share">
+<h2>Share With Your CFO <a class="toplink" href="#toc">↑ contents</a></h2>
+<p>The one-paragraph version, ready to forward:</p>
+<div class="share-card"><p><strong>GCP to AWS:</strong> Go, with conditions. The Balanced AWS scenario is estimated at $155/month; the current source baseline is not directly comparable because it covers standing charges rather than the whole GCP bill. The migration is phased in dependency order, with database migration as the binding duration driver. Confirm the availability posture and committed-use discount term before committing. Confidence: medium.</p></div>
+</section>
 <section id="exec-services">
 <h2>Current Stack <a class="toplink" href="#toc">↑ contents</a></h2>
 <table><caption>Primary GCP services detected</caption><thead><tr><th scope="col">Service</th><th scope="col">Type</th></tr></thead>

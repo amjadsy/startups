@@ -10,7 +10,15 @@ Verify all pricing via AWS Pricing MCP or `references/shared/pricing-cache.md`. 
 
 **Model lifecycle:** Before recommending any Bedrock model, check `references/shared/ai-model-lifecycle.md`. Do not recommend Legacy models as primary selections for new migrations. Legacy models are annotated below where they appear.
 
+**Recommend defaults (Jul 2026):** Claude Sonnet 5 (`anthropic.claude-sonnet-5`) for balanced/flagship; Claude Opus 4.8 for hardest reasoning; Claude Haiku 4.5 for cost/speed. Sonnet 5 intro pricing is **$2/$10 through Aug 31, 2026**, then $3/$15 — comparison tables below use the steady-state $3/$15 rate unless noted. Do not default to Claude Fable 5.
+
 ---
+
+## Key Insight: Same-Provider Migration Is Now First-Class (July 2026)
+
+**OpenAI GPT-5.6 (Sol, Terra, Luna) is generally available on Amazon Bedrock** ([announcement](https://aws.amazon.com/blogs/machine-learning/openai-gpt-5-6-sol-terra-and-luna-are-now-generally-available-on-amazon-bedrock/)). For OpenAI-sourced applications, the default recommendation is now **same-provider first**: migrate to the corresponding GPT-5.6 tier on Bedrock, and treat a cross-provider move (Claude / Nova) as the alternative to present alongside it — not the default. Same-provider migration eliminates the prompt-adaptation and behavior-delta risk that dominates cross-provider migration cost, and Sonnet 4.6 sits in the same capability tier as GPT-5.6 Terra, so there is no quality forcing function to switch families. See the "OpenAI GPT-5.6 on Bedrock" section below for IDs, pricing, and the Mantle-only constraint.
+
+**Cross-provider still wins when:** the workload needs Bedrock-native features GPT-5.6 does not support (Converse API, Guardrails, geo/global inference profiles), or cost is the driver — Nova Lite/Micro undercut Luna-tier workloads by a wide margin, and Sonnet 4.6 ($3/$15) beats Terra long-context rates.
 
 ## Key Insight: The Landscape Has Changed (April 2026)
 
@@ -32,7 +40,7 @@ GPT-5.5 is the first fully retrained base model since GPT-4.5. Natively omnimoda
 | OpenAI Model | Price (in/out per 1M) | Best Bedrock Match   | Bedrock Price  | Winner              |
 | ------------ | --------------------- | -------------------- | -------------- | ------------------- |
 | GPT-5.5      | $5.00 / $30.00        | Claude Opus 4.6      | $5.00 / $25.00 | Bedrock 17% cheaper |
-| GPT-5.5      | $5.00 / $30.00        | Claude Sonnet 4.6    | $3.00 / $15.00 | Bedrock 53% cheaper |
+| GPT-5.5      | $5.00 / $30.00        | Claude Sonnet 5      | $3.00 / $15.00 | Bedrock 53% cheaper |
 | GPT-5.5 Pro  | $30.00 / $180.00      | Nova 2 Pro (Preview) | $1.38 / $11.00 | Bedrock 95% cheaper |
 
 > **Token efficiency caveat:** OpenAI reports GPT-5.5 uses ~40% fewer output tokens on Codex-style tasks vs GPT-5.4. Effective cost increase over GPT-5.4 is ~50% (not 100%) for coding workloads. For non-coding workloads, the full 2× price applies.
@@ -43,7 +51,7 @@ Percentages below are blended savings using a 2:1 input-to-output token ratio. G
 
 | OpenAI Model | Price (in/out per 1M) | Best Bedrock Match   | Bedrock Price  | Winner              |
 | ------------ | --------------------- | -------------------- | -------------- | ------------------- |
-| GPT-5.4      | $2.50 / $15.00        | Claude Sonnet 4.6    | $3.00 / $15.00 | OpenAI 5% cheaper   |
+| GPT-5.4      | $2.50 / $15.00        | Claude Sonnet 5      | $3.00 / $15.00 | OpenAI 5% cheaper   |
 | GPT-5.4 Mini | $0.75 / $4.50         | Nova Lite            | $0.06 / $0.24  | Bedrock 94% cheaper |
 | GPT-5.4 Nano | $0.20 / $1.25         | Nova Micro           | $0.035 / $0.14 | Bedrock 87% cheaper |
 | GPT-5.4 Pro  | $30.00 / $180.00      | Nova 2 Pro (Preview) | $1.38 / $11.00 | Bedrock 94% cheaper |
@@ -52,12 +60,12 @@ Percentages below are blended savings using a 2:1 input-to-output token ratio. G
 
 Percentages below are blended savings using a 2:1 input-to-output token ratio.
 
-| OpenAI Model    | Price (in/out per 1M) | Best Bedrock Match    | Bedrock Price  | Winner              |
-| --------------- | --------------------- | --------------------- | -------------- | ------------------- |
-| GPT-5.2         | $1.75 / $14.00        | Claude Opus 4.7 / 4.6 | $5.00 / $25.00 | OpenAI 50% cheaper  |
-| GPT-5.1 / GPT-5 | $1.25 / $10.00        | Claude Sonnet 4.6     | $3.00 / $15.00 | OpenAI 40% cheaper  |
-| GPT-5 Mini      | $0.25 / $2.00         | Nova Lite             | $0.06 / $0.24  | Bedrock 86% cheaper |
-| GPT-5 Nano      | $0.05 / $0.40         | Nova Micro            | $0.035 / $0.14 | Bedrock 58% cheaper |
+| OpenAI Model    | Price (in/out per 1M) | Best Bedrock Match | Bedrock Price  | Winner              |
+| --------------- | --------------------- | ------------------ | -------------- | ------------------- |
+| GPT-5.2         | $1.75 / $14.00        | Claude Opus 4.8    | $5.00 / $25.00 | OpenAI 50% cheaper  |
+| GPT-5.1 / GPT-5 | $1.25 / $10.00        | Claude Sonnet 5    | $3.00 / $15.00 | OpenAI 40% cheaper  |
+| GPT-5 Mini      | $0.25 / $2.00         | Nova Lite          | $0.06 / $0.24  | Bedrock 86% cheaper |
+| GPT-5 Nano      | $0.05 / $0.40         | Nova Micro         | $0.035 / $0.14 | Bedrock 58% cheaper |
 
 ### Pro Models (Extended Reasoning)
 
@@ -74,7 +82,7 @@ Percentages below are blended savings using a 2:1 input-to-output token ratio.
 
 | OpenAI Model | Price (in/out per 1M) | Best Bedrock Match | Bedrock Price  | Winner              |
 | ------------ | --------------------- | ------------------ | -------------- | ------------------- |
-| GPT-4.1      | $2.00 / $8.00         | Claude Sonnet 4.6  | $3.00 / $15.00 | OpenAI 43% cheaper  |
+| GPT-4.1      | $2.00 / $8.00         | Claude Sonnet 5    | $3.00 / $15.00 | OpenAI 43% cheaper  |
 | GPT-4.1 Mini | $0.40 / $1.60         | Nova Lite          | $0.06 / $0.24  | Bedrock 85% cheaper |
 | GPT-4.1 Nano | $0.10 / $0.40         | Nova Micro         | $0.035 / $0.14 | Bedrock 65% cheaper |
 
@@ -82,7 +90,7 @@ Percentages below are blended savings using a 2:1 input-to-output token ratio.
 
 | OpenAI Model | Price (in/out per 1M) | Best Bedrock Match | Bedrock Price  | Winner              |
 | ------------ | --------------------- | ------------------ | -------------- | ------------------- |
-| GPT-4o       | $2.50 / $10.00        | Claude Sonnet 4.6  | $3.00 / $15.00 | OpenAI 29% cheaper  |
+| GPT-4o       | $2.50 / $10.00        | Claude Sonnet 5    | $3.00 / $15.00 | OpenAI 29% cheaper  |
 | GPT-4o Mini  | $0.15 / $0.60         | Nova Lite          | $0.06 / $0.24  | Bedrock 60% cheaper |
 
 ### Reasoning Models (o-series)
@@ -95,15 +103,36 @@ Percentages below are blended savings using a 2:1 input-to-output token ratio.
 | o3-pro                      | $20.00 / $80.00       | Nova 2 Pro (Preview) | $1.38 / $11.00 | Bedrock 87% cheaper |
 | o1                          | $15.00 / $60.00       | Nova 2 Pro (Preview) | $1.38 / $11.00 | Bedrock 83% cheaper |
 | o3                          | $2.00 / $8.00         | DeepSeek-R1          | $1.35 / $5.40  | Bedrock 32% cheaper |
-| o4-mini / o3-mini / o1-mini | $1.10 / $4.40         | Claude Sonnet 4.6    | $3.00 / $15.00 | OpenAI 69% cheaper  |
+| o4-mini / o3-mini / o1-mini | $1.10 / $4.40         | Claude Sonnet 5      | $3.00 / $15.00 | OpenAI 69% cheaper  |
 
 ### Legacy Models
 
 | OpenAI Model  | Price (in/out per 1M) | Best Bedrock Match | Bedrock Price  | Winner                                    |
 | ------------- | --------------------- | ------------------ | -------------- | ----------------------------------------- |
-| GPT-4 Turbo   | $10.00 / $30.00       | Claude Sonnet 4.6  | $3.00 / $15.00 | Bedrock 58% cheaper                       |
-| GPT-4         | $30.00 / $60.00       | Claude Sonnet 4.6  | $3.00 / $15.00 | Bedrock 82% cheaper                       |
+| GPT-4 Turbo   | $10.00 / $30.00       | Claude Sonnet 5    | $3.00 / $15.00 | Bedrock 58% cheaper                       |
+| GPT-4         | $30.00 / $60.00       | Claude Sonnet 5    | $3.00 / $15.00 | Bedrock 82% cheaper                       |
 | GPT-3.5 Turbo | $0.50 / $1.50         | Llama 4 Maverick   | $0.24 / $0.97  | Bedrock 42% cheaper + much better quality |
+
+### OpenAI GPT-5.6 on Bedrock (Sol / Terra / Luna) — same-provider path
+
+GPT-5.6 launched July 13, 2026 and is GA on Bedrock. This is the preferred first mapping for OpenAI-sourced applications: the model family does not change, so prompt adaptation, behavior-delta analysis, and quality re-evaluation are largely unnecessary. Bedrock in-region pricing is at parity with OpenAI's data-residency tier (a ~10% premium over OpenAI Standard; rates below reflect the July 30 price reduction).
+
+| OpenAI Model (source)            | Bedrock GPT-5.6 Target | Model ID               | Bedrock Price (≤272K ctx) | Notes                                          |
+| -------------------------------- | ---------------------- | ---------------------- | ------------------------- | ---------------------------------------------- |
+| GPT-5.6 Sol / GPT-5.5 / o3-pro   | GPT-5.6 Sol            | `openai.gpt-5.6-sol`   | $5.50 / $33.00            | Flagship; frontier reasoning + agentic         |
+| GPT-5.6 Terra / GPT-5.4 / GPT-4o | GPT-5.6 Terra          | `openai.gpt-5.6-terra` | $2.20 / $13.20            | Balanced tier; ≈ GPT-5.5 quality at lower cost |
+| GPT-5.6 Luna / Mini & Nano tiers | GPT-5.6 Luna           | `openai.gpt-5.6-luna`  | $0.22 / $1.32             | Fast/affordable; high-volume inference         |
+
+Long-context (>272K, up to 1M) rates are 2× input / 1.5× output — see `pricing-cache.md` § OpenAI on Bedrock.
+
+**Hard constraints — check before recommending:**
+
+- **Mantle-only.** GPT-5.6 models are served exclusively on the `bedrock-mantle` endpoint via the OpenAI **Responses API** path (`openai/v1/responses`). No `bedrock-runtime`, no Converse API, no Invoke ([model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-terra.html)). Applications on the OpenAI SDK migrate with an env-var + model-string swap; applications you plan to rewrite onto boto3 `converse()` cannot target GPT-5.6.
+- **No geo/global inference profiles.** Model IDs are bare (`openai.gpt-5.6-terra`); geo-prefixed (`us.`) and global inference IDs are not supported.
+- **No Bedrock Guardrails / Knowledge Bases integration on the Mantle path.** If those are requirements, use a Converse-capable family (Claude, Nova) instead.
+- **Region availability.** Confirm the target region serves GPT-5.6 on Mantle (us-east-1, us-east-2, us-west-2 at minimum; check the pricing page for current list).
+
+**Cost cross-check vs Claude:** Sonnet 4.6 ($3.00/$15.00, Converse-capable, prompt caching, geo profiles) is in the same capability tier as Terra ($2.20/$13.20). Terra is ~15% cheaper on blended tokens; Sonnet 4.6 wins on Bedrock-native features and long-context pricing. Present both; let workload requirements decide.
 
 ### OpenAI Models on Bedrock (gpt-oss)
 
@@ -122,21 +151,23 @@ _Percentages are blended savings using a 2:1 input-to-output token ratio. Actual
 
 ## Migration Decision Framework
 
+**Same-provider first (OpenAI → GPT-5.6 on Bedrock):** When the application can use the Mantle Responses API path (see hard constraints above), map to the corresponding GPT-5.6 tier before considering a family switch — it removes prompt-adaptation and behavior-delta risk entirely. Present the cross-provider option (below) alongside it as the feature/cost alternative.
+
 **Migrate to Bedrock if:**
 
-- Using GPT-5.5 flagship → Bedrock 17% cheaper on output via Opus 4.6 ($5/$25 vs $5/$30); Sonnet 4.6 is 53% cheaper
+- Using GPT-5.5 flagship → Bedrock 17% cheaper on output via Opus 4.6 ($5/$25 vs $5/$30); Sonnet 5 is 53% cheaper
 - Using Pro/expensive models (GPT-5.5 Pro, GPT-5.4 Pro, o1-pro) → 87-98% savings via Nova 2 Pro
 - Using Mini/Nano models at high volume → 87-94% savings via Nova Lite/Micro
 - Using legacy GPT-4/3.5 → 42-82% savings
 - Need AWS infrastructure integration
 - Need prompt caching (Claude only, 90% savings on cached content)
 - Using o3 for reasoning → DeepSeek-R1 on Bedrock is 32% cheaper
-- Want to stay on OpenAI models → gpt-oss on Bedrock (same models, AWS infrastructure)
+- Want to stay on OpenAI models → GPT-5.6 Sol/Terra/Luna on Bedrock Mantle (frontier tier), or gpt-oss (open-weight budget tier) — same provider, AWS infrastructure
 
 **Consider staying on OpenAI if:**
 
 - Using GPT-5.5 for omnimodal (audio/video) → Claude is text+image only; GPT-5.5 has native audio/video
-- Using GPT-5.4 flagship → only 5% cheaper than Sonnet 4.6; marginal either way
+- Using GPT-5.4 flagship → only 5% cheaper than Sonnet 5; marginal either way
 - Using mid-tier flagships (GPT-5, GPT-4.1, o3, o4-mini) → OpenAI 29-69% cheaper
 - Low volume (<$500/mo) where absolute savings are small
 - Heavily integrated with OpenAI ecosystem (Assistants API, gpt-image, Whisper, Realtime)
@@ -172,7 +203,7 @@ If the application uses the OpenAI Python/JS SDK directly (`from openai import O
 
 1. Set `OPENAI_BASE_URL=https://bedrock-mantle.{region}.api.aws/v1`
 2. Set `OPENAI_API_KEY=<bedrock-api-key>` — use a Bedrock API key, **not** your existing OpenAI API key
-3. Change model string (e.g., `gpt-5.4` → `anthropic.claude-sonnet-4-6` or `openai.gpt-oss-120b`)
+3. Change model string (e.g., `gpt-5.4` → `anthropic.claude-sonnet-5` or `openai.gpt-oss-120b`)
 
 **Hard gates before recommending Mantle:**
 
@@ -205,17 +236,17 @@ Assistants API and Responses API are different surfaces. Do not treat all Assist
 
 **When to prefer Converse API over Mantle:** If you need Bedrock-specific features (Guardrails, Knowledge Bases, prompt caching, AgentCore integration) or your target region doesn't have Mantle. Mantle is the fastest path; Converse API is the most feature-complete path.
 
-### GPT-5.4 → Claude Sonnet 4.6
+### GPT-5.4 → Claude Sonnet 5
 
-Near price parity (~5% difference). Migration case is driven by AWS consolidation, agentic reliability, or prompt caching — not cost. Both have ~200K+ context. Low risk.
+Near price parity (~5% difference). Migration case is driven by AWS consolidation, agentic reliability, or prompt caching — not cost. Sonnet 5 has 1M context. Low risk.
 
 ### GPT-5.4 Mini/Nano → Nova Lite/Micro
 
 87-94% savings. Strong cost case at any volume. Nova Lite (300K context) covers most GPT-5.4 Mini use cases.
 
-### GPT-4/4 Turbo → Claude Sonnet 4.6
+### GPT-4/4 Turbo → Claude Sonnet 5
 
-70-90% savings, similar or better quality, longer context (200K vs 128K). Low risk.
+70-90% savings, similar or better quality, longer context (1M vs 128K). Low risk.
 
 ### GPT-3.5 Turbo → Llama 4 Maverick
 
@@ -243,7 +274,7 @@ Tier by complexity: simple → Nova Micro/Llama 4 Scout (60%), moderate → Llam
 
 - Simple tasks (60%) → Nova Micro or Llama 4 Scout
 - Moderate tasks (30%) → Llama 4 Maverick or Nova Pro
-- Complex tasks (10%) → Claude Sonnet 4.6
+- Complex tasks (10%) → Claude Sonnet 5
 
 ---
 

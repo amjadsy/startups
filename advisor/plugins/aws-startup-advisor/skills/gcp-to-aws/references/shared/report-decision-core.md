@@ -17,7 +17,7 @@ output lives in the JSON artifacts.
 ## Decision-mode specifics
 
 - **Artifacts available:** discovery + `preferences.json` + `aws-design*.json` + `estimation-*.json` (+ `migration-preview.json`, `scenarios/` when present). `generation-*.json` and `terraform/` do NOT exist. Sections that prefer Generate artifacts carry an inline **_Decision mode:_** override next to the full-mode rule (decision-summary item 4, Sections 2b, 3 footnote, 4, 6, 7) — **those inline overrides are the authoritative decision-mode law**; when a section has no override, its rule applies unchanged in both modes.
-- **HTML shell:** same `<head>` (charset, viewport, inline CSS) and CSS specification as the full report (see `generate-artifacts-report.md` Step 3), title "GCP to AWS Migration Assessment — Decision Report". Body contains ONLY the `executive-summary` div with the exec sections and TOC (TOC links only to sections present; `nav.toc` carries `id="toc"` and every section `<h2>` ends with the `↑ contents` toplink per the nav-aids CSS spec). Opening order follows the hero-is-the-thesis rule: `decision-summary` first, TOC after it. Required section IDs in decision mode: `decision-summary`, `exec-assumptions`, `exec-services`, `exec-costs`, `exec-timeline`, `exec-risks` (+ conditional `exec-tco`, `exec-architecture`, `exec-security-teaser`, `what-if-scenarios` per their triggers).
+- **HTML shell:** same `<head>` (charset, viewport, inline CSS) and CSS specification as the full report (see `generate-artifacts-report.md` Step 3), title "GCP to AWS Migration Assessment — Decision Report". Body contains ONLY the `executive-summary` div with the exec sections and TOC (TOC links only to sections present; `nav.toc` carries `id="toc"` and every section `<h2>` ends with the `↑ contents` toplink per the nav-aids CSS spec). Opening order follows the hero-is-the-thesis rule: `decision-summary` first, TOC after it. Required section IDs in decision mode: `decision-summary`, `exec-assumptions`, `exec-services`, `exec-costs`, `exec-timeline`, `exec-risks` (+ conditional `exec-share`, `exec-tco`, `exec-architecture`, `exec-security-teaser`, `what-if-scenarios` per their triggers).
 - **CTA footer (required, after the last section):** `<section id="decision-cta">` — "**Ready to execute?** Say \"generate the Terraform and migration scripts\" and I'll produce the full execution pack (Terraform, migration scripts, rollback runbook, fill-in checklist) from this same analysis." Plus one line: "This decision report was generated without execution artifacts; the full migration report replaces it if you proceed."
 - **`DECISION.md` (required twin):** same content as the HTML, as plain Markdown (Slack/GitHub-friendly): verdict headline, cost table, migrate-if/stay-if lists, timeline band, top risks, assumptions, CTA line. No HTML tags.
 - **Validation:** run `scripts/validate-migration-report.py $MIGRATION_DIR/decision-report.html --mode decision [--estimation-infra ...] [--estimation-ai ...]` and fix failures before presenting.
@@ -62,10 +62,31 @@ Content when `recommendation` block exists:
 2. **Complexity:** from `migration-preview.json` → `complexity_signal` ("Simple", "Moderate", "Complex") — colored badge
 3. **Cost headline:** from `estimation-infra.json` → `cost_comparison.option_b_balanced` vs GCP baseline, OR legacy `comparison.aws_balanced_monthly_usd` vs `comparison.gcp_monthly_usd`. Do NOT use `migration-preview.json` → `cost_preview` when estimation artifact exists (preview is superseded). If only preview exists: show labeled "Early estimate (±30%) — full analysis not yet run."
 4. **Timeline:** week counts are never rendered in either mode — the plugin has no calibrated duration data (`shared/migration-complexity.md` § Provenance). _Full mode:_ approach + the binding duration driver from `generation-infra.json` → `migration_plan.duration_drivers[]` (e.g. "Phased, in dependency order — long pole: database cutover"). _Decision mode:_ `migration-preview.json` → `duration_hint` (path-shape phrasing) when present, else the tier's driver summary from `shared/migration-complexity.md`; label it "**if you execute**". **Legacy artifacts:** when an old artifact carries `total_weeks` or `timeline_hint` week ranges, render only with the visible label "Legacy planning heuristic (uncalibrated): N weeks" — never bare. In neither mode use `recommendation.next_steps` as timeline — those are action items, not duration.
-5. **Migrate if / Stay if:** from `recommendation.migrate_if` and `recommendation.stay_if`. Render as two compact lists. For BigQuery/deferred analytics: **do not** frame specialist engagement as a reason to stay on GCP unless the user must cut over analytics in the **same window** as app infra. Prefer migrate-if bullets that mention parallel specialist planning.
+5. **Migrate if / Stay entirely if:** from `recommendation.migrate_if` and `recommendation.stay_if`. Render as two compact lists. The customer-facing second heading is **"Stay entirely if"** so a track-scoped hold (for example, keeping image generation on the current provider) cannot be mistaken for a recommendation to abandon the whole migration. The `stay_if` list contains whole-stack reasons only. For BigQuery/deferred analytics: **do not** frame specialist engagement as a reason to stay on GCP unless the user must cut over analytics in the **same window** as app infra. Prefer migrate-if bullets that mention parallel specialist planning. When track-scoped caveats exist, add one muted sentence after the lists explaining which track can remain on the source platform without blocking the rest.
 6. **Key decisions ahead:** from `migration-preview.json` → `key_decisions_ahead` — **ordered list** (`<ol class="compact">`), not bullets. Each item is one concrete decision the reader must make next.
-   6b. **What would flip this (v2 artifacts):** from `recommendation.would_flip_if[]` when present — short unordered list immediately after Migrate if / Stay if. Skip silently when absent.
-7. **Next steps (optional):** from `recommendation.next_steps` — **ordered list** (`<ol class="compact">`) of actionable steps separate from timeline. Numbered sequence implies priority order; keep `Migrate if` / `Stay if` as unordered lists.
+   6b. **What would flip this (v2 artifacts):** from `recommendation.would_flip_if[]` when present — short unordered list immediately after Migrate if / Stay entirely if. Skip silently when absent.
+7. **Next steps (optional):** from `recommendation.next_steps` — **ordered list** (`<ol class="compact">`) of actionable steps separate from timeline. Numbered sequence implies priority order; keep `Migrate if` / `Stay entirely if` as unordered lists. When generated artifacts contain fill-in placeholders, the FIRST next step MUST state execution readiness: "Fill in the [N] account-specific values (emails, account ID, image URI — checklist in MIGRATION_GUIDE.md) — nothing can be applied until then." The report is the decision document; this line is the bridge from decision to execution.
+
+**Section 0b — Share With Your CFO (`exec-share`, REQUIRED when any estimation artifact contains a monthly source or AWS estimate):**
+
+Render immediately after the TOC. This is a copy-ready, one-paragraph decision
+brief derived only from values already shown in the decision summary:
+
+- verdict and confidence;
+- estimated AWS monthly run rate (combined when comparable, otherwise the
+  available track estimate with its scope);
+- source baseline only when it is comparable, otherwise say that actual source
+  billing must be confirmed;
+- migration shape and binding duration driver;
+- at most three conditions or evidence gaps.
+
+Use `<div class="share-card"><p>…</p></div>` with exactly one substantive
+paragraph (at least 20 words) and a short lead-in ("The one-paragraph version,
+ready to forward:"). Do not add JavaScript, a copy button, editable controls,
+or new calculations. The paragraph must stand alone when pasted into email or
+a planning document. Label every modeled amount as estimated and preserve the
+same comparability caveats as the cost section. In decision mode, omit
+Generate-only facts. Add `exec-share` to the TOC only when rendered.
 
 **Deferred services flag:** If ANY resource in the design artifact has `aws_service == "Deferred — specialist engagement"`, add a prominent callout:
 
