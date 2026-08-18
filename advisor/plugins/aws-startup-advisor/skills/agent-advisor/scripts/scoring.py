@@ -16,7 +16,7 @@ DIMENSIONS = [
     "session_duration", "traffic_pattern", "platform_fit", "session_state",
     "ops_preference", "isolation", "memory_needs", "multi_agent", "framework",
     "existing_cluster", "multi_cloud", "idle_resume", "compute_tier",
-    "launch_concurrency",
+    "launch_concurrency", "instance_type_requirement",
 ]
 
 # Legal answer values per scoring dimension (the closed set the engine reasons about).
@@ -35,6 +35,7 @@ LEGAL_VALUES = {
     "idle_resume": ["process_level", "filesystem", "none", "unknown"],
     "compute_tier": ["light", "heavy_non_gpu", "gpu", "unknown"],
     "launch_concurrency": ["high", "moderate", "low", "unknown"],
+    "instance_type_requirement": ["yes", "no", "unknown"],
 }
 
 DEFAULTS = {
@@ -217,6 +218,24 @@ def _select_deployment_model(answers, verdict, profiles):
     return "harness"
 
 
+# Answers that require the Instances compute type (AWS-managed EC2 via a capacity
+# provider): sessions up to 14 days, GPU / heavy compute, and instance-type choice.
+# Everything else runs on the default microVMs compute type (8h, 2 vCPU / 8 GB).
+def _select_agentcore_compute_type(answers, verdict, co_recommend=None):
+    agentcore_wins = (
+        verdict == "agentcore"
+        or (verdict == "co_recommend" and "agentcore" in (co_recommend or []))
+    )
+    if not agentcore_wins:
+        return None
+    needs_instances = (
+        answers.get("session_duration") == "over_8hr"
+        or answers.get("compute_tier") in ("gpu", "heavy_non_gpu")
+        or answers.get("instance_type_requirement") == "yes"
+    )
+    return "instances" if needs_instances else "microvms"
+
+
 AGENTCORE_ALWAYS_SERVICES = ["identity", "observability", "evaluations", "optimization"]
 
 
@@ -288,7 +307,8 @@ def _defer_unverified_selection_requirements(verifications, requirements):
 
 
 def _collect_warnings(
-    answers, verifications, verdict, co_recommend=None, selection_requirements=()
+    answers, verifications, verdict, co_recommend=None, selection_requirements=(),
+    agentcore_compute_type=None,
 ):
     warnings = []
     microvms_is_winner = (
@@ -325,6 +345,14 @@ def _collect_warnings(
             warnings.append(
                 "High launch concurrency requires current-run verification of Lambda "
                 "MicroVMs launch capacity before selection.")
+    if agentcore_compute_type == "instances":
+        warnings.append(
+            "AgentCore Instances compute type: sessions persist up to 14 days "
+            "(not indefinitely — an always-on service is still a better fit for "
+            "ECS/EKS); pricing is EC2 in your account (Savings Plans/ODCRs "
+            "apply) plus an AgentCore management fee, NOT consumption-based; "
+            "Linux only at launch; verify region availability via MCP "
+            "(8 regions at launch).")
     return warnings
 
 
@@ -365,6 +393,8 @@ def score(input_data, profiles=None, run_evidence=None):
                 deployment_model = dm
                 break
 
+    agentcore_compute_type = _select_agentcore_compute_type(answers, verdict, co_recommend)
+
     result = {
         "verdict": verdict,
         "scores": scores,
@@ -372,10 +402,12 @@ def score(input_data, profiles=None, run_evidence=None):
         "deferred_verification_requirements": deferred,
         "recommendation_status": "provisional" if deferred else "final",
         "deployment_model": deployment_model,
+        "agentcore_compute_type": agentcore_compute_type,
         "agentcore_services": _select_agentcore_services(answers),
         "assumptions_used": _collect_assumptions(raw_answers),
         "warnings": _collect_warnings(
-            answers, verifications, verdict, co_recommend, selection_requirements
+            answers, verifications, verdict, co_recommend, selection_requirements,
+            agentcore_compute_type,
         ),
     }
     if verdict == "co_recommend":

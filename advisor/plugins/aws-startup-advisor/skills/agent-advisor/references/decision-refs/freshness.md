@@ -8,9 +8,10 @@ or the run directory in an outbound request — the answer never depends on it.
 
 ## Fields to verify at runtime via the awsknowledge MCP
 
-- AgentCore session cap (currently "8h, extending")
-- AgentCore compute cap (2 vCPU / 8 GB)
-- AgentCore / Lambda MicroVMs region availability
+- AgentCore microVMs session cap (currently 8h) and Instances session cap (currently 14d)
+- AgentCore microVMs compute cap (2 vCPU / 8 GB; Instances lifts it via EC2 choice)
+- AgentCore / AgentCore Instances / Lambda MicroVMs region availability (Instances
+  launched 2026-08 in a limited region set)
 - Lambda MicroVMs launch TPS (5, not adjustable)
 - FedRAMP certification status for AgentCore and Lambda MicroVMs
 - Any Bedrock model price (defer to the `llm-to-bedrock` skill's pricing cache; never hardcode here)

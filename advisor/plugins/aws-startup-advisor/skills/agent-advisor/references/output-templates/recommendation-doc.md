@@ -10,11 +10,18 @@
 
 `<bulleted summary of the answers that drove the decision; each answer carries provenance (wizard defaults vs user-stated).>`
 
-## 3. Recommendation: `<Runtime>` <+ deployment model if AgentCore>
+## 3. Recommendation: `<Runtime>` <+ deployment model if AgentCore> <+ compute type if AgentCore>
 
 <rationale + the top scoring signals; business framing then technical specifics. Quote each score the
 way scoring-result.json states it — a bare number. The engine publishes no maximum, so a fraction or
-a percentage ("40/56", "71%") asserts something it never computed.>
+a percentage ("40/56", "71%") asserts something it never computed.
+
+For an AgentCore verdict, name the compute type from design.json.agentcore_compute_type and what
+drove it: microvms — "serverless microVMs (8h sessions, consumption billing, $0 during I/O wait)";
+instances — "Instances compute type: AWS-managed EC2 via a capacity provider (sessions to 14 days,
+GPU/instance-type choice, EC2 + management-fee billing)" and name which answer routed there
+(>8h duration, GPU/heavy compute, or the instance-type requirement). Carry the scoring warning
+about the 14-day ceiling and pricing model verbatim into this section.>
 
 ## 3b. System topology (multi-unit systems only — omit entirely for one unit)
 
