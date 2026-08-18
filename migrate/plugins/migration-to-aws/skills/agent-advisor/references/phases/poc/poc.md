@@ -546,6 +546,17 @@ if __name__ == "__main__":
 
 ### 3d. `deploy.sh` — one-command deploy (generated, NOT executed)
 
+- **Compute-type guard (read design.json first):** when the unit's
+  `agentcore_compute_type` is `"instances"`, the standard `agentcore configure`/`launch`
+  flow below builds the **microVMs** shape — which cannot honor the very property
+  (>8h session / GPU / instance type) that routed this unit to Instances. Do NOT
+  silently ship it as the answer. Ship it as a **functional** POC with an explicit
+  banner in deploy.sh and the POC report: "validates agent logic on microVMs; the
+  production shape is the Instances compute type (capacity provider — EC2 instance
+  types, sessions to 14 days), which this POC does not exercise", plus a next-steps
+  block naming the capacity-provider setup (create capacity provider → create runtime
+  with compute type Instances → same invoke path). Verify current capacity-provider
+  CLI/API usage via the awsknowledge MCP before writing that block (freshness rule).
 - A bash script that runs `agentcore configure` then
   `agentcore launch --auto-update-on-conflict` (the project's standard launch invocation).
 - **Guardrails baked into the script**: at the top, echo a clear warning that running it creates
