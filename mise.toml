@@ -69,8 +69,11 @@ run = [
 ]
 
 [tasks."lint:model-ids"]
-description = "Fail on known-bad Bedrock model IDs (EOL-as-target, fabricated dated forms) outside the catalog files (CI)"
-run = "python3 migrate/plugins/migration-to-aws/tools/model-id-lint.py"
+description = "Fail on known-bad Bedrock model IDs (EOL-as-target, fabricated dated forms) outside the catalog files (CI) — both plugins"
+run = [
+  "python3 migrate/plugins/migration-to-aws/tools/model-id-lint.py",
+  "python3 advisor/plugins/aws-startup-advisor/tools/model-id-lint.py",
+]
 
 [tasks."fixtures:assert"]
 description = "Run committed fixture asserters: golden run trees must PASS, replay-only asserters must fail cleanly on an empty dir (CI) for both plugins"
