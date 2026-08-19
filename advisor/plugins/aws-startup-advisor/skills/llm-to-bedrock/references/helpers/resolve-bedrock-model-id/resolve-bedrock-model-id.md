@@ -16,6 +16,42 @@ the user to choose when the match is ambiguous.
 
 ## Procedure
 
+### Step 0: Route mantle-only models away from inference-profile resolution
+
+**Check this before Step 1.** If `plan_model_id` matches `^openai\.gpt-5` (the proprietary GPT models — GPT-5.6
+Sol/Terra/Luna, GPT-5.5, GPT-5.4), the inference-profile path below **cannot** resolve it and will always fail:
+
+- These models are served only on the `bedrock-mantle` endpoint. They have no `bedrock-runtime` model and no
+  inference profile, so `aws bedrock list-inference-profiles` never returns them.
+- They do not support Geo or Global cross-region inference, so there is no `us.` / `global.` / `eu.` prefixed variant
+  to rank against. The Step 3 token ranking would score every candidate at near-zero overlap and Step 4 would return
+  `blocked: model_unresolvable` for an ID that is in fact perfectly valid.
+
+For these IDs, validate against the mantle catalog instead:
+
+```bash
+aws bedrock list-foundation-models \
+  --region <region> \
+  <add --profile <profile> when your context has an `AWS profile` line> \
+  --query "modelSummaries[?starts_with(modelId, 'openai.')].[modelId,modelName]" \
+  --output json
+```
+
+- **Exact match** on `plan_model_id` → return it unchanged. Do not add a regional prefix and do not strip or append a
+  `-v1:0`-style suffix; the mantle ID form is the literal `openai.gpt-5.6-terra` shape.
+- **No match** → the model is not enabled or not available in this region. Return `blocked` with
+  `reason: model_unavailable_in_region` and put the region plus the `openai.*` IDs that _were_ returned in `detail`,
+  so the orchestrator can offer them. Because these models are in-region only, the remedy is a **region change or a
+  different model** — never a cross-region inference profile.
+- If the CLI call itself fails or the account lacks `bedrock:ListFoundationModels`, return `blocked` with
+  `reason: model_unverifiable` rather than guessing.
+
+Also note for the caller: these models need `bedrock-mantle:*` IAM actions (e.g. via
+`AmazonBedrockMantleInferenceAccess`), not `bedrock:InvokeModel`. A resolution success here does not imply the caller
+is authorized to invoke.
+
+Non-`openai.gpt-5*` IDs continue to Step 1 unchanged.
+
 ### Step 1: List live inference profiles
 
 ```bash
@@ -86,7 +122,12 @@ stops on abort.
 ## Notes
 
 - This skill is idempotent: calling it twice with the same already-validated
-  ID will hit Step 2 and return immediately.
+  ID will hit Step 0 (mantle) or Step 2 (inference profile) and return immediately.
+- Steps 1–5 assume the target is a `bedrock-runtime` model reachable through an
+  inference profile. Mantle-only models are handled entirely in Step 0 and never
+  reach the token-ranking logic. See
+  `gcp-to-aws/references/shared/openai-on-bedrock.md` for the authoritative list
+  of mantle-only model IDs and their regions.
 - Output of this skill should replace the plan's `target_model_id` in the
   caller's context — downstream phases (evaluator, rewriter) receive the
   validated ID only.

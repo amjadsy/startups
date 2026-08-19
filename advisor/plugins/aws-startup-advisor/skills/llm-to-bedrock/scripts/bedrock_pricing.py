@@ -56,7 +56,31 @@ STATIC_FALLBACK = {
     "amazon.nova-micro-v1:0":                       {"input_per_1k_usd": 0.000035, "output_per_1k_usd": 0.00014},
     "amazon.nova-lite-v1:0":                        {"input_per_1k_usd": 0.00006, "output_per_1k_usd": 0.00024},
     "amazon.nova-pro-v1:0":                         {"input_per_1k_usd": 0.0008, "output_per_1k_usd": 0.0032},
+    # OpenAI proprietary GPT models (bedrock-mantle), SHORT-CONTEXT (272K) tier,
+    # in-region us-east-1/2. Read off the Bedrock pricing page OpenAI tab 2026-08-14.
+    # The PriceList API carries no GPT-5.x rows, so this table is the ONLY source.
+    #
+    # These are NOT OpenAI's standard list prices: in-region Bedrock is priced at parity
+    # with OpenAI's *data residency* tier, which is exactly 1.10x standard. An earlier
+    # revision used the standard-tier figures (0.0002/0.0012 for Luna, 0.005/0.03 for
+    # 5.5, 0.0025/0.015 for 5.4) and understated every estimate by 10%.
+    #
+    # The GPT-5.6 family also has a LONG-CONTEXT (1M) tier at 2.0x input / 1.5x output
+    # which is NOT represented here — a >272K workload priced from this table is
+    # understated. GPT-5.5 and GPT-5.4 have no long-context tier.
+    "openai.gpt-5.6-sol":                           {"input_per_1k_usd": 0.0055, "output_per_1k_usd": 0.033},
+    "openai.gpt-5.6-terra":                         {"input_per_1k_usd": 0.0022, "output_per_1k_usd": 0.0132},
+    "openai.gpt-5.6-luna":                          {"input_per_1k_usd": 0.00022, "output_per_1k_usd": 0.00132},
+    "openai.gpt-5.5":                               {"input_per_1k_usd": 0.0055, "output_per_1k_usd": 0.033},
+    "openai.gpt-5.4":                               {"input_per_1k_usd": 0.00275, "output_per_1k_usd": 0.0165},
 }
+
+
+def is_mantle_gpt(model_id: str) -> bool:
+    """Pure: OpenAI's proprietary GPT models, which the AWS PriceList API does not
+    carry. The open-weight gpt-oss models ARE in the PriceList API and must not match."""
+    mid = model_id.lower()
+    return mid.startswith("openai.gpt-5") and "oss" not in mid
 
 
 def unavailable(note: str) -> dict:
@@ -69,6 +93,11 @@ def _static_fallback(model_id: str) -> dict | None:
     entry = STATIC_FALLBACK.get(model_id)
     if entry:
         return {**entry, "available": True, "note": "static fallback (PriceList API had no entry)"}
+    # Mantle GPT ids require an EXACT match. Their tier names differ only by suffix
+    # (`openai.gpt-5.6-sol` / `-terra` / `-luna`) at very different price points, so a
+    # prefix match on e.g. `openai.gpt-5.6` would silently bill Sol's traffic at Luna's rate.
+    if is_mantle_gpt(model_id):
+        return None
     # Try stripping the version suffix for a partial match (e.g. us.anthropic.claude-sonnet-5)
     base = model_id.rsplit("-v", 1)[0] if "-v" in model_id else model_id
     for key, val in STATIC_FALLBACK.items():
@@ -118,6 +147,16 @@ def lookup(region: str, model_id: str) -> dict:
         fb["note"] = ("static pricing table (verified 2026-08-04 against "
                       "aws.amazon.com/bedrock/pricing and the vendored pricing cache)")
         return fb
+    if is_mantle_gpt(model_id):
+        # Short-circuit: the PriceList API carries no rows for the proprietary GPT
+        # models, so a live lookup would burn a round trip and still return nothing —
+        # and a generic "unavailable" would read as "this model doesn't exist".
+        return unavailable(
+            f"the AWS PriceList API does not carry OpenAI's proprietary GPT models, and "
+            f"{model_id} is not in the static table. This does NOT mean the model is "
+            f"unavailable. Read the rate from the OpenAI tab of "
+            f"aws.amazon.com/bedrock/pricing and add it to STATIC_FALLBACK. Do not derive "
+            f"it from a percentage change to an older rate.")
     import boto3
     from botocore.exceptions import BotoCoreError, ClientError
     try:

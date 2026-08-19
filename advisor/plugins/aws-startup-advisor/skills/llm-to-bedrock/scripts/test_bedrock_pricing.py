@@ -141,3 +141,72 @@ def test_lookup_serves_static_table_first_without_calling_the_api(monkeypatch):
     out = bp.lookup("us-east-1", "amazon.nova-pro-v1:0")
     assert out["available"] is True
     assert out["input_per_1k_usd"] == 0.0008
+
+
+def test_mantle_gpt_detection_excludes_gpt_oss():
+    assert bp.is_mantle_gpt("openai.gpt-5.6-luna") is True
+    assert bp.is_mantle_gpt("openai.gpt-5.5") is True
+    assert bp.is_mantle_gpt("openai.gpt-oss-120b-1:0") is False
+    assert bp.is_mantle_gpt("anthropic.claude-sonnet-4-6") is False
+
+
+def test_mantle_gpt_verified_rates_come_from_static_table():
+    # Short-context (272K) in-region rates off the Bedrock pricing page OpenAI tab.
+    # NOT OpenAI's standard list price: Bedrock in-region is at parity with OpenAI's
+    # data-residency tier, exactly 1.10x standard. An earlier revision used the
+    # standard figures (0.0002/0.0012) and understated every estimate by 10%.
+    v = bp.lookup("us-east-1", "openai.gpt-5.6-luna")
+    assert v["available"] is True
+    # $0.22 / $1.32 per 1M == $0.00022 / $0.00132 per 1K
+    assert v["input_per_1k_usd"] == 0.00022
+    assert v["output_per_1k_usd"] == 0.00132
+
+
+def test_mantle_gpt_rates_are_data_residency_tier_not_standard():
+    # Guards the specific error that shipped: every rate must be 1.10x the OpenAI
+    # standard-tier figure, so a future edit that "corrects" them back to standard fails.
+    standard = {"openai.gpt-5.6-sol": (0.005, 0.030),
+                "openai.gpt-5.6-terra": (0.002, 0.012),
+                "openai.gpt-5.6-luna": (0.0002, 0.0012),
+                "openai.gpt-5.5": (0.005, 0.030),
+                "openai.gpt-5.4": (0.0025, 0.015)}
+    for mid, (si, so) in standard.items():
+        e = bp.STATIC_FALLBACK[mid]
+        assert abs(e["input_per_1k_usd"] / si - 1.10) < 1e-6, mid
+        assert abs(e["output_per_1k_usd"] / so - 1.10) < 1e-6, mid
+
+
+def test_all_five_proprietary_gpt_models_are_priced():
+    # Terra and Sol were previously absent and resolved to "unavailable"; the pricing
+    # page now supplies them, so an estimate must not fall back to that path.
+    for mid in ("openai.gpt-5.6-sol", "openai.gpt-5.6-terra", "openai.gpt-5.6-luna",
+                "openai.gpt-5.5", "openai.gpt-5.4"):
+        v = bp.lookup("us-east-1", mid)
+        assert v["available"] is True, mid
+        assert v["input_per_1k_usd"] > 0 and v["output_per_1k_usd"] > 0, mid
+
+
+def test_mantle_gpt_never_prefix_matches_a_different_tier():
+    # Regression: Sol, Terra and Luna differ only by suffix at very different price
+    # points, so a prefix match would bill one tier at another tier's rate.
+    v = bp.lookup("us-east-1", "openai.gpt-5.6")
+    assert v["available"] is False
+    assert v["input_per_1k_usd"] is None
+
+
+def test_unpriced_mantle_gpt_says_unavailable_not_nonexistent(monkeypatch):
+    # Regression: falling through to the PriceList API returned a bare
+    # "Pricing unavailable", which reads as "no such model" for a GA model.
+    import boto3
+
+    def boom(*a, **k):
+        raise AssertionError("must not call the PriceList API for a mantle GPT model")
+
+    monkeypatch.setattr(boto3, "client", boom)
+    # A plausible-but-unlisted tier. Terra/Sol used to serve here; the pricing page now
+    # supplies them, so this needs an id genuinely absent from the table to still test
+    # the short-circuit rather than silently passing on a priced model.
+    v = bp.lookup("us-east-1", "openai.gpt-5.6-nova-pro-preview")
+    assert v["available"] is False
+    assert "does NOT mean the model is unavailable" in v["note"]
+    assert "aws.amazon.com/bedrock/pricing" in v["note"]
