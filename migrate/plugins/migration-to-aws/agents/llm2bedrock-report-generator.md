@@ -113,6 +113,11 @@ The pricing script only covers Bedrock models. For the source provider (OpenAI, 
 
 | Model                      | Input (USD/1M) | Output (USD/1M) |
 | -------------------------- | -------------- | --------------- |
+| gpt-5.6-luna               | 0.20           | 1.20            |
+| gpt-5.6-terra              | 2.00           | 12.00           |
+| gpt-5.6-sol                | 5.00           | 30.00           |
+| gpt-5.5                    | 5.00           | 30.00           |
+| gpt-5.4                    | 2.50           | 15.00           |
 | gpt-4o                     | 2.50           | 10.00           |
 | gpt-4o-mini                | 0.15           | 0.60            |
 | gpt-4-turbo                | 10.00          | 30.00           |
@@ -123,6 +128,8 @@ The pricing script only covers Bedrock models. For the source provider (OpenAI, 
 | gemini-2.0-flash           | 0.10           | 0.40            |
 | claude-3-5-sonnet (1P API) | 3.00           | 15.00           |
 | claude-3-haiku (1P API)    | 0.25           | 1.25            |
+
+**Same-model pairs cost about 10% MORE on Bedrock — report the increase, never call it neutral.** Bedrock in-region is priced at parity with OpenAI's _data residency_ tier, which is 1.10x OpenAI's standard list price, so a source on OpenAI standard sees a ~10% rise for the identical model. Quote it plainly and carry the non-cost justification (commitments, governance, residency, prompt caching, no behaviour delta). **If a pair's workload exceeds 272K context**, price the Bedrock side at the GPT-5.6 long-context tier — 2.0x input, 1.5x output — and show that line separately; it can dominate the comparison, and GPT-5.5/5.4 have no long-context tier so their usable window is 272K.
 
 If the source model is not in this table (likely for any model released after the table's last update — check the provider's public pricing page if you know current rates), note it as a gap in the Risk Assessment section, label the figure "(estimated from `<similar model>`)", and estimate using the closest listed model's pricing.
 
@@ -211,6 +218,11 @@ uv run --project <scriptsDir> python <scriptsDir>/iam_policy.py \
 
 The script handles the dual-ARN pattern: foundation-model ARNs for plain model IDs and inference-profile ARNs for geo-prefixed IDs (e.g. `us.anthropic.claude-sonnet-4-6`). The output is a ready-to-use IAM policy JSON file.
 
+**Mantle targets get different actions.** When any target is a proprietary OpenAI GPT model (`openai.gpt-5*`), the script also emits `bedrock-mantle:CreateInference` / `Get*` / `List*` scoped to `arn:aws:bedrock-mantle:<region>:<account>:project/*`, plus `bedrock-mantle:CallWithBearerToken` on `*` (AWS does not permit narrowing that one). `bedrock:InvokeModel` alone does **not** authorize these models. Two consequences to carry into the report:
+
+- For an all-mantle run there is no `BedrockInvokeModelScoped` statement, because those models have no foundation-model or inference-profile ARN to scope to. That absence is correct, not a generation failure.
+- Mantle authorizes at project granularity, so the policy cannot be scoped to specific model IDs. If the reader needs to restrict the model set, say so explicitly and point them at a service control policy.
+
 If the account ID is unavailable (run-context `aws_account` is empty), skip this step and note it in the Risk Assessment section as "IAM policy not generated — AWS account ID unavailable".
 
 # 7. Generate report
@@ -254,11 +266,12 @@ Case 1 — `no_golden_cases: true` is in the evaluator's `notes`:
 Case 2 — `same_model_family: true — connectivity-only verification`
 is in the evaluator's `notes`:
 
-> ℹ️ **Connectivity-only verification (same-family migration).** This
-> is an Anthropic 1P → Bedrock Claude run; rubric scoring was skipped
-> because there is no parameter-surface drift to score. The pass rate
-> reflects whether each prompt returned a non-empty response on
-> Bedrock, not judge-rated quality.
+> ℹ️ **Connectivity-only verification (same-model migration).** This run
+> keeps the same model on Bedrock — either Anthropic 1P → Bedrock Claude,
+> or OpenAI → the same GPT model on Bedrock. Rubric scoring was skipped
+> because the model is unchanged, so there is no parameter-surface drift
+> to score. The pass rate reflects whether each prompt returned a
+> non-empty response on Bedrock, not judge-rated quality.
 
 Case 3 — `live_source_baseline == false`:
 
