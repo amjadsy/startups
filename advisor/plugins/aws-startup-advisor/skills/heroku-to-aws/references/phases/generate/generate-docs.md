@@ -109,6 +109,8 @@ Before beginning the migration, ensure the following are in place:
 {{IF has_beanstalk}}
 
 - [ ] Source bundle contains a Dockerfile at the repository root for Elastic Beanstalk Docker deployment
+- [ ] Application listen port identified for required Terraform input `eb_application_port`
+- [ ] HTTP health check path identified for required Terraform input `eb_health_check_path`
       {{ENDIF}}
       {{IF has_fargate}}
 - [ ] Application Docker image built and pushed to ECR (or container registry)
@@ -155,6 +157,24 @@ For detailed guidance, see your Procfile process types and match each to a Docke
 ## Phase 1: Infrastructure Provisioning
 
 Apply the generated Terraform configurations to create AWS resources:
+
+{{IF has_beanstalk}}
+
+The Elastic Beanstalk configuration is not ready to plan until you provide both
+application-specific runtime settings. Add the exact values to
+`terraform/terraform.tfvars`:
+
+```hcl
+eb_application_port  = "<the port your application process listens on>"
+eb_health_check_path = "<the HTTP path that returns a successful health response>"
+```
+
+Neither variable has a default. If either assignment is absent,
+`terraform plan -input=false` stops with Terraform's "No value for required variable"
+diagnostic naming the missing customer input. Do not continue to apply until both
+values are set.
+
+{{ENDIF}}
 
 ```bash
 cd terraform/
@@ -693,7 +713,7 @@ This generated path uses standard ECS/Fargate Terraform. If an ECS Express Mode 
 {{IF has_beanstalk}}
 
 - [ ] Application responds on EB environment URL: `http://{{EB_ENVIRONMENT_URL}}/`
-- [ ] Health check endpoint returns 200: `http://{{EB_ENVIRONMENT_URL}}/health`
+- [ ] The customer-supplied `eb_health_check_path` returns a successful response on the EB environment URL
       {{ENDIF}}
       {{IF has_fargate}}
 - [ ] Application responds on ALB endpoint: `https://{{ALB_DNS_NAME}}/`
@@ -957,7 +977,19 @@ Edit `terraform/variables.tf` or create a `terraform.tfvars` file:
 aws_region     = "{{target_region}}"
 environment    = "{{environment_name}}"
 # Add VPC, subnet, and other variables as needed
+{{IF has_beanstalk}}
+# Required customer inputs; use the application's exact values.
+eb_application_port  = "<application listen port>"
+eb_health_check_path = "<HTTP health check path>"
+{{ENDIF}}
 ````
+
+{{IF has_beanstalk}}
+
+The generated Elastic Beanstalk variables have no defaults. A non-interactive plan
+fails and identifies the missing variable if either value is omitted.
+
+{{ENDIF}}
 
 ### 3. Apply Terraform
 
@@ -1379,7 +1411,8 @@ Verify all generated files:
    - If `containerization_status != "containerized"`: Contains "Containerization Prerequisites" section
    - Contains "Post-Migration Lockdown" section
    - Contains "Config Var Migration" section
-   - If has_beanstalk: Contains selected EB deploy method instructions, EB DNS cutover target, and no CodePipeline artifact unless `eb_deploy_method` is `"codepipeline"`
+   - If has_beanstalk: Explains that `eb_application_port` and `eb_health_check_path` are required before planning, contains selected EB deploy method instructions and the EB DNS cutover target, and emits no CodePipeline artifact unless `eb_deploy_method` is `"codepipeline"`
+   - Does NOT hard-code a health check path for Elastic Beanstalk verification; use `eb_health_check_path` instead
    - Contains "Verification" section with data-store-appropriate checks
    - If `deferred_addons.length > 0`: Contains "Manual Migration Items" section
 

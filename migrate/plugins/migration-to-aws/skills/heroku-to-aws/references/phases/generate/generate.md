@@ -63,6 +63,8 @@ _postconditions:
     _on_failure: _halt_and_inform
   - _assert: "if Elastic Beanstalk is in the design, terraform/beanstalk.tf exists; if preferences.design_constraints.eb_deploy_method.value is github_actions or absent, .github/workflows/deploy-eb.yml exists; if codepipeline, terraform/pipeline.tf exists; if manual, no automated deploy artifact is required"
     _on_failure: _halt_and_inform
+  - _assert: "if Elastic Beanstalk is in the design, terraform/variables.tf declares required eb_application_port and eb_health_check_path string variables with no defaults, and terraform/beanstalk.tf passes them unchanged to PORT and HealthCheckPath"
+    _on_failure: _halt_and_inform
   - _assert: "every designed service is accounted for (generated or listed in generation-warnings.json)"
     _on_failure: _halt_and_inform
   - _assert: "no placeholder {{VARIABLE}} tokens remain in Terraform .tf files (those belong in variables.tf as var.* references)"
@@ -78,10 +80,12 @@ _forbids_files:
 
 ## Orientation
 
-Transform the design + estimate into deployable artifacts in `$MIGRATION_DIR/`: a
+Transform the design + estimate into migration artifacts in `$MIGRATION_DIR/`: a
 `terraform/` directory, `MIGRATION_GUIDE.md`, `README.md`, `migration-report.html`
 (stakeholder summary + optional what-if scenarios), database migration scripts,
-and `generation-warnings.json`. This is the multi-artifact phase.
+and `generation-warnings.json`. Elastic Beanstalk Terraform is intentionally
+incomplete until the customer supplies the required application port and health
+check path. This is the multi-artifact phase.
 
 Composed of the terraform + docs + report fragments + an EKS-generate fragment + one
 cross-artifact validator assembler (declared in the frontmatter
@@ -106,4 +110,4 @@ FORBIDDEN — Do NOT include ANY of:
 - Discovering new Heroku resources (Phase 1 is done)
 - Feedback collection (Phase 6 handles this)
 
-**Your ONLY job: Transform the design into deployable artifacts. Nothing else.**
+**Your ONLY job: Transform the design into migration artifacts. Nothing else.**
