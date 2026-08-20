@@ -266,10 +266,10 @@ def test_compute_scores_uses_affinity_and_neutral_default():
     ]
     answers = {"session_duration": "15min_to_8hr", "traffic_pattern": "bursty"}
     scores = scoring._compute_scores(answers, profiles, eliminated={})
-    # agentcore: 5 + 5 + neutral(2)*12 remaining dims = 34
-    # ecs: 3 + neutral(2) + neutral(2)*12 = 29
-    assert scores["agentcore"] == 5 + 5 + scoring.NEUTRAL_SCORE * 12
-    assert scores["ecs"] == 3 + scoring.NEUTRAL_SCORE * 13
+    # agentcore: 5 + 5 + neutral(2) for each remaining dim
+    # ecs: 3 + neutral(2) for each remaining dim
+    assert scores["agentcore"] == 5 + 5 + scoring.NEUTRAL_SCORE * (len(scoring.DIMENSIONS) - 2)
+    assert scores["ecs"] == 3 + scoring.NEUTRAL_SCORE * (len(scoring.DIMENSIONS) - 1)
     assert scores["agentcore"] > scores["ecs"]
 
 
@@ -514,8 +514,31 @@ def test_golden_loads_five_ga_runtimes():
     assert ids == {"agentcore", "lambda_microvms", "ecs", "eks", "lambda"}
 
 
-def test_golden_over_8hr_eliminates_agentcore_and_microvms_after_verification():
-    # Volatile caps become final eliminations only after current-run verification.
+def test_golden_over_8hr_routes_agentcore_to_instances_not_elimination():
+    """>8h no longer eliminates AgentCore: the Instances compute type (AWS-managed
+    EC2 via capacity providers, launched 2026-08-06) supports sessions up to 14
+    days. Without current-run evidence the Lambda-family caps are DEFERRED (the
+    verification gating), not eliminated — but AgentCore appears in NEITHER list:
+    its duration constraint was deleted outright, not gated, because Instances
+    made it false as a constraint regardless of what the microVMs fact verifies
+    to. The verdict carries agentcore_compute_type=instances plus the caveat
+    warning so downstream phases never build the microVM shape for a multi-day
+    workload."""
+    result = scoring.score({
+        "entry_point": "migrate",
+        "answers": {"session_duration": "over_8hr"}}, profiles=_real_profiles())
+    assert "agentcore" not in result["eliminated"]
+    deferred_runtimes = {d["runtime"] for d in result["deferred_verification_requirements"]}
+    assert "agentcore" not in deferred_runtimes
+    assert {"lambda", "lambda_microvms"} <= deferred_runtimes
+    assert result["agentcore_compute_type"] == "instances"
+    assert any("14 days" in w for w in result["warnings"])
+
+
+def test_golden_over_8hr_verified_evidence_finalizes_lambda_family_only():
+    # Verified volatile caps make the Lambda-family eliminations FINAL — while the
+    # same run supplying the old agentcore.session_cap evidence must not revive
+    # the deleted AgentCore constraint.
     result = scoring.score(
         {"entry_point": "migrate", "answers": {"session_duration": "over_8hr"}},
         profiles=_real_profiles(),
@@ -523,15 +546,16 @@ def test_golden_over_8hr_eliminates_agentcore_and_microvms_after_verification():
             "agentcore.session_cap": {"status": "verified",
                                       "source": _AGENTCORE_SESSION_SOURCE, "value": "8h"},
             "lambda_microvms.session_cap": {"status": "verified",
-                                              "source": _MICROVMS_SOURCE, "value": "8h"},
+                                            "source": _MICROVMS_SOURCE, "value": "8h"},
             "lambda.timeout": {"status": "verified",
                                "source": _AWS_DOCS_SOURCE, "value": "15m"},
         }),
     )
-    assert "agentcore" in result["eliminated"]
+    assert "agentcore" not in result["eliminated"]
     assert "lambda_microvms" in result["eliminated"]
+    assert "lambda" in result["eliminated"]
     assert result["recommendation_status"] == "final"
-    assert result["verdict"] in ("ecs", "eks", "co_recommend")
+    assert result["agentcore_compute_type"] == "instances"
 
 
 def test_golden_microvms_wins_process_level_resume():
@@ -543,18 +567,14 @@ def test_golden_microvms_wins_process_level_resume():
     assert result["verdict"] == "lambda_microvms"
 
 
-def test_golden_microvms_wins_heavy_non_gpu_after_verification():
-    result = scoring.score(
-        {"entry_point": "build_deploy", "answers": {
-            "compute_tier": "heavy_non_gpu", "session_duration": "15min_to_8hr",
-        }},
-        profiles=_real_profiles(),
-        run_evidence=_run_evidence({"agentcore.max_compute": {
-            "status": "verified", "source": _AGENTCORE_COMPUTE_SOURCE,
-            "value": "2vCPU/8GB",
-        }}),
-    )
-    assert "agentcore" in result["eliminated"]
+def test_golden_microvms_wins_heavy_non_gpu():
+    # heavy_non_gpu no longer eliminates AgentCore (Instances can size up), but
+    # Lambda MicroVMs' heavy-compute affinity keeps it the winner here.
+    result = scoring.score({
+        "entry_point": "build_deploy",
+        "answers": {"compute_tier": "heavy_non_gpu", "session_duration": "15min_to_8hr"}},
+        profiles=_real_profiles())
+    assert "agentcore" not in result["eliminated"]
     assert result["verdict"] == "lambda_microvms"
 
 
@@ -578,7 +598,12 @@ def test_golden_microvms_high_launch_requires_capacity_verification():
         profiles=_real_profiles(),
         run_evidence=_high_launch_microvms_evidence(),
     )
-    assert result["verdict"] == "lambda_microvms"
+    # Merged semantics: heavy compute no longer eliminates AgentCore (Instances),
+    # so high-launch heavy work is a genuine co-recommendation — the MicroVMs
+    # capacity-verification machinery below still applies while it is in the set.
+    assert result["verdict"] == "co_recommend"
+    assert set(result["co_recommend"]) == {"agentcore", "lambda_microvms"}
+    assert result["agentcore_compute_type"] == "instances"
     assert result["recommendation_status"] == "provisional"
     assert result["deferred_verification_requirements"] == [
         _microvms_launch_capacity_requirement()]
@@ -600,7 +625,12 @@ def test_golden_microvms_high_launch_rejects_wrong_capacity_evidence(record):
         profiles=_real_profiles(),
         run_evidence=evidence,
     )
-    assert result["verdict"] == "lambda_microvms"
+    # Merged semantics: heavy compute no longer eliminates AgentCore (Instances),
+    # so high-launch heavy work is a genuine co-recommendation — the MicroVMs
+    # capacity-verification machinery below still applies while it is in the set.
+    assert result["verdict"] == "co_recommend"
+    assert set(result["co_recommend"]) == {"agentcore", "lambda_microvms"}
+    assert result["agentcore_compute_type"] == "instances"
     assert result["recommendation_status"] == "provisional"
     assert result["deferred_verification_requirements"] == [
         _microvms_launch_capacity_requirement()]
@@ -621,7 +651,12 @@ def test_golden_microvms_high_launch_emits_verified_warning():
         profiles=_real_profiles(),
         run_evidence=evidence,
     )
-    assert result["verdict"] == "lambda_microvms"
+    # Merged semantics: heavy compute no longer eliminates AgentCore (Instances),
+    # so high-launch heavy work is a genuine co-recommendation — the MicroVMs
+    # capacity-verification machinery below still applies while it is in the set.
+    assert result["verdict"] == "co_recommend"
+    assert set(result["co_recommend"]) == {"agentcore", "lambda_microvms"}
+    assert result["agentcore_compute_type"] == "instances"
     assert result["recommendation_status"] == "final"
     assert result["deferred_verification_requirements"] == []
     assert any("verified in this run" in warning for warning in result["warnings"])

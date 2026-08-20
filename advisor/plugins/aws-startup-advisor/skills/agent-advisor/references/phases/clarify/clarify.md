@@ -129,7 +129,7 @@ single workload), treat it as `agent_session` and proceed.
   question set
   (`session_duration`, `traffic_pattern`, `session_state`, `isolation`,
   `memory_needs`, `multi_agent`, `framework`, `idle_resume`, `compute_tier`,
-  `launch_concurrency`).
+  `launch_concurrency`, `instance_type_requirement`).
 - **Every other unit: ONE batched delta question** — "How does `<id>` differ from
   `<primary>`? (session duration / traffic / compute / state / memory / isolation — name
   only what differs)". Parse the reply into per-dimension overrides; dimensions the
@@ -234,6 +234,11 @@ Collect answers for these keys. Legal values are fixed (Plan 1 Data Model):
 - `memory_needs`: cross_session | session_only | none | unknown
 - `ops_preference`: minimal | moderate | full_control | unknown
 - `compute_tier`: light | heavy_non_gpu | gpu | unknown
+- `instance_type_requirement`: yes | no | unknown — does the agent need a PARTICULAR EC2
+  instance type (specific family/size, a GPU model, ARM)? Distinct from `compute_tier`
+  (how much compute) — this asks whether the user must CHOOSE the hardware. `yes` hard-
+  eliminates Lambda and Lambda MicroVMs (no instance selection there) and, when AgentCore
+  wins, routes it to the Instances compute type (capacity provider).
 - `idle_resume`: process_level | filesystem | none | unknown
 - `launch_concurrency`: high | moderate | low | unknown
 - `multi_agent`: yes | no | unknown
