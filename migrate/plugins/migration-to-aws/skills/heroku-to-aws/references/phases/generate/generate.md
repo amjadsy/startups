@@ -63,7 +63,7 @@ _postconditions:
     _on_failure: _halt_and_inform
   - _assert: "if Elastic Beanstalk is in the design, terraform/beanstalk.tf exists; if preferences.design_constraints.eb_deploy_method.value is github_actions or absent, .github/workflows/deploy-eb.yml exists; if codepipeline, terraform/pipeline.tf exists; if manual, no automated deploy artifact is required"
     _on_failure: _halt_and_inform
-  - _assert: "if Elastic Beanstalk is in the design, terraform/variables.tf declares required eb_application_port and eb_health_check_path string variables with no defaults, and terraform/beanstalk.tf passes them unchanged to PORT and HealthCheckPath"
+  - _assert: "for every Elastic Beanstalk web service, terraform/variables.tf declares required per-app eb_application_port_<app>_web and eb_health_check_path_<app>_web string variables with no defaults and basic validation, and terraform/beanstalk.tf passes them unchanged to that app's PORT and HealthCheckPath settings; non-web Elastic Beanstalk services do not require these web-only variables"
     _on_failure: _halt_and_inform
   - _assert: "every designed service is accounted for (generated or listed in generation-warnings.json)"
     _on_failure: _halt_and_inform
@@ -83,9 +83,10 @@ _forbids_files:
 Transform the design + estimate into migration artifacts in `$MIGRATION_DIR/`: a
 `terraform/` directory, `MIGRATION_GUIDE.md`, `README.md`, `migration-report.html`
 (stakeholder summary + optional what-if scenarios), database migration scripts,
-and `generation-warnings.json`. Elastic Beanstalk Terraform is intentionally
-incomplete until the customer supplies the required application port and health
-check path. This is the multi-artifact phase.
+and `generation-warnings.json`. Terraform for each Elastic Beanstalk web service
+is intentionally incomplete until the customer supplies that app's required
+application port and health check path. Non-web Elastic Beanstalk services do not
+require those web-only inputs. This is the multi-artifact phase.
 
 Composed of the terraform + docs + report fragments + an EKS-generate fragment + one
 cross-artifact validator assembler (declared in the frontmatter

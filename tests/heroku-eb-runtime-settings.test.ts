@@ -17,6 +17,9 @@ const PLUGINS = [
 ];
 
 const GENERATE = "skills/heroku-to-aws/references/phases/generate";
+const APP_TOKEN = "<app_sanitized>";
+const PORT_VARIABLE = `eb_application_port_${APP_TOKEN}_web`;
+const HEALTH_VARIABLE = `eb_health_check_path_${APP_TOKEN}_web`;
 
 function read(plugin: string, file: string): string {
   return readFileSync(join(plugin, GENERATE, file), "utf8");
@@ -80,18 +83,41 @@ function settingExpression(
   return value;
 }
 
-function terraformFixture(terraform: string): string {
+function renderApp(source: string, app: string): string {
+  return source.replaceAll(APP_TOKEN, app);
+}
+
+function runtimeVariable(
+  kind: "port" | "health",
+  app = "acme",
+): string {
+  return kind === "port"
+    ? `eb_application_port_${app}_web`
+    : `eb_health_check_path_${app}_web`;
+}
+
+function terraformFixture(terraform: string, apps = ["acme"]): string {
   const directory = mkdtempSync(join(tmpdir(), "eb-runtime-settings-"));
+  const variables = apps.flatMap((app) => [
+    renderApp(variableBlock(terraform, PORT_VARIABLE), app),
+    renderApp(variableBlock(terraform, HEALTH_VARIABLE), app),
+  ]).join("\n\n");
+  const settings = apps.map((app) =>
+    `    ${app} = {
+      PORT            = ${renderApp(settingExpression(terraform, "PORT"), app)}
+      HealthCheckPath = ${
+        renderApp(settingExpression(terraform, "HealthCheckPath"), app)
+      }
+    }`
+  ).join("\n");
+
   writeFileSync(
     join(directory, "main.tf"),
-    `${variableBlock(terraform, "eb_application_port")}
-
-${variableBlock(terraform, "eb_health_check_path")}
+    `${variables}
 
 output "runtime_settings" {
   value = {
-    PORT            = ${settingExpression(terraform, "PORT")}
-    HealthCheckPath = ${settingExpression(terraform, "HealthCheckPath")}
+${settings}
   }
 }
 `,
@@ -132,10 +158,11 @@ describe("Heroku Elastic Beanstalk runtime settings", () => {
       const terraform = read(plugin, "generate-terraform.md");
 
       for (
-        const variable of ["eb_application_port", "eb_health_check_path"]
+        const variable of [PORT_VARIABLE, HEALTH_VARIABLE]
       ) {
         const body = blockBody(variableBlock(terraform, variable));
         assert.match(body, /\btype\s+=\s+string\b/);
+        assert.match(body, /\bvalidation\s*\{/);
         assert.doesNotMatch(
           body,
           /\bdefault\s*=/,
@@ -143,14 +170,31 @@ describe("Heroku Elastic Beanstalk runtime settings", () => {
         );
       }
 
-      assert.equal(settingExpression(terraform, "PORT"), "var.eb_application_port");
+      assert.equal(
+        settingExpression(terraform, "PORT"),
+        `var.${PORT_VARIABLE}`,
+      );
       assert.equal(
         settingExpression(terraform, "HealthCheckPath"),
-        "var.eb_health_check_path",
+        `var.${HEALTH_VARIABLE}`,
       );
 
       assert.doesNotMatch(terraform, /value\s+=\s+"5000"/);
       assert.doesNotMatch(terraform, /value\s+=\s+"\/health"/);
+      assert.match(
+        terraform,
+        /Do not emit\s+these variables for non-web Elastic Beanstalk services/,
+      );
+
+      const portSetting = blocks(terraform, "setting {").find((block) =>
+        block.includes('name      = "PORT"')
+      );
+      assert.ok(portSetting);
+      const portOffset = terraform.indexOf(portSetting);
+      assert.match(
+        terraform.slice(Math.max(0, portOffset - 80), portOffset),
+        /# \{\{IF process_type == "web"\}\}/,
+      );
     });
 
     it(`${plugin} preserves Fargate and generic EKS conventions`, () => {
@@ -179,24 +223,17 @@ describe("Heroku Elastic Beanstalk runtime settings", () => {
       assert.doesNotMatch(phase, /deployable artifacts/);
       assert.doesNotMatch(terraform, /deployable Terraform/);
       assert.match(terraform, /terraform plan -input=false/);
-      assert.match(docs, /eb_application_port/);
-      assert.match(docs, /eb_health_check_path/);
+      assert.match(docs, /has_beanstalk_web/);
+      assert.match(docs, /eb_application_port_<app_sanitized>_web/);
+      assert.match(docs, /eb_health_check_path_<app_sanitized>_web/);
       assert.match(docs, /No value for required variable/);
       assert.match(
         docs,
-        /customer-supplied `eb_health_check_path` returns a successful response/,
+        /Worker-only Beanstalk apps do not need\s+these web runtime inputs/,
       );
       assert.match(
         docs,
-        /Health check endpoint returns 200: `https:\/\/\{\{ALB_DNS_NAME\}\}\/health`/,
-      );
-      assert.match(
-        docs,
-        /Does NOT hard-code a health check path for Elastic Beanstalk verification; use `eb_health_check_path` instead/,
-      );
-      assert.doesNotMatch(
-        docs,
-        /Does NOT hard-code a health check path for Elastic Beanstalk or Fargate verification/,
+        /Does NOT hard-code a health check path for Elastic Beanstalk verification/,
       );
     });
   }
@@ -207,12 +244,14 @@ describe("Heroku Elastic Beanstalk runtime settings", () => {
     assert.match(JSON.parse(version.stdout).terraform_version, /^1\.13\./);
   });
 
-  for (const missing of ["eb_application_port", "eb_health_check_path"]) {
+  for (
+    const missing of [runtimeVariable("port"), runtimeVariable("health")]
+  ) {
     it(`fails planning when ${missing} is omitted`, () => {
       const directory = terraformFixture(read(PLUGINS[0], "generate-terraform.md"));
-      const supplied = missing === "eb_application_port"
-        ? "eb_health_check_path=/readyz"
-        : "eb_application_port=4321";
+      const supplied = missing === runtimeVariable("port")
+        ? `${runtimeVariable("health")}=/readyz`
+        : `${runtimeVariable("port")}=4321`;
       try {
         const plan = runTerraform(directory, [
           "plan",
@@ -229,16 +268,58 @@ describe("Heroku Elastic Beanstalk runtime settings", () => {
     });
   }
 
-  it("preserves sentinel values in Terraform plan JSON", () => {
+  it("rejects invalid runtime values during planning", () => {
     const directory = terraformFixture(read(PLUGINS[0], "generate-terraform.md"));
+    try {
+      const cases = [
+        {
+          port: "banana",
+          path: "/readyz",
+          message: /port must be an integer from 1 through 65535/,
+        },
+        {
+          port: "65536",
+          path: "/readyz",
+          message: /port must be an integer from 1 through 65535/,
+        },
+        {
+          port: "4321",
+          path: "readyz",
+          message: /health check path must start with \//,
+        },
+      ];
+
+      for (const invalid of cases) {
+        const plan = runTerraform(directory, [
+          "plan",
+          "-input=false",
+          "-no-color",
+          `-var=${runtimeVariable("port")}=${invalid.port}`,
+          `-var=${runtimeVariable("health")}=${invalid.path}`,
+        ]);
+        assert.notEqual(plan.status, 0, resultOutput(plan));
+        assert.match(resultOutput(plan), invalid.message);
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves independent values for multiple apps in plan JSON", () => {
+    const directory = terraformFixture(
+      read(PLUGINS[0], "generate-terraform.md"),
+      ["alpha", "beta"],
+    );
     try {
       const plan = runTerraform(directory, [
         "plan",
         "-input=false",
         "-no-color",
         "-out=tfplan",
-        "-var=eb_application_port=4321",
-        "-var=eb_health_check_path=/readyz",
+        `-var=${runtimeVariable("port", "alpha")}=4321`,
+        `-var=${runtimeVariable("health", "alpha")}=/readyz`,
+        `-var=${runtimeVariable("port", "beta")}=8080`,
+        `-var=${runtimeVariable("health", "beta")}=/healthz`,
       ]);
       assert.equal(plan.status, 0, resultOutput(plan));
 
@@ -247,8 +328,14 @@ describe("Heroku Elastic Beanstalk runtime settings", () => {
       const settings = JSON.parse(show.stdout).planned_values.outputs
         .runtime_settings.value;
       assert.deepEqual(settings, {
-        HealthCheckPath: "/readyz",
-        PORT: "4321",
+        alpha: {
+          HealthCheckPath: "/readyz",
+          PORT: "4321",
+        },
+        beta: {
+          HealthCheckPath: "/healthz",
+          PORT: "8080",
+        },
       });
     } finally {
       rmSync(directory, { recursive: true, force: true });

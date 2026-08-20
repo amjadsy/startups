@@ -20,13 +20,14 @@ _contributes:
 
 Scan `aws-design.json`.services[] to determine which compute and data store types exist in the design:
 
-| Check             | Condition                                                                             | Flag                   |
-| ----------------- | ------------------------------------------------------------------------------------- | ---------------------- |
-| Beanstalk present | Any service with `aws_service == "Elastic Beanstalk"`                                 | `has_beanstalk = true` |
-| Fargate present   | Any service with `aws_service == "Fargate"` or `aws_service == "ALB"`                 | `has_fargate = true`   |
-| Postgres present  | Any service with `aws_service` containing `"RDS PostgreSQL"` or `"Aurora PostgreSQL"` | `has_postgres = true`  |
-| Redis present     | Any service with `aws_service == "ElastiCache Redis"`                                 | `has_redis = true`     |
-| Kafka present     | Any service with `aws_service == "Amazon MSK"`                                        | `has_kafka = true`     |
+| Check                 | Condition                                                                                    | Flag                       |
+| --------------------- | -------------------------------------------------------------------------------------------- | -------------------------- |
+| Beanstalk present     | Any service with `aws_service == "Elastic Beanstalk"`                                        | `has_beanstalk = true`     |
+| Beanstalk web present | Any service with `aws_service == "Elastic Beanstalk"` and `aws_config.process_type == "web"` | `has_beanstalk_web = true` |
+| Fargate present       | Any service with `aws_service == "Fargate"` or `aws_service == "ALB"`                        | `has_fargate = true`       |
+| Postgres present      | Any service with `aws_service` containing `"RDS PostgreSQL"` or `"Aurora PostgreSQL"`        | `has_postgres = true`      |
+| Redis present         | Any service with `aws_service == "ElastiCache Redis"`                                        | `has_redis = true`         |
+| Kafka present         | Any service with `aws_service == "Amazon MSK"`                                               | `has_kafka = true`         |
 
 Also extract:
 
@@ -34,6 +35,7 @@ Also extract:
 - `all_services[]` — full list of designed services for README generation
 - `target_region` — from `preferences.json`.global.target_region (default: `us-east-1`)
 - `heroku_apps[]` — list of unique app names from design services
+- `beanstalk_web_apps[]` — unique app names from Elastic Beanstalk web services, plus each name sanitized by replacing `-` with `_`
 - `migration_approach` — from `preferences.json`.global.migration_approach (`"full_cutover"` or `"interim_cutover_data_first"`)
 - `migration_method` — from `preferences.json`.data.migration_method (`"pg_dump_restore"`, `"dms"`, `"bucardo"`, `"wal_g"`)
 - `containerization_status` — from `preferences.json`.operational.containerization_status (`"containerized"`, `"buildpack_only"`, `"partial"`)
@@ -109,8 +111,10 @@ Before beginning the migration, ensure the following are in place:
 {{IF has_beanstalk}}
 
 - [ ] Source bundle contains a Dockerfile at the repository root for Elastic Beanstalk Docker deployment
-- [ ] Application listen port identified for required Terraform input `eb_application_port`
-- [ ] HTTP health check path identified for required Terraform input `eb_health_check_path`
+      {{ENDIF}}
+      {{IF has_beanstalk_web}}
+- [ ] Application listen port identified for every Beanstalk web app's `eb_application_port_<app_sanitized>_web` input
+- [ ] HTTP health check path identified for every Beanstalk web app's `eb_health_check_path_<app_sanitized>_web` input
       {{ENDIF}}
       {{IF has_fargate}}
 - [ ] Application Docker image built and pushed to ECR (or container registry)
@@ -158,21 +162,23 @@ For detailed guidance, see your Procfile process types and match each to a Docke
 
 Apply the generated Terraform configurations to create AWS resources:
 
-{{IF has_beanstalk}}
+{{IF has_beanstalk_web}}
 
-The Elastic Beanstalk configuration is not ready to plan until you provide both
-application-specific runtime settings. Add the exact values to
-`terraform/terraform.tfvars`:
+Each Elastic Beanstalk web configuration is not ready to plan until you provide
+that app's two runtime settings. Add one pair per Beanstalk web app to
+`terraform/terraform.tfvars`, replacing `<app_sanitized>` with the app name after
+replacing `-` with `_`:
 
 ```hcl
-eb_application_port  = "<the port your application process listens on>"
-eb_health_check_path = "<the HTTP path that returns a successful health response>"
+eb_application_port_<app_sanitized>_web  = "<the port this application's web process listens on>"
+eb_health_check_path_<app_sanitized>_web = "<the HTTP path that returns a successful health response>"
 ```
 
-Neither variable has a default. If either assignment is absent,
+These variables have no defaults. If any required assignment is absent,
 `terraform plan -input=false` stops with Terraform's "No value for required variable"
 diagnostic naming the missing customer input. Do not continue to apply until both
-values are set.
+values are set for every Beanstalk web app. Worker-only Beanstalk apps do not need
+these web runtime inputs.
 
 {{ENDIF}}
 
@@ -713,7 +719,9 @@ This generated path uses standard ECS/Fargate Terraform. If an ECS Express Mode 
 {{IF has_beanstalk}}
 
 - [ ] Application responds on EB environment URL: `http://{{EB_ENVIRONMENT_URL}}/`
-- [ ] The customer-supplied `eb_health_check_path` returns a successful response on the EB environment URL
+      {{IF has_beanstalk_web}}
+- [ ] Each customer-supplied `eb_health_check_path_<app_sanitized>_web` returns a successful response on its app's EB environment URL
+      {{ENDIF}}
       {{ENDIF}}
       {{IF has_fargate}}
 - [ ] Application responds on ALB endpoint: `https://{{ALB_DNS_NAME}}/`
@@ -977,17 +985,17 @@ Edit `terraform/variables.tf` or create a `terraform.tfvars` file:
 aws_region     = "{{target_region}}"
 environment    = "{{environment_name}}"
 # Add VPC, subnet, and other variables as needed
-{{IF has_beanstalk}}
-# Required customer inputs; use the application's exact values.
-eb_application_port  = "<application listen port>"
-eb_health_check_path = "<HTTP health check path>"
+{{IF has_beanstalk_web}}
+# Required customer inputs; repeat once per Beanstalk web app.
+eb_application_port_<app_sanitized>_web  = "<application listen port>"
+eb_health_check_path_<app_sanitized>_web = "<HTTP health check path>"
 {{ENDIF}}
 ````
 
-{{IF has_beanstalk}}
+{{IF has_beanstalk_web}}
 
-The generated Elastic Beanstalk variables have no defaults. A non-interactive plan
-fails and identifies the missing variable if either value is omitted.
+The generated per-app Elastic Beanstalk web variables have no defaults. A
+non-interactive plan fails and identifies any missing or invalid value.
 
 {{ENDIF}}
 
@@ -1411,8 +1419,9 @@ Verify all generated files:
    - If `containerization_status != "containerized"`: Contains "Containerization Prerequisites" section
    - Contains "Post-Migration Lockdown" section
    - Contains "Config Var Migration" section
-   - If has_beanstalk: Explains that `eb_application_port` and `eb_health_check_path` are required before planning, contains selected EB deploy method instructions and the EB DNS cutover target, and emits no CodePipeline artifact unless `eb_deploy_method` is `"codepipeline"`
-   - Does NOT hard-code a health check path for Elastic Beanstalk verification; use `eb_health_check_path` instead
+   - If `has_beanstalk_web`: Explains that each web app's `eb_application_port_<app>_web` and `eb_health_check_path_<app>_web` are required before planning
+   - If `has_beanstalk`: Contains selected EB deploy method instructions and the EB DNS cutover target, and emits no CodePipeline artifact unless `eb_deploy_method` is `"codepipeline"`
+   - Does NOT hard-code a health check path for Elastic Beanstalk verification; use the applicable per-app `eb_health_check_path_<app>_web` instead
    - Contains "Verification" section with data-store-appropriate checks
    - If `deferred_addons.length > 0`: Contains "Manual Migration Items" section
 
