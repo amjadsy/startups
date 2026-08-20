@@ -681,3 +681,7 @@ then to the POC files at `$RUN_DIR/poc/`. List the files and state plainly:
 ## Step 6 — Write state
 
 Set `phases.poc` = completed. The advisor flow is complete.
+
+## Maturity/readiness boundary
+
+A deployable POC proves only the bounded technical hypothesis in `plan.md`; it is **not** private-beta or production launch readiness. Read `design.json.target_maturity`, `readiness`, and release/evaluation gates before writing the plan. The plan and final brief must list unmet controls, deferred runtime verifications, and tier gates as launch blockers. A POC may proceed for learning with those items open, but it must never be presented as authorization to launch beyond the prototype scope.
