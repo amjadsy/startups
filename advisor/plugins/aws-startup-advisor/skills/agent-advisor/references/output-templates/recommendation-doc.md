@@ -70,3 +70,7 @@ creates real, billable AWS resources).>
 ## 12. Freshness footer
 
 <from freshness.md template: date, MCP-verified vs cached fields, verify disclaimer.>
+
+## Maturity and launch readiness
+
+<target maturity; readiness status; control gaps; tier-appropriate release and evaluation gates; recommendation status; deferred verification requirements with owners. State that a provisional recommendation or deployable POC is not private-beta/production launch approval. Include an I/O-wait billing benefit only when current-run verification records support it.>

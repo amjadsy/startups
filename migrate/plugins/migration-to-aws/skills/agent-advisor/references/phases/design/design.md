@@ -358,3 +358,9 @@ in Step 6, independent of `handoff_required`.)
   handoff. Estimate runs on migrate too — it produces the target-state run cost per unit; the
   migration TCO comparison stays with the Migration Plan engine.
 - otherwise → set `phases.design` = completed and continue to Estimate.
+
+## Maturity/readiness and provisional-verification extension
+
+Load `references/decision-refs/maturity-readiness.md` with the design inputs. Copy `target_maturity`, `readiness`, `recommendation_status`, and `deferred_verification_requirements` from the run artifacts into `design.json`, preserving the release and evaluation gates applicable to the tier. A `provisional` recommendation is not a launch approval: state the unresolved constraint, verification key, owner, and blocking decision explicitly.
+
+This supersedes the unconditional statement in Step 4b: include an AgentCore I/O-wait billing advantage only if the sibling `$RUN_DIR/current-run-verifications.json` artifact is schema-valid, its `run_id` matches `$RUN_DIR`, and its `agentcore.io_wait_billing` record has `status: "verified"` with a source-backed observed value from this run. Never read or write verification evidence through `answers.json`. Without validated current-run evidence, say only that the billing behavior requires current verification and do not make a comparative billing claim.
