@@ -246,14 +246,78 @@ def _collect_assumptions(raw_answers):
     return out
 
 
-def _collect_warnings(answers, verifications, verdict, co_recommend=None):
+def _matching_selection_verification_requirements(
+    answers, profiles, verdict, co_recommend
+):
+    """Return verification gates that apply only to the selected runtime(s)."""
+    selected_runtimes = (
+        set(co_recommend or [])
+        if verdict == "co_recommend"
+        else {verdict} if verdict != "no_viable_runtime" else set()
+    )
+    return [
+        (profile["id"], requirement)
+        for profile in profiles
+        if profile["id"] in selected_runtimes
+        for requirement in profile.get("selection_verification_requirements", [])
+        if _constraint_matches(answers, requirement)
+    ]
+
+
+def _defer_unverified_selection_requirements(verifications, requirements):
+    """Return unresolved selected-runtime gates without eliminating candidates."""
+    deferred = []
+    for runtime, requirement in requirements:
+        if _is_current_run_verified(
+            verifications,
+            requirement["verification_key"],
+            requirement["verification_expected_value"],
+            requirement["verification_sources"],
+        ):
+            continue
+        deferred.append({
+            "runtime": runtime,
+            "field": requirement["field"],
+            "value": requirement["value"],
+            "reason": requirement["reason"],
+            "verification_key": requirement["verification_key"],
+            "verification_expected_value": requirement["verification_expected_value"],
+            "verification_sources": requirement["verification_sources"],
+        })
+    return deferred
+
+
+def _collect_warnings(
+    answers, verifications, verdict, co_recommend=None, selection_requirements=()
+):
     warnings = []
     microvms_is_winner = (
         verdict == "lambda_microvms"
         or (verdict == "co_recommend" and "lambda_microvms" in (co_recommend or []))
     )
     if microvms_is_winner and answers.get("launch_concurrency") == "high":
-        if _has_current_run_evidence(verifications.get("lambda_microvms.launch_tps")):
+        launch_tps_requirements = [
+            requirement
+            for runtime, requirement in selection_requirements
+            if runtime == "lambda_microvms"
+            and requirement["verification_key"] == "lambda_microvms.launch_tps"
+        ]
+        launch_tps_verified = (
+            all(
+                _is_current_run_verified(
+                    verifications,
+                    requirement["verification_key"],
+                    requirement["verification_expected_value"],
+                    requirement["verification_sources"],
+                )
+                for requirement in launch_tps_requirements
+            )
+            if launch_tps_requirements
+            else _has_current_run_evidence(
+                verifications.get("lambda_microvms.launch_tps")
+            )
+        )
+        if launch_tps_verified:
             warnings.append(
                 "High launch concurrency requires capacity planning against the Lambda "
                 "MicroVMs launch-rate value verified in this run.")
@@ -282,6 +346,14 @@ def score(input_data, profiles=None, run_evidence=None):
     eliminated, deferred = _evaluate_hard_constraints(answers, profiles, verifications)
     scores = _compute_scores(answers, profiles, eliminated)
     verdict, co_recommend = _determine_verdict(scores, eliminated)
+    selection_requirements = _matching_selection_verification_requirements(
+        answers, profiles, verdict, co_recommend
+    )
+    deferred.extend(
+        _defer_unverified_selection_requirements(
+            verifications, selection_requirements
+        )
+    )
 
     deployment_model = None
     if verdict not in ("no_viable_runtime", "co_recommend"):
@@ -302,7 +374,9 @@ def score(input_data, profiles=None, run_evidence=None):
         "deployment_model": deployment_model,
         "agentcore_services": _select_agentcore_services(answers),
         "assumptions_used": _collect_assumptions(raw_answers),
-        "warnings": _collect_warnings(answers, verifications, verdict, co_recommend),
+        "warnings": _collect_warnings(
+            answers, verifications, verdict, co_recommend, selection_requirements
+        ),
     }
     if verdict == "co_recommend":
         result["co_recommend"] = co_recommend

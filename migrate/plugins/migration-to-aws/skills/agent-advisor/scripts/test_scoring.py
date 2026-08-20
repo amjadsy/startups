@@ -482,6 +482,33 @@ def _real_profiles():
     return scoring.load_profiles()  # default RUNTIMES_DIR
 
 
+def _high_launch_microvms_evidence():
+    return _run_evidence({
+        "agentcore.max_compute": {
+            "status": "verified",
+            "source": _AGENTCORE_COMPUTE_SOURCE,
+            "value": "2vCPU/8GB",
+        },
+        "lambda.timeout": {
+            "status": "verified",
+            "source": _AWS_DOCS_SOURCE,
+            "value": "15m",
+        },
+    })
+
+
+def _microvms_launch_capacity_requirement():
+    return {
+        "runtime": "lambda_microvms",
+        "field": "launch_concurrency",
+        "value": "high",
+        "reason": "Lambda MicroVMs launch capacity must be verified before selection for high launch concurrency",
+        "verification_key": "lambda_microvms.launch_tps",
+        "verification_expected_value": "5 (not adjustable)",
+        "verification_sources": [_MICROVMS_SOURCE],
+    }
+
+
 def test_golden_loads_five_ga_runtimes():
     ids = {p["id"] for p in _real_profiles()}
     assert ids == {"agentcore", "lambda_microvms", "ecs", "eks", "lambda"}
@@ -542,23 +569,62 @@ def test_golden_agentic_io_wait_favors_agentcore():
     assert result["deployment_model"] == "harness"
 
 
-def test_golden_microvms_high_launch_emits_verified_warning():
+def test_golden_microvms_high_launch_requires_capacity_verification():
     result = scoring.score(
         {"entry_point": "build_deploy", "answers": {
             "compute_tier": "heavy_non_gpu", "session_duration": "15min_to_8hr",
             "launch_concurrency": "high",
         }},
         profiles=_real_profiles(),
-        run_evidence=_run_evidence({
-            "agentcore.max_compute": {"status": "verified",
-                                      "source": _AGENTCORE_COMPUTE_SOURCE, "value": "2vCPU/8GB"},
-            "lambda_microvms.launch_tps": {"status": "verified",
-                                             "source": _AWS_DOCS_SOURCE,
-                                             "value": "5 (not adjustable)"},
-        }),
+        run_evidence=_high_launch_microvms_evidence(),
     )
     assert result["verdict"] == "lambda_microvms"
-    assert any("verified in this run" in w for w in result["warnings"])
+    assert result["recommendation_status"] == "provisional"
+    assert result["deferred_verification_requirements"] == [
+        _microvms_launch_capacity_requirement()]
+    assert any("before selection" in warning for warning in result["warnings"])
+
+
+@pytest.mark.parametrize("record", [
+    {"status": "verified", "source": _AWS_DOCS_SOURCE, "value": "5 (not adjustable)"},
+    {"status": "verified", "source": _MICROVMS_SOURCE, "value": "4"},
+])
+def test_golden_microvms_high_launch_rejects_wrong_capacity_evidence(record):
+    evidence = _high_launch_microvms_evidence()
+    evidence["verifications"]["lambda_microvms.launch_tps"] = record
+    result = scoring.score(
+        {"entry_point": "build_deploy", "answers": {
+            "compute_tier": "heavy_non_gpu", "session_duration": "15min_to_8hr",
+            "launch_concurrency": "high",
+        }},
+        profiles=_real_profiles(),
+        run_evidence=evidence,
+    )
+    assert result["verdict"] == "lambda_microvms"
+    assert result["recommendation_status"] == "provisional"
+    assert result["deferred_verification_requirements"] == [
+        _microvms_launch_capacity_requirement()]
+
+
+def test_golden_microvms_high_launch_emits_verified_warning():
+    evidence = _high_launch_microvms_evidence()
+    evidence["verifications"]["lambda_microvms.launch_tps"] = {
+        "status": "verified",
+        "source": _MICROVMS_SOURCE,
+        "value": "5 (not adjustable)",
+    }
+    result = scoring.score(
+        {"entry_point": "build_deploy", "answers": {
+            "compute_tier": "heavy_non_gpu", "session_duration": "15min_to_8hr",
+            "launch_concurrency": "high",
+        }},
+        profiles=_real_profiles(),
+        run_evidence=evidence,
+    )
+    assert result["verdict"] == "lambda_microvms"
+    assert result["recommendation_status"] == "final"
+    assert result["deferred_verification_requirements"] == []
+    assert any("verified in this run" in warning for warning in result["warnings"])
 
 
 VALID_STATUSES = {"ga", "preview", "coming_soon"}
@@ -581,9 +647,8 @@ def test_profile_is_well_formed(profile):
         assert declared == legal, (
             f"{profile['id']}.{dim} declares {sorted(declared)}, "
             f"must declare all of {sorted(legal)}")
-    # hard-constraint fields must be answerable keys
+    # Verification gates must name an answerable condition and a profile fact that can be checked.
     answerable = set(scoring.DIMENSIONS) | {"compliance"}
-    # Verification-required constraints must name a profile fact that can be checked.
     verification_keys = {
         fact["verification_key"] for fact in profile["volatile_facts"]
         if "verification_key" in fact
@@ -593,6 +658,14 @@ def test_profile_is_well_formed(profile):
         assert "reason" in constraint and constraint["reason"]
         if constraint.get("verification_required"):
             assert constraint.get("verification_key") in verification_keys
+    for requirement in profile.get("selection_verification_requirements", []):
+        assert requirement["field"] in answerable
+        assert "reason" in requirement and requirement["reason"]
+        assert requirement["verification_key"] in verification_keys
+        assert isinstance(requirement["verification_expected_value"], str)
+        assert requirement["verification_expected_value"]
+        assert isinstance(requirement["verification_sources"], list)
+        assert requirement["verification_sources"]
 
 
 # --- Drift detection: our model pool must stay Active vs the source lifecycle file ---

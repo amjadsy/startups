@@ -24,6 +24,16 @@
       "verification_sources": ["https://docs.aws.amazon.com/lambda/latest/dg/"]
     }
   ],
+  "selection_verification_requirements": [
+    {
+      "field": "launch_concurrency",
+      "value": "high",
+      "reason": "Lambda MicroVMs launch capacity must be verified before selection for high launch concurrency",
+      "verification_key": "lambda_microvms.launch_tps",
+      "verification_expected_value": "5 (not adjustable)",
+      "verification_sources": ["https://docs.aws.amazon.com/lambda/latest/dg/"]
+    }
+  ],
   "affinities": {
     "session_duration": { "under_15min": 3, "15min_to_8hr": 5, "over_8hr": 0, "unknown": 3 },
     "traffic_pattern": { "bursty": 4, "steady": 3, "idle": 5, "unknown": 3 },
