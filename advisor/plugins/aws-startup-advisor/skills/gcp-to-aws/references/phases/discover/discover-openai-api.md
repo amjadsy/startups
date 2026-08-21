@@ -63,6 +63,7 @@
      ```bash
      printf 'OPENAI_ADMIN_KEY=%s\n' "$(printenv OPENAI_ADMIN_KEY)" > "$MIGRATION_DIR/.openai-admin-env" && chmod 600 "$MIGRATION_DIR/.openai-admin-env"
      ```
+
    - **I'll write it to a file myself** → give the user this command to run in
      THEIR OWN terminal (not through the agent) — `read -rs` collects the key
      without echoing it:
@@ -137,15 +138,15 @@ Create `$MIGRATION_DIR/openai-capture/`.
 
 **2b. Capture Endpoint Table.**
 
-| # | Endpoint (GET, `https://api.openai.com`)                                                          | Query parameters                                            | Output file           |
-| - | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | --------------------- |
-| 1 | `/v1/organization/costs`                                                                            | `start_time`, `bucket_width=1d`, `group_by=line_item`, `limit=180` | `costs.json`          |
-| 2 | `/v1/organization/usage/completions`                                                                | `start_time`, `bucket_width=1d`, `group_by=model`, `limit=180`     | `usage-completions.json` |
-| 3 | `/v1/organization/usage/embeddings`                                                                 | `start_time`, `bucket_width=1d`, `group_by=model`, `limit=180`     | `usage-embeddings.json`  |
-| 4 | `/v1/organization/usage/images`                                                                     | `start_time`, `bucket_width=1d`, `group_by=model`, `limit=180`     | `usage-images.json`      |
-| 5 | `/v1/organization/usage/audio_speeches`                                                             | `start_time`, `bucket_width=1d`, `group_by=model`, `limit=180`     | `usage-audio-speeches.json` |
-| 6 | `/v1/organization/usage/audio_transcriptions`                                                       | `start_time`, `bucket_width=1d`, `group_by=model`, `limit=180`     | `usage-audio-transcriptions.json` |
-| 7 | `/v1/organization/projects`                                                                         | `limit=100` (names/IDs only — used to label per-project cost) | `projects.json`       |
+| # | Endpoint (GET, `https://api.openai.com`)      | Query parameters                                                   | Output file                       |
+| - | --------------------------------------------- | ------------------------------------------------------------------ | --------------------------------- |
+| 1 | `/v1/organization/costs`                      | `start_time`, `bucket_width=1d`, `group_by=line_item`, `limit=180` | `costs.json`                      |
+| 2 | `/v1/organization/usage/completions`          | `start_time`, `bucket_width=1d`, `group_by=model`, `limit=180`     | `usage-completions.json`          |
+| 3 | `/v1/organization/usage/embeddings`           | `start_time`, `bucket_width=1d`, `group_by=model`, `limit=180`     | `usage-embeddings.json`           |
+| 4 | `/v1/organization/usage/images`               | `start_time`, `bucket_width=1d`, `group_by=model`, `limit=180`     | `usage-images.json`               |
+| 5 | `/v1/organization/usage/audio_speeches`       | `start_time`, `bucket_width=1d`, `group_by=model`, `limit=180`     | `usage-audio-speeches.json`       |
+| 6 | `/v1/organization/usage/audio_transcriptions` | `start_time`, `bucket_width=1d`, `group_by=model`, `limit=180`     | `usage-audio-transcriptions.json` |
+| 7 | `/v1/organization/projects`                   | `limit=100` (names/IDs only — used to label per-project cost)      | `projects.json`                   |
 
 Row 1 is the **probe**: run it first. On 401, stop capturing and tell the user:
 "The key was rejected. Confirm it is an **Admin** key (`sk-admin-...`) with the
@@ -260,14 +261,14 @@ The parent `discover.md` owns the phase status update — do not touch
 
 ## Error Handling
 
-| Error                                             | Behavior                                                                                                       |
-| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| curl / script runtime missing, or user skips      | Exit cleanly with no output (orchestrator falls back to billing files)                                          |
-| 401 on probe                                      | Not an Admin key or missing `api.usage.read` scope — offer re-intake or skip                                    |
-| 429 rate limit                                    | Wait 30s, retry once; second 429 → record `failed`, continue                                                     |
-| Individual endpoint fails                         | Record `failed`/`skipped` in manifest, continue — zero usage on an endpoint is normal, never a halt             |
-| Every usage endpoint failed                       | Exit with no output; tell the user which scope is missing                                                        |
-| All buckets zero (new org, no usage yet)          | Write the profile with zeros and `partial_window: true`; warn that Estimate will fall back to token-volume tiers |
+| Error                                        | Behavior                                                                                                         |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| curl / script runtime missing, or user skips | Exit cleanly with no output (orchestrator falls back to billing files)                                           |
+| 401 on probe                                 | Not an Admin key or missing `api.usage.read` scope — offer re-intake or skip                                     |
+| 429 rate limit                               | Wait 30s, retry once; second 429 → record `failed`, continue                                                     |
+| Individual endpoint fails                    | Record `failed`/`skipped` in manifest, continue — zero usage on an endpoint is normal, never a halt              |
+| Every usage endpoint failed                  | Exit with no output; tell the user which scope is missing                                                        |
+| All buckets zero (new org, no usage yet)     | Write the profile with zeros and `partial_window: true`; warn that Estimate will fall back to token-volume tiers |
 
 **Key principle:** partial results are better than no results. Record what failed;
 never fabricate what wasn't captured.
