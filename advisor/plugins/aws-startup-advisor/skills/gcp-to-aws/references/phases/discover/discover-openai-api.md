@@ -296,8 +296,11 @@ volume:
 5. If `summary.ai_source` is `"gemini"` and OpenAI usage was found, set it to
    `"both"`.
 
-If `ai-workload-profile.json` does NOT exist, `openai-usage-profile.json`
-stands alone — Clarify and Estimate read it directly.
+If `ai-workload-profile.json` does NOT exist, Clarify and Estimate read
+`openai-usage-profile.json` directly for spend and volumes — but it is a
+supplement, not an anchor: the run still needs at least one primary artifact
+(resource inventory, AI workload profile, or billing profile) to pass the
+Discover handoff gate.
 
 **Clean up (default, not optional):** delete
 `$MIGRATION_DIR/.openai-admin-env` now — the key is no longer needed. Tell the

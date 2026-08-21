@@ -202,7 +202,7 @@ GATE_FAIL | phase=discover | field=preferences.json | reason=stale_downstream
 
 **Checks (all must PASS):**
 
-1. At least one discovery artifact exists (`gcp-resource-inventory.json`, `ai-workload-profile.json`, `billing-profile.json`, or `openai-usage-profile.json`).
+1. At least one discovery artifact exists (`gcp-resource-inventory.json`, `ai-workload-profile.json`, or `billing-profile.json`). `openai-usage-profile.json` does NOT satisfy this check on its own — it is a supplement (spend and volumes, no integration or capability detail; see SKILL.md Prerequisites) and cannot anchor a run by itself.
 2. Route output gates from Step 2 all pass.
 3. If any discovery artifact exists → `migration-preview.json` exists with `complexity_signal` set.
 
