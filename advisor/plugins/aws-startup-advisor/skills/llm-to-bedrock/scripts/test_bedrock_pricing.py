@@ -162,18 +162,38 @@ def test_mantle_gpt_verified_rates_come_from_static_table():
     assert v["output_per_1k_usd"] == 0.00132
 
 
-def test_mantle_gpt_rates_are_data_residency_tier_not_standard():
-    # Guards the specific error that shipped: every rate must be 1.10x the OpenAI
-    # standard-tier figure, so a future edit that "corrects" them back to standard fails.
-    standard = {"openai.gpt-5.6-sol": (0.005, 0.030),
-                "openai.gpt-5.6-terra": (0.002, 0.012),
-                "openai.gpt-5.6-luna": (0.0002, 0.0012),
-                "openai.gpt-5.5": (0.005, 0.030),
-                "openai.gpt-5.4": (0.0025, 0.015)}
-    for mid, (si, so) in standard.items():
-        e = bp.STATIC_FALLBACK[mid]
-        assert abs(e["input_per_1k_usd"] / si - 1.10) < 1e-6, mid
-        assert abs(e["output_per_1k_usd"] / so - 1.10) < 1e-6, mid
+def test_gpt_rates_by_inference_option():
+    # Pricing has an inference-option dimension (verified 2026-08-21):
+    # bare mantle ids and Geo CRIS (us./in.) are 1.10x OpenAI standard (the
+    # data-residency tier); Global CRIS (global., GPT-5.6 only) is exactly the
+    # standard price — cost parity. A future edit that flattens either direction
+    # (all-standard, as shipped once, or all-premium) fails here.
+    standard = {"gpt-5.6-sol": (0.005, 0.030),
+                "gpt-5.6-terra": (0.002, 0.012),
+                "gpt-5.6-luna": (0.0002, 0.0012),
+                "gpt-5.5": (0.005, 0.030),
+                "gpt-5.4": (0.0025, 0.015)}
+    for mid, entry in bp.STATIC_FALLBACK.items():
+        if "openai.gpt-5" not in mid or "oss" in mid:
+            continue
+        base = mid.split("openai.")[1]
+        si, so = standard[base]
+        factor = 1.0 if mid.startswith("global.") else 1.10
+        assert abs(entry["input_per_1k_usd"] / si - factor) < 1e-6, mid
+        assert abs(entry["output_per_1k_usd"] / so - factor) < 1e-6, mid
+
+
+def test_cris_forms_never_partial_match():
+    # A CRIS-form id absent from the table must resolve to the unavailable path,
+    # not prefix-match another tier or option at a different rate.
+    for probe in ("us.openai.gpt-5.6", "global.openai.gpt-5.6", "in.openai.gpt-5.6-sol"):
+        assert bp._static_fallback(probe) is None, probe
+
+
+def test_global_cris_is_priced_at_parity():
+    v = bp.lookup("us-east-1", "global.openai.gpt-5.6-luna")
+    assert v["available"] is True
+    assert v["input_per_1k_usd"] == 0.0002 and v["output_per_1k_usd"] == 0.0012
 
 
 def test_all_five_proprietary_gpt_models_are_priced():

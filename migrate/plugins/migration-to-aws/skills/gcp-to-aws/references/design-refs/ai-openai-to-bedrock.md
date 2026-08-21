@@ -26,11 +26,12 @@ Two consequences that invert the previous decision logic:
 1. **When the source model is on Bedrock, keep it.** A same-model move has no behavior delta to validate, no prompt
    re-engineering, and no eval regression risk — the migration is an endpoint and credential change, not a model
    change. This is the default recommendation.
-2. **A same-model move costs about 10% MORE, so cost argues against it — say so.** Bedrock in-region is priced at
-   parity with OpenAI's _data residency_ tier, which is exactly 1.10x OpenAI's standard list price (see
-   `shared/openai-on-bedrock.md`). A customer on OpenAI standard pays a ~10% premium to move. The case rests on AWS
-   commitments, IAM/VPC/CloudTrail governance, data residency, prompt caching, and consolidating one vendor
-   relationship — never on price, and never presented as free or neutral.
+2. **The cost of a same-model move depends on the inference option — state it conditionally.** In-Region and Geo
+   CRIS are priced at OpenAI's _data residency_ tier, exactly 1.10x the standard list price, so those moves cost
+   ~10% more. **GPT-5.6 on Global CRIS is priced at the standard list price — cost parity** — available only when
+   the workload has no data-residency constraint (GPT-5.5 / GPT-5.4 have no CRIS at all). See
+   `shared/openai-on-bedrock.md`. The non-cost case — AWS commitments, IAM/VPC/CloudTrail governance, residency,
+   prompt caching, one vendor relationship — carries the in-region path; never present that path as free or neutral.
 
 Cross-family mapping (to Claude / Nova / DeepSeek) is still the right answer in two situations: the source model has
 no Bedrock equivalent, or the user's priority is cost and is willing to accept a model change to get it. Both are
@@ -47,31 +48,39 @@ Apply in order. Stop at the first tier that resolves.
 If the detected model is GPT-5.6 Sol / Terra / Luna, GPT-5.5, or GPT-5.4, the target is **the same model on
 Bedrock**.
 
-| Source model  | Bedrock target | Model ID               | Assessment                                          |
-| ------------- | -------------- | ---------------------- | --------------------------------------------------- |
-| GPT-5.6 Sol   | GPT-5.6 Sol    | `openai.gpt-5.6-sol`   | `strong_migrate` — same model, ~10% over OpenAI std |
-| GPT-5.6 Terra | GPT-5.6 Terra  | `openai.gpt-5.6-terra` | `strong_migrate` — same model, ~10% over OpenAI std |
-| GPT-5.6 Luna  | GPT-5.6 Luna   | `openai.gpt-5.6-luna`  | `strong_migrate` — same model, ~10% over OpenAI std |
-| GPT-5.5       | GPT-5.5        | `openai.gpt-5.5`       | `strong_migrate` — same model, ~10% over OpenAI std |
-| GPT-5.4       | GPT-5.4        | `openai.gpt-5.4`       | `strong_migrate` — same model, ~10% over OpenAI std |
+| Source model  | Bedrock target | Model ID (mantle / runtime CRIS)                        | Assessment                                                      |
+| ------------- | -------------- | ------------------------------------------------------- | --------------------------------------------------------------- |
+| GPT-5.6 Sol   | GPT-5.6 Sol    | `openai.gpt-5.6-sol` / `us.` `global.` prefixed         | `strong_migrate` — same model; parity on Global CRIS, else +10% |
+| GPT-5.6 Terra | GPT-5.6 Terra  | `openai.gpt-5.6-terra` / `us.` `in.` `global.` prefixed | `strong_migrate` — same model; parity on Global CRIS, else +10% |
+| GPT-5.6 Luna  | GPT-5.6 Luna   | `openai.gpt-5.6-luna` / `us.` `in.` `global.` prefixed  | `strong_migrate` — same model; parity on Global CRIS, else +10% |
+| GPT-5.5       | GPT-5.5        | `openai.gpt-5.5` (mantle only)                          | `strong_migrate` — same model, ~10% over OpenAI std             |
+| GPT-5.4       | GPT-5.4        | `openai.gpt-5.4` (mantle only)                          | `strong_migrate` — same model, ~10% over OpenAI std             |
 
-Then apply the **region gate** below. Record `migration_path: "mantle_openai_responses"` and
-`model_change: false` in `aws-design-ai.json` → `ai_architecture.code_migration`.
+Then apply the **region gate** below. Record `model_change: false` and the chosen path in
+`aws-design-ai.json` → `ai_architecture.code_migration`: `migration_path: "mantle_openai_responses"` for the
+in-region mantle endpoint, or `migration_path: "runtime_openai_cris"` when a GPT-5.6 target is served via
+`bedrock-runtime` with a CRIS id (the model cards recommend runtime for new applications).
 
 Report the assessment honestly: `strong_migrate` here means "low-risk, well-supported move", not "cheaper".
 
-### Region gate (applies to every Tier 0 selection)
+### Region gate (applies to every Tier 0 selection — endpoint-aware)
 
-These models are **in-region only** — no Geo or Global cross-region inference, so there is no fallback region.
-Check `preferences.json` → `design_constraints.target_region` against the region matrix in
-`shared/openai-on-bedrock.md`.
+The gate differs by family (see `shared/openai-on-bedrock.md` § Regional Availability):
 
-If the target region does not carry the selected model:
+**GPT-5.6 Sol / Terra / Luna:** rarely blocked. If the target region is in the mantle in-region matrix, either
+endpoint works. If not, the `bedrock-runtime` CRIS path (Geo `us.`/`in.`, Global `global.`) covers most commercial
+regions — offer it, stating the data-residency implication of cross-region routing (Geo stays within the geography;
+Global routes anywhere and is the cost-parity option). Only a workload that requires strictly in-region processing
+in a region outside the mantle matrix falls through to Tier 1.
 
-1. Prefer offering a **region change** to a supported region, if the migration has no data-residency constraint
-   pinning it elsewhere. This preserves the zero-behavior-delta benefit, which is the whole point of Tier 0.
-2. If the region is fixed, Tier 0 is unavailable. Fall through to Tier 1 and say why explicitly — the user needs to
-   know they are taking a model change because of a region constraint, not because of a model judgment.
+**GPT-5.5 / GPT-5.4:** hard gate. Mantle in-region only, no CRIS, no fallback. If the target region is not in the
+matrix:
+
+1. Prefer offering a **region change** to a supported region, if no data-residency constraint pins the workload.
+   This preserves the zero-behavior-delta benefit, which is the whole point of Tier 0.
+2. If the region is fixed, also offer **upgrading within the vendor to GPT-5.6** (which reaches the region via
+   CRIS) alongside the cross-family option — a generation change, but same vendor and prompt idioms.
+3. Otherwise fall through to Tier 1 and say why explicitly — a region constraint, not a model judgment.
 
 Record the outcome in `regional_warnings[]`.
 
@@ -281,9 +290,12 @@ and closed to new customers as of July 30, 2026.
 
 ### When to prefer a Bedrock-native model over the mantle GPT path
 
-Choose Claude / Nova via Converse when the workload needs Bedrock Guardrails, Knowledge Bases, invocation logging,
-cross-region inference, or a region the GPT models do not serve. The mantle GPT path is the smallest change; the
-Bedrock-native path is the most feature-complete.
+Choose Claude / Nova via Converse when the workload needs Knowledge Bases, intelligent prompt routing, structured
+outputs, or application inference profiles — none of which the GPT path offers. Note what no longer forces a family
+switch for GPT-5.6: its `bedrock-runtime` CRIS path provides cross-region inference, invocation logs, and
+Guardrails (Converse API only; prompt caching is Responses-only on runtime). For GPT-5.5 / GPT-5.4, Guardrails,
+logging, and cross-region reach still require a different model. The mantle GPT path is the smallest change; the
+Bedrock-native path remains the most feature-complete.
 
 ### High-spend tiering
 

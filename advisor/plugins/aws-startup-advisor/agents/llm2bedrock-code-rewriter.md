@@ -229,7 +229,7 @@ client = anthropic.Anthropic(
 
 Do NOT rewrite request/response parsing — the whole point of Mantle is that the source SDK's call and response shapes are preserved. The single exception is the Chat Completions → Responses reshape above, which applies only to proprietary GPT targets. After applying the changes above, skip the Converse-specific guidance in the rest of §8; the §9 behavior-delta application still applies normally.
 
-**Never rewrite a proprietary GPT target to Converse.** `openai.gpt-5*` models have no `bedrock-runtime` surface, so a boto3 `converse()` call against one fails at runtime. If your context pairs a `openai.gpt-5*` model id with the Converse path, stop and report the contradiction rather than generating code that cannot work.
+**Converse for a proprietary GPT target is family-dependent.** GPT-5.5 / GPT-5.4 (`openai.gpt-5.5`, `openai.gpt-5.4`) have no `bedrock-runtime` surface — a boto3 `converse()` call against them fails at runtime; if your context pairs one with the Converse path, stop and report the contradiction. GPT-5.6 DOES have a `bedrock-runtime` path via CRIS ids (`us.`/`in.`/`global.` prefixed): when the plan says `migration_path: runtime_openai_cris`, a Converse or Responses rewrite against the CRIS id is valid (base URL `bedrock-runtime.{region}.amazonaws.com/openai/v1` for the OpenAI-compatible APIs; note Guardrails are Converse-only and prompt caching Responses-only on runtime). For a Responses-based source app, the mantle express lane above remains the default and smallest change.
 
 ### Converse rewrite (default)
 

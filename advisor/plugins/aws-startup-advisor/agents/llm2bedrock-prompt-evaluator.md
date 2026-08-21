@@ -39,7 +39,7 @@ Read from prompt context (forwarded from llm2bedrock-code-analyzer, llm2bedrock-
 
 - **`<GOLDEN_DATASET_PATH>`** — `<repo>/.saws-migrate/golden-dataset/prompts.jsonl` (from T2-2). May be empty if T2-2 took the abort / paste / vision-no-images / embeddings path.
 - **`<TEMPLATE_PATH>`** — `<repo>/.saws-migrate/golden-dataset/templates/prompt_template.txt` (from T2-2).
-- **`<TARGET_MODEL_ID>`** — Bedrock target model ID from the migration plan, validated by llm2bedrock-code-analyzer §10. Substitute it in every Bedrock call below. **It also selects the API path:** an `openai.gpt-5*` id (excluding `-oss`) is mantle-only and must use the Responses client in §6a; everything else uses `boto3.converse`. See the table at the top of §6.
+- **`<TARGET_MODEL_ID>`** — Bedrock target model ID from the migration plan, validated by llm2bedrock-code-analyzer §10. Substitute it in every Bedrock call below. **It also selects the API path:** a bare `openai.gpt-5*` id (excluding `-oss`) is mantle-served and must use the Responses client in §6a; a `us.`/`in.`/`global.`-prefixed `openai.gpt-5.6-*` CRIS id is a `bedrock-runtime` target and uses `boto3.converse` like any other profile; everything else uses `boto3.converse`. See the table at the top of §6.
 - **`<REGION>`** — AWS region for Bedrock (the `AWS region:` line in your context).
 - **From `llm2bedrock-code-analyzer` (`AiAnalysisData`)** — key fields:
   - `source_provider` — `openai` / `anthropic` / `google` / `cohere` / `custom`. Drives §9 baseline gating. (Vertex AI customers are emitted as `google` here; the analyzer's `errors` field carries the `vertex AI auth detected` signal that gates baseline collection upstream — by the time you reach §9, `source_baseline_available` already reflects that.)
@@ -130,10 +130,11 @@ target model using the SAME API path the evaluation will use.
 **First, pick the API path from `<TARGET_MODEL_ID>` — this decides every Bedrock
 call in §6, §9.5 and §10:**
 
-| `<TARGET_MODEL_ID>` matches                      | API path         | Connectivity | Vision smoke | Golden eval              |
-| ------------------------------------------------ | ---------------- | ------------ | ------------ | ------------------------ |
-| `openai.gpt-5*` (not `-oss`)                     | Mantle Responses | §6a          | §9.5a        | §8 loop (same-model)     |
-| anything else (Claude, Nova, `openai.gpt-oss-*`) | `boto3.converse` | §6           | §9.5         | §10, or §8 if same-model |
+| `<TARGET_MODEL_ID>` matches                       | API path         | Connectivity | Vision smoke | Golden eval              |
+| ------------------------------------------------- | ---------------- | ------------ | ------------ | ------------------------ |
+| bare `openai.gpt-5*` (not `-oss`)                 | Mantle Responses | §6a          | §9.5a        | §8 loop (same-model)     |
+| `us.`/`in.`/`global.` + `openai.gpt-5.6-*` (CRIS) | `boto3.converse` | §6           | §9.5         | §8 loop (same-model)     |
+| anything else (Claude, Nova, `openai.gpt-oss-*`)  | `boto3.converse` | §6           | §9.5         | §10, or §8 if same-model |
 
 The proprietary OpenAI GPT models are served ONLY on the `bedrock-mantle`
 endpoint. Calling `boto3.converse` against one fails, so running the Converse
@@ -217,10 +218,12 @@ Interpret the result:
   region. These models are **in-region only**, so there is no cross-region
   inference profile to fall back to and `resolve-bedrock-model-id`'s
   inference-profile ranking does not apply. Return
-  `{ blocked: { reason: 'model_unresolvable', detail: '<the exact error> — <TARGET_MODEL_ID> is not available on the bedrock-mantle endpoint in <REGION>. These models are in-region only, so there is no cross-region inference profile to fall back to: a supported region or a different model id is required.' } }`.
+  `{ blocked: { reason: 'model_unresolvable', detail: '<the exact error> — <TARGET_MODEL_ID> is not available on the bedrock-mantle endpoint in <REGION>. Mantle is in-region only; for GPT-5.6 a bedrock-runtime CRIS id (us./in./global. prefixed) may cover the region instead, while GPT-5.5/5.4 need a supported region or a different model.' } }`.
   Use `model_unresolvable` rather than a new reason — its recovery path (user
   picks or pastes an ID, recorded in `resolved_model_overrides`) is exactly right
-  here. Do not offer a `us.`-prefixed candidate; those do not exist for these models.
+  here. For GPT-5.6 a `us.`/`in.`/`global.`-prefixed CRIS candidate is legitimate
+  (it switches the run to the Converse path); for GPT-5.5 / GPT-5.4 no prefixed
+  form exists — do not offer one.
 - **HTTP 401 / 403** — distinguish the two causes from the message. If it names
   model access, return `{ blocked: { reason: 'model_access', ... } }` as in §6.
   Otherwise it is IAM: the principal needs the `bedrock-mantle:*` actions

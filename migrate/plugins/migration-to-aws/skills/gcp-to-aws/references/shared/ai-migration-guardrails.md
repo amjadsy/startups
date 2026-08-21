@@ -42,7 +42,7 @@ Inference on `bedrock-mantle` for these models is governed by **two per-model, p
 | Medium          | Medium     | Monitor 429s against **token** throughput, not request rate; enable prompt caching                 |
 | High            | High       | Enable prompt caching first (cached input is exempt from input TPM), then request a quota increase |
 
-**There is no `bedrock-runtime` fallback for these models.** They are `bedrock-mantle` only and in-region only — no Converse path, no Geo/Global cross-region inference profile. Do **not** advise "switch to `bedrock-runtime` for dedicated throughput": that requires moving to a different model (Bedrock-native or `gpt-oss`), which is a model change with its own eval cost, not an endpoint change. Scaling levers, in order:
+**The `bedrock-runtime` fallback exists only for GPT-5.6.** GPT-5.5 and GPT-5.4 are `bedrock-mantle` only and in-region only — for them, "switch to `bedrock-runtime`" requires moving to a different model (Bedrock-native or `gpt-oss`), a model change with its own eval cost. GPT-5.6 Sol/Terra/Luna DO have a `bedrock-runtime` path via CRIS inference profiles (`us.`/`in.`/`global.` prefixed ids; the model cards recommend runtime for new applications) — a legitimate endpoint option with its own quota family, and on Global CRIS it is also the cost-parity option. Scaling levers on the mantle path, in order:
 
 1. Prompt caching (GPT-5.6 only) — 90% off cached input and exempt from the input-TPM quota
 2. Exponential backoff with a bounded retry count (`max_retries` on the OpenAI SDK)
@@ -72,7 +72,7 @@ Claude models on Mantle have an additional **output TPM cap** that differs by mo
 **Impact for migration decisions:**
 
 - For Claude migrations at medium/high volume: the 2M output TPM cap on Claude 4.7+ is the binding constraint
-- For OpenAI proprietary GPT targets: this Claude cap does not apply. Their constraint is the per-model input/output TPM quota described above, and `bedrock-runtime` is not an available mitigation
+- For OpenAI proprietary GPT targets: this Claude cap does not apply. Their mantle constraint is the per-model input/output TPM quota described above; for GPT-5.6 the `bedrock-runtime`/CRIS path is an available alternative (its own quota family), while GPT-5.5/5.4 have no runtime path
 - For `gpt-oss` targets: these do run on `bedrock-runtime`, so standard account TPM limits and the Converse-path mitigations apply
 - When output-heavy workloads (long JSON, tool outputs, multi-step reasoning) are detected, flag the relevant cap prominently; recommend `bedrock-runtime` for production **only** when the target model actually has a `bedrock-runtime` path
 

@@ -144,14 +144,18 @@ def test_access_denied_iam_variant_still_routes_to_authz():
     assert "bedrock:InvokeModel" in v["detail"]
 
 
-def test_mantle_model_detection_excludes_gpt_oss():
-    # Proprietary GPT models are mantle-only; gpt-oss speaks Converse and must
-    # keep the bedrock-runtime path.
+def test_mantle_model_detection_excludes_gpt_oss_and_cris_forms():
+    # Bare proprietary GPT ids are mantle-served; gpt-oss speaks Converse; and
+    # GPT-5.6 CRIS profile ids (us./in./global.) are bedrock-runtime targets that
+    # MUST take the Converse probe — Converse is supported there (2026-08-21).
     assert p.is_mantle_model("openai.gpt-5.6-terra") is True
     assert p.is_mantle_model("openai.gpt-5.6-sol") is True
     assert p.is_mantle_model("openai.gpt-5.5") is True
     assert p.is_mantle_model("openai.gpt-5.4") is True
     assert p.is_mantle_model("openai.gpt-oss-120b-1:0") is False
+    assert p.is_mantle_model("us.openai.gpt-5.6-sol") is False
+    assert p.is_mantle_model("in.openai.gpt-5.6-luna") is False
+    assert p.is_mantle_model("global.openai.gpt-5.6-terra") is False
     assert p.is_mantle_model("anthropic.claude-sonnet-4-6") is False
     assert p.is_mantle_model("amazon.nova-lite-v1:0") is False
 
@@ -166,15 +170,18 @@ def test_mantle_authz_error_points_at_mantle_actions_not_invoke_model():
     assert "does NOT authorize" in v["detail"]
 
 
-def test_mantle_model_unavailable_does_not_suggest_cross_region_profile():
-    # These models are in-region only, so the Converse-path remedy ("try us.<id>")
-    # would be actively misleading.
+def test_mantle_model_unavailable_remedy_is_family_split():
+    # Verified 2026-08-21: mantle itself is in-region only, but GPT-5.6 now has a
+    # bedrock-runtime CRIS path — so the 404 remedy must offer the CRIS form for
+    # 5.6 while making clear 5.5/5.4 have no prefixed form. An earlier version of
+    # this test asserted the opposite (never suggest a prefix), which matched the
+    # pre-2026-08-21 docs.
     v = p.classify_mantle_error(404, "model not found")
     assert v["ok"] is False
     assert v["reason"] == "model_unavailable"
     assert "in-region only" in v["detail"]
-    assert "us." not in v["detail"]
-
+    assert "CRIS" in v["detail"] and "us./in./global." in v["detail"]
+    assert "GPT-5.5/5.4" in v["detail"]
 
 def test_mantle_throttle_is_ok_for_preflight():
     v = p.classify_mantle_error(429, "too many tokens per minute")

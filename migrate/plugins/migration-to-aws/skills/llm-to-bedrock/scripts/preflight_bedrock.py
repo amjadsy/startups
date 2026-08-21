@@ -7,9 +7,10 @@ Always prints JSON — including for missing credentials / bad region — so the
 caller can parse the verdict instead of a traceback. On failure the top level
 carries `reason`/`detail`/`failing_models` lifted from the first failing model.
 Chat models are probed via Converse; embedding models (which don't speak
-Converse) via InvokeModel with their family's request body. OpenAI's proprietary
-GPT models are `bedrock-mantle`-only and speak neither Converse nor InvokeModel,
-so they are probed via the OpenAI Responses API against the mantle endpoint.
+Converse) via InvokeModel with their family's request body. Bare OpenAI
+proprietary GPT ids are mantle-served and probed via the OpenAI Responses API;
+GPT-5.6 CRIS profile ids (us./in./global. prefixed) are bedrock-runtime targets
+and take the normal Converse probe.
 The 1-token probe costs a fraction of a cent (noted in output).
 """
 import argparse, json, sys
@@ -56,10 +57,13 @@ def is_embedding_model(model_id: str) -> bool:
 
 
 def is_mantle_model(model_id: str) -> bool:
-    """Pure: OpenAI's proprietary GPT models are served only on the bedrock-mantle
-    endpoint via the OpenAI Responses API. They have no bedrock-runtime model, so
-    probing them with Converse/InvokeModel always fails with a misleading verdict.
-    The open-weight gpt-oss models DO speak Converse and must not match here."""
+    """Pure: ids that must be probed via the mantle Responses API rather than
+    Converse/InvokeModel. Matches the BARE proprietary GPT ids (`openai.gpt-5*`),
+    which are mantle-served. Deliberately does NOT match:
+    - gpt-oss ids (Converse-capable on bedrock-runtime), and
+    - GPT-5.6 CRIS profile ids (`us.`/`in.`/`global.` prefixed) — those are
+      bedrock-runtime targets where Converse IS supported, so falling through to
+      the standard Converse probe is the correct behavior, not an accident."""
     mid = model_id.lower()
     return mid.startswith("openai.gpt-5") and "oss" not in mid
 
@@ -69,8 +73,8 @@ def classify_mantle_error(status: int | None, message: str) -> dict:
 
     Mirrors classify_invoke_error's contract but for the mantle surface, where the
     remedies differ: IAM needs bedrock-mantle:* actions (not bedrock:InvokeModel),
-    and an unavailable model cannot be fixed with a cross-region inference profile
-    because these models are in-region only."""
+    and mantle itself has no cross-region form — though for GPT-5.6 a
+    bedrock-runtime CRIS id can cover the region instead."""
     if status in (401, 403):
         lowered = message.lower()
         if ("model access" in lowered or "access to the model" in lowered
@@ -86,8 +90,9 @@ def classify_mantle_error(status: int | None, message: str) -> dict:
     if status == 404:
         return {"ok": False, "reason": "model_unavailable",
                 "detail": f"Model not available at this mantle endpoint/region — {message}. "
-                          f"These models are in-region only (no cross-region inference "
-                          f"profile); switch to a supported region or a different model."}
+                          f"Mantle is in-region only; for GPT-5.6 try a bedrock-runtime CRIS "
+                          f"id (us./in./global. prefixed) instead, for GPT-5.5/5.4 switch to "
+                          f"a supported region or a different model."}
     if status == 429:
         # Reaching a token-per-minute ceiling still proves we are authorized.
         return {"ok": True, "reason": "throttled_ok",
