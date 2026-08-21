@@ -28,6 +28,7 @@ For typical migrations (Claude, Llama, Nova, Mistral, DeepSeek, Gemma, OpenAI gp
 Read from `$MIGRATION_DIR/`:
 
 - **`ai-workload-profile.json`** — `current_costs.monthly_ai_spend`, `current_costs.services_detected`, `models[]`, `metadata.profile_source`, `summary.inferred_from_iac`
+- **`openai-usage-profile.json`** (if present) — `summary.monthly_cost_usd`, `usage_by_model[]` (real per-model input/output token counts from the OpenAI Admin API)
 - **`preferences.json`** — `ai_constraints.ai_token_volume.value`, `ai_constraints.ai_capabilities_required.value`
 - **`aws-design-ai.json`** — `metadata.ai_source`, `ai_architecture.honest_assessment`, `ai_architecture.tiered_strategy`, `ai_architecture.bedrock_models[]` (with `source_provider_price`, `bedrock_price`, `honest_assessment`), `ai_architecture.capability_mapping`
 
@@ -35,11 +36,12 @@ Read from `$MIGRATION_DIR/`:
 
 ## Part 1: Establish Current GCP AI Costs
 
-Determine current Vertex AI spending from the best available source:
+Determine current AI spending from the best available source:
 
-1. **Billing data (preferred)** — Use `current_costs.monthly_ai_spend` from `ai-workload-profile.json`
-2. **Estimated from token volume** — Use `ai_constraints.ai_token_volume.value` from `preferences.json` with Gemini pricing from `pricing-cache.md` (under "Source Provider Pricing"). Apply 60/40 input/output ratio if actual ratio unknown.
-3. **Neither available** — Note in output and present model comparison at multiple volume tiers so user can find their range.
+1. **OpenAI usage API data (most preferred)** — Use `summary.monthly_cost_usd` from `openai-usage-profile.json` (real billed spend, captured from the provider). `usage_by_model[]` also supplies actual input/output token counts and ratio for Part 2.
+2. **Billing data** — Use `current_costs.monthly_ai_spend` from `ai-workload-profile.json`
+3. **Estimated from token volume** — Use `ai_constraints.ai_token_volume.value` from `preferences.json` with Gemini pricing from `pricing-cache.md` (under "Source Provider Pricing"). Apply 60/40 input/output ratio if actual ratio unknown.
+4. **None available** — Note in output and present model comparison at multiple volume tiers so user can find their range.
 
 **IaC-only profile:** If `metadata.profile_source` is `iac_vertex` or `summary.inferred_from_iac` is true and billing/token data is missing, state explicitly that **current GCP AI spend is unverified** and widen uncertainty bands (use the same multi-tier comparison approach as in case 3).
 
@@ -58,7 +60,7 @@ Calculate the monthly Bedrock cost for **every viable model** at the user's toke
 | `"high"`          | 600M               | 400M                | 60/40 |
 | `"very_high"`     | 6B                 | 4B                  | 60/40 |
 
-If design or discover phase has more specific token estimates, use those instead.
+If design or discover phase has more specific token estimates, use those instead. In particular, when `openai-usage-profile.json` exists, use its `usage_by_model[]` actual monthly input/output token totals (and actual ratio) instead of the tier table — real observed volume always beats a tier midpoint.
 
 **Cost formula:** `Monthly = (input_tokens / 1M × input_rate) + (output_tokens / 1M × output_rate)`
 
