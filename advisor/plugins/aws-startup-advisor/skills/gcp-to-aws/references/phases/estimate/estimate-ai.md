@@ -34,11 +34,11 @@ Read from `$MIGRATION_DIR/`:
 
 ---
 
-## Part 1: Establish Current GCP AI Costs
+## Part 1: Establish Current AI Costs
 
 Determine current AI spending from the best available source:
 
-1. **OpenAI usage API data (most preferred)** — Use `summary.monthly_cost_usd` from `openai-usage-profile.json` (real billed spend, captured from the provider). `usage_by_model[]` also supplies actual input/output token counts and ratio for Part 2.
+1. **OpenAI usage API data (most preferred)** — Use `summary.monthly_cost_usd` from `openai-usage-profile.json` (real billed spend, captured from the provider). `usage_by_model[]` also supplies actual input/output token counts and ratio for Part 2. **Exception:** if `metadata.partial_window` is `true`, the window is too short to be a monthly baseline — do NOT rank it above sources 2–3; fall back to the next available source (or the multi-tier comparison) and present the partial actuals as a reference figure only, labeled with `active_days`.
 2. **Billing data** — Use `current_costs.monthly_ai_spend` from `ai-workload-profile.json`
 3. **Estimated from token volume** — Use `ai_constraints.ai_token_volume.value` from `preferences.json` with Gemini pricing from `pricing-cache.md` (under "Source Provider Pricing"). Apply 60/40 input/output ratio if actual ratio unknown.
 4. **None available** — Note in output and present model comparison at multiple volume tiers so user can find their range.

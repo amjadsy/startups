@@ -149,21 +149,20 @@ Runs AFTER 1a–1c sub-discoveries complete, so its IaC merge sees their output.
 
 **1e. OpenAI usage discovery (Admin API):**
 Runs AFTER 1a–1d complete, so its merge sees any `ai-workload-profile.json`.
-Offer ONCE when EITHER condition holds; otherwise skip silently:
+Load `references/phases/discover/discover-openai-api.md` when EITHER condition
+holds; otherwise skip silently:
 
 - `ai-workload-profile.json` exists with `summary.ai_source` of `openai` or
-  `both` — offer: "Your code uses OpenAI. Want me to pull real cost and
-  token-usage data from the OpenAI Admin API (read-only, with your consent)?
-  This replaces manual billing CSV exports and gives Estimate real numbers."
-- No billing files were found in 1c AND the user mentions OpenAI usage/spend —
-  offer the same.
+  `both`
+- No billing files were found in 1c AND the user mentions OpenAI usage/spend
 
-On yes → Load `references/phases/discover/discover-openai-api.md`. On no →
-continue (do not re-ask this run). If
+The sub-file's Step 0 consent gate is the single consent point for this source
+— do not pre-ask here (loading the file only presents the gate; declining `[B]`
+exits cleanly and must not be re-asked this run). If
 `$MIGRATION_DIR/openai-capture/manifest.json` already exists (a resumed run),
-load the sub-file and execute from its Step 3 (parse the existing captures;
-skip consent/intake/capture — they already happened). This source supplements
-billing files — both may run in the same run.
+execute from its Step 3 (parse the existing captures; consent and capture
+already happened). This source supplements billing files — both may run in the
+same run.
 
 ## Step 2: Check Outputs
 
@@ -243,7 +242,7 @@ _Breadcrumbs are emitted only after outer-run `HANDOFF_OK` — never on `GATE_FA
 2. `gcp-resource-clusters.json` — from discover-iac.md
 3. `ai-workload-profile.json` — from discover-app-code.md (confidence ≥ 70%, optionally merged) and/or discover-iac.md Step 7d (Vertex-strong IaC only)
 4. `billing-profile.json` — from discover-billing.md
-5. `openai-usage-profile.json` — from discover-openai-api.md (plus `openai-capture/` raw captures and the chmod-600 `.openai-admin-env` key file, all inside the gitignored run directory)
+5. `openai-usage-profile.json` — from discover-openai-api.md (plus `openai-capture/` raw captures inside the gitignored run directory; the transient `.openai-admin-env` key file is deleted by that sub-file's Step 4 and is never a phase output)
 6. `migration-preview.json` — from discover-preview.md (always written when any artifact exists)
 
 **No other files must be created:**
