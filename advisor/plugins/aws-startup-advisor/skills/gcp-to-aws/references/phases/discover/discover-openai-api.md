@@ -145,7 +145,10 @@ Create `$MIGRATION_DIR/openai-capture/`.
   until exhausted, concatenates all pages' `data` arrays, and writes the result
   to the named file.
 - A non-200 on one endpoint records `failed` for that row and continues —
-  a missing endpoint or zero usage is normal, never a halt.
+  a missing endpoint or zero usage is normal, never a halt. **Exception: a 401
+  AFTER the probe succeeded** means the key was revoked or rotated mid-run —
+  abort the remaining calls (keep completed capture files) and exit with a
+  distinct `KEY_INVALID_MID_RUN` line so the agent can hand off.
 - Prints one line per call: `<file> ok|failed|skipped <n_buckets>`.
 
 **2b. Probe and project scoping.** The capture script runs the probe call first
@@ -227,7 +230,8 @@ Write `$MIGRATION_DIR/openai-usage-profile.json`:
     "window_days": 30,
     "active_days": 30,
     "partial_window": false,
-    "projects": [{ "id": "proj_abc", "label": "production" }]
+    "projects": [{ "id": "proj_abc", "label": "production" }],
+    "capture_warnings": ["usage-embeddings.json failed (403)"]
   },
   "summary": {
     "monthly_cost_usd": 105.03,
@@ -251,7 +255,11 @@ Write `$MIGRATION_DIR/openai-usage-profile.json`:
 ```
 
 `usage_by_model` sorted descending by `input_tokens + output_tokens`. Include
-only models with non-zero usage. Validate: valid JSON, `summary.monthly_cost_usd`
+only models with non-zero usage. `metadata.capture_warnings` carries every
+`failed`/`skipped` manifest entry (empty array when all rows succeeded) — the
+same convention as live discovery's `live_metadata.capture_warnings` — so
+downstream phases can tell a failed usage category (UNKNOWN volume) from a
+genuinely unused one (zero). Validate: valid JSON, `summary.monthly_cost_usd`
 equals the sum of `costs_by_line_item` (± rounding).
 
 ## Step 4: Merge into the AI Workload Profile (if it exists), Then Clean Up
@@ -317,15 +325,16 @@ The parent `discover.md` owns the phase status update — do not touch
 
 ## Error Handling
 
-| Error                                           | Behavior                                                                                                                                         |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| curl / script runtime missing, or user skips    | Exit cleanly with no output (orchestrator falls back to billing files)                                                                           |
-| 401 on probe                                    | Not an Admin key or missing `api.usage.read` scope — offer re-intake or skip                                                                     |
-| 429 rate limit                                  | Wait 30s, retry once; second 429 → record `failed`, continue                                                                                     |
-| Individual endpoint fails                       | Record `failed`/`skipped` in manifest, continue — zero usage on an endpoint is normal, never a halt                                              |
-| Every usage endpoint failed                     | Exit with no output; tell the user which scope is missing                                                                                        |
-| Selected projects have zero usage in the window | Re-show the per-project spend list from 2b and let the user re-select once; still zero → write the profile with zeros and `partial_window: true` |
-| All buckets zero (new org, no usage yet)        | Write the profile with zeros and `partial_window: true`; warn that Estimate will fall back to token-volume tiers                                 |
+| Error                                                       | Behavior                                                                                                                                                                                                                              |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| curl / script runtime missing, or user skips                | Exit cleanly with no output (orchestrator falls back to billing files)                                                                                                                                                                |
+| 401 on probe                                                | Not an Admin key or missing `api.usage.read` scope — offer re-intake or skip                                                                                                                                                          |
+| 401 mid-capture (probe succeeded, key then revoked/rotated) | Script aborts remaining calls, keeping completed files. Tell the user the key stopped working mid-run; offer Step 1 re-intake ("create/fix the key, then tell me to continue") or skip. On resume, re-run Step 2 — captures overwrite |
+| 429 rate limit                                              | Wait 30s, retry once; second 429 → record `failed`, continue                                                                                                                                                                          |
+| Individual endpoint fails                                   | Record `failed`/`skipped` in manifest, continue — zero usage on an endpoint is normal, never a halt                                                                                                                                   |
+| Every usage endpoint failed                                 | Exit with no output; tell the user which scope is missing                                                                                                                                                                             |
+| Selected projects have zero usage in the window             | Re-show the per-project spend list from 2b and let the user re-select once; still zero → write the profile with zeros and `partial_window: true`                                                                                      |
+| All buckets zero (new org, no usage yet)                    | Write the profile with zeros and `partial_window: true`; warn that Estimate will fall back to token-volume tiers                                                                                                                      |
 
 **Key principle:** partial results are better than no results. Record what failed;
 never fabricate what wasn't captured.

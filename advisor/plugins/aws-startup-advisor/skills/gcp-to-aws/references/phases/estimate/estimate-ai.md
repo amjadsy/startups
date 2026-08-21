@@ -28,7 +28,7 @@ For typical migrations (Claude, Llama, Nova, Mistral, DeepSeek, Gemma, OpenAI gp
 Read from `$MIGRATION_DIR/`:
 
 - **`ai-workload-profile.json`** — `current_costs.monthly_ai_spend`, `current_costs.services_detected`, `models[]`, `metadata.profile_source`, `summary.inferred_from_iac`
-- **`openai-usage-profile.json`** (if present) — `summary.monthly_cost_usd`, `usage_by_model[]` (real per-model input/output token counts from the OpenAI Admin API)
+- **`openai-usage-profile.json`** (if present) — `summary.monthly_cost_usd`, `usage_by_model[]` (real per-model input/output token counts from the OpenAI Admin API). Check `metadata.capture_warnings` first: a failed usage endpoint means that category's volume is UNKNOWN, not zero — say so in the output and do not price the affected capability from this profile.
 - **`preferences.json`** — `ai_constraints.ai_token_volume.value`, `ai_constraints.ai_capabilities_required.value`
 - **`aws-design-ai.json`** — `metadata.ai_source`, `ai_architecture.honest_assessment`, `ai_architecture.tiered_strategy`, `ai_architecture.bedrock_models[]` (with `source_provider_price`, `bedrock_price`, `honest_assessment`), `ai_architecture.capability_mapping`
 
