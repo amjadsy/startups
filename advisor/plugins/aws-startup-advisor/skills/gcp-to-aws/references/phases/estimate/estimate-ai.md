@@ -38,10 +38,12 @@ Read from `$MIGRATION_DIR/`:
 
 Determine current AI spending from the best available source:
 
-1. **OpenAI usage API data (most preferred)** — Use `summary.monthly_cost_usd` from `openai-usage-profile.json` (real billed spend, captured from the provider). `usage_by_model[]` also supplies actual input/output token counts and ratio for Part 2. **Exception:** if `metadata.partial_window` is `true`, the window is too short to be a monthly baseline — do NOT rank it above sources 2–3; fall back to the next available source (or the multi-tier comparison) and present the partial actuals as a reference figure only, labeled with `active_days`.
-2. **Billing data** — Use `current_costs.monthly_ai_spend` from `ai-workload-profile.json`
+1. **`current_costs.monthly_ai_spend` (preferred whenever present)** — from `ai-workload-profile.json`. This figure is already provider-aware: Discover merges billing-CSV (GCP/Vertex) and OpenAI usage API spend there, summing across providers with `source: "mixed"` and a per-provider `breakdown[]`. Do NOT bypass it by reading `openai-usage-profile.json → summary.monthly_cost_usd` directly — that drops the non-OpenAI half of a mixed workload. When `breakdown[]` exists, carry the per-provider split into the comparison output.
+2. **OpenAI usage profile dollars (fallback)** — Use `summary.monthly_cost_usd` from `openai-usage-profile.json` ONLY when no `current_costs` exists (standalone usage capture with no AI workload profile). **Exception:** if `metadata.partial_window` is `true`, the window is too short to be a monthly baseline — do NOT rank it above sources 3–4; fall back and present the partial actuals as a reference figure only, labeled with `active_days`.
 3. **Estimated from token volume** — Use `ai_constraints.ai_token_volume.value` from `preferences.json` with Gemini pricing from `pricing-cache.md` (under "Source Provider Pricing"). Apply 60/40 input/output ratio if actual ratio unknown.
 4. **None available** — Note in output and present model comparison at multiple volume tiers so user can find their range.
+
+Regardless of which dollar source wins, `openai-usage-profile.json → usage_by_model[]` remains the Part 2 token-volume source (subject to the same `partial_window` exception there).
 
 **IaC-only profile:** If `metadata.profile_source` is `iac_vertex` or `summary.inferred_from_iac` is true and billing/token data is missing, state explicitly that **current GCP AI spend is unverified** and widen uncertainty bands (use the same multi-tier comparison approach as in case 3).
 
@@ -60,7 +62,7 @@ Calculate the monthly Bedrock cost for **every viable model** at the user's toke
 | `"high"`          | 600M               | 400M                | 60/40 |
 | `"very_high"`     | 6B                 | 4B                  | 60/40 |
 
-If design or discover phase has more specific token estimates, use those instead. In particular, when `openai-usage-profile.json` exists, use its `usage_by_model[]` actual monthly input/output token totals (and actual ratio) instead of the tier table — real observed volume always beats a tier midpoint.
+If design or discover phase has more specific token estimates, use those instead. In particular, when `openai-usage-profile.json` exists with `metadata.partial_window` `false`, use its `usage_by_model[]` actual monthly input/output token totals (and actual ratio) instead of the tier table — a real observed month beats a tier midpoint. **Exception:** if `metadata.partial_window` is `true`, a few days of tokens is NOT a monthly volume — projecting it as one understates the Bedrock estimate. Use the tier table (from `ai_token_volume`) and present the partial actuals as a reference figure only, labeled with `active_days`.
 
 **Cost formula:** `Monthly = (input_tokens / 1M × input_rate) + (output_tokens / 1M × output_rate)`
 

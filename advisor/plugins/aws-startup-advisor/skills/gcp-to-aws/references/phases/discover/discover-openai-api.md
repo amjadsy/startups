@@ -148,7 +148,8 @@ Create `$MIGRATION_DIR/openai-capture/`.
   a missing endpoint or zero usage is normal, never a halt.
 - Prints one line per call: `<file> ok|failed|skipped <n_buckets>`.
 
-**2b. Probe and project scoping.** Run the probe call first:
+**2b. Probe and project scoping.** The capture script runs the probe call first
+(2a rules apply — the agent never invokes curl with the key itself):
 
 ```
 GET /v1/organization/costs?start_time=<t>&bucket_width=1d&group_by=project_id&limit=180  →  costs-by-project.json
@@ -167,6 +168,9 @@ GET /v1/organization/costs?start_time=<t>&bucket_width=1d&group_by=project_id&li
   attributed to one app corrupts the migrate-or-stay numbers downstream. The
   user may also give each selected ID a label (e.g. "proj_abc = production");
   record labels in the profile.
+- **Confirm before capture** (applies equally when the answer was `all`):
+  "Selected projects account for $X of $Y total org spend in this window.
+  Capture these? [Y] Proceed / [N] Re-select". On [N], re-show the list once.
 
 **2c. Capture Endpoint Table.** Every row is filtered to the selected projects
 via repeated `project_ids[]=<id>` query parameters.
