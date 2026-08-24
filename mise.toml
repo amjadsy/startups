@@ -62,8 +62,9 @@ run = [
 ]
 
 [tasks.test]
-description = "Run the frontmatter-validator test suite (node --test) for both plugins"
+description = "Run contract and frontmatter-validator test suites (node --test)"
 run = [
+  "node --test migrate/plugins/migration-to-aws/tests/tools/application-source-contract.test.ts",
   "node --test migrate/plugins/migration-to-aws/tests/tools/frontmatter-validator.test.ts",
   "node --test advisor/plugins/aws-startup-advisor/tests/tools/frontmatter-validator.test.ts",
 ]
