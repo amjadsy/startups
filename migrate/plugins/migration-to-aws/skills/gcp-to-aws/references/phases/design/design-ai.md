@@ -103,7 +103,7 @@ For each `workloads[]` entry:
    | ------------------- | ------------------------------------------------------ | ------------------------------ |
    | `text_generation`   | Text/reasoning                                         | Apply override hierarchy below |
    | `structured_output` | Text/reasoning (same models support structured output) | Apply override hierarchy below |
-   | `image_generation`  | Image generation                                       | Stability AI (Core / Ultra)    |
+   | `image_generation`  | Image generation                                       | Amazon Nova Canvas             |
    | `embedding`         | Embedding                                              | Amazon Titan Embed Text v2     |
    | `speech_to_text`    | Speech-to-text                                         | Amazon Transcribe              |
    | `text_to_speech`    | Text-to-speech                                         | Amazon Polly                   |
@@ -223,7 +223,7 @@ If `models[]` contains more than one model, check for coordination patterns and 
    > ⚠️ "Multiple models detected ([count]). Recommend a tiered migration strategy: migrate and validate one model at a time, starting with the lowest-risk (highest-volume, simplest task). See Part 1B for tiered routing recommendations."
 
 4. **Text generation + image generation** — If `models[]` contains both text generation AND image generation capabilities:
-   > ⚠️ "Image generation migration (e.g., DALL-E/gpt-image → Stability AI) requires separate evaluation. Image quality is subjective — plan for human evaluation alongside automated metrics. Default to Stable Image Core (cost-first) or Stable Image Ultra (quality-first); do not recommend Nova Canvas."
+   > ⚠️ "Image generation migration (e.g., DALL-E/gpt-image → Nova Canvas) requires separate evaluation. Image quality is subjective — plan for human evaluation alongside automated metrics."
 
 5. **Speech models** — If `models[]` contains speech-to-text or text-to-speech capabilities:
    > ⚠️ "Speech model migration targets different AWS services (Whisper → Amazon Transcribe, TTS → Amazon Polly or Nova Sonic) with different pricing models and APIs. These are not Bedrock model swaps — they require separate integration work."

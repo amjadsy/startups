@@ -60,6 +60,18 @@ const ALLOWLIST: Record<string, Set<string>> = {
     "scripts/test_build_diagram.py",
     "scripts/test_unit_grouping.py",
   ]),
+  // Advisor-only gcp-to-aws refresh of Bedrock lifecycle, AI pricing cache,
+  // and image-generation defaults (PR 244). Remove these entries if/when
+  // the same files are ported to migrate/.
+  "gcp-to-aws": new Set([
+    "references/shared/ai-model-lifecycle.md",
+    "references/shared/pricing-cache.md",
+    "references/phases/design/design-ai.md",
+    "references/phases/discover/discover-preview.md",
+    "references/phases/clarify/clarify-ai.md",
+    "references/design-refs/ai-openai-to-bedrock.md",
+    "references/design-refs/ai-gemini-to-bedrock.md",
+  ]),
   "heroku-to-aws": new Set([
     "references/vendored/dsl/INTERPRETER.md",
     "references/vendored/estimate/estimation-infra.schema.json",
