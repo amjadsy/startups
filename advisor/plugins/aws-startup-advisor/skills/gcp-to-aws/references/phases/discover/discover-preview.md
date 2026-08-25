@@ -97,7 +97,7 @@ from `references/shared/pricing-cache.md` (Source Provider Pricing + Bedrock Mod
 | `claude-3-5-haiku`, `claude-haiku-*`            | Claude Haiku 4.5           | `anthropic.claude-haiku-4-5-20251001-v1:0` |
 | `claude-3-opus`, `claude-opus-*`                | Claude Opus 4.6            | `anthropic.claude-opus-4-6-v1`             |
 | `text-embedding-*`, `*-embedding-*`             | Amazon Titan Embeddings v2 | `amazon.titan-embed-text-v2:0`             |
-| `dall-e-*`, `imagen-*`, image generation        | Amazon Nova Canvas         | `amazon.nova-canvas-v1:0`                  |
+| `dall-e-*`, `imagen-*`, image generation        | Stability Stable Image Core | `stability.stable-image-core-v1:0`          |
 | `whisper-*`, speech-to-text                     | Amazon Transcribe          | (non-token service — note separately)      |
 | `tts-*`, text-to-speech                         | Amazon Polly               | (non-token service — note separately)      |
 | Unknown / other                                 | Amazon Nova Pro            | `amazon.nova-pro-v1:0`                     |

@@ -186,7 +186,7 @@ _Percentages are blended savings using a 2:1 input-to-output token ratio. Actual
 | Streaming            | All major models                         | Verify gateway format                                                                                                          |
 | Vision (GPT-4V)      | Claude Sonnet/Haiku, Llama 4 Maverick    | 70-95% cheaper                                                                                                                 |
 | Embeddings (ada-002) | Titan Embeddings ($0.02/1M, 1536 dims)   | Must re-embed all docs                                                                                                         |
-| DALL-E / gpt-image   | Nova Canvas ($0.04-$0.08/img)            | DALL-E EOL May 12, 2026; OpenAI replacement is gpt-image-1.5; Titan Image Gen v2 is Legacy (EOL Jun 30, 2026); use Nova Canvas |
+| DALL-E / gpt-image   | Stable Image Core ($0.04/img) / Ultra ($0.08/img) | DALL-E EOL May 12, 2026; OpenAI replacement is gpt-image-1.5; Nova Canvas is excluded (EOL Sep 30, 2026); use Stability AI     |
 | Whisper (STT)        | Amazon Transcribe ($0.024/min)           | 4x more expensive but more features                                                                                            |
 | TTS                  | Amazon Polly                             | Different pricing model                                                                                                        |
 | Assistants API       | See Assistants API decision tree below   | Path depends on which Assistants features are used — see decision tree                                                         |
