@@ -133,7 +133,7 @@
         }
       }
     },
-    "openai_gpt_5_6_luna": {
+    "openai_gpt_5_6_luna": { // region_availability should be updated to include AWS GovCloud (US-West, US-East) in addition to commercial regions (us-east-1, us-east-2, us-west-2)
       "display_name": "OpenAI GPT-5.6 Luna (on Bedrock)",
       "family": "openai_gpt_5",
       "generation": "reasoning",

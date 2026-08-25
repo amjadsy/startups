@@ -535,8 +535,8 @@ Per [Amazon Bedrock pricing](https://aws.amazon.com/bedrock/pricing/) (DeepSeek)
 | Model         | Region                                         | Input $/1M (≤272K) | Output $/1M (≤272K) | Input $/1M (>272K) | Output $/1M (>272K) |
 | ------------- | ---------------------------------------------- | ------------------ | ------------------- | ------------------ | ------------------- |
 | GPT-5.6 Sol   | US East (N. Virginia / Ohio)                   | 4.00               | 20.00               | 8.00               | 36.00               |
-| GPT-5.6 Terra | US East (N. Virginia / Ohio), US West (Oregon) | 2.20               | 13.20               | 4.40               | 19.80               |
-| GPT-5.6 Luna  | US East (N. Virginia / Ohio), US West (Oregon) | 0.22               | 1.32                | 0.44               | 1.98                |
+| GPT-5.6 Terra | US East (N. Virginia / Ohio), US West (Oregon), AWS GovCloud (US-West), AWS GovCloud (US-East) | 2.20               | 13.20               | 4.40               | 19.80               |
+| GPT-5.6 Luna  | US East (N. Virginia / Ohio), US West (Oregon), AWS GovCloud (US-West), AWS GovCloud (US-East) | 0.22               | 1.32                | 0.44               | 1.98                |
 
 **gpt-oss open-weight models:**
 
