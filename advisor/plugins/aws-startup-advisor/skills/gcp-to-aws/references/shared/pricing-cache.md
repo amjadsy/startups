@@ -1,6 +1,6 @@
 # AWS Pricing Cache
 
-**Last updated:** 2026-07-17
+**Last updated:** 2026-08-24
 **Region:** us-east-1
 **Currency:** USD
 **Accuracy:** ±5-10% for infrastructure services (sourced from AWS Price List API), ±15-25% for AI models (sourced from public pricing pages)
@@ -392,7 +392,7 @@ See `shared/ai-model-lifecycle.md` for lifecycle details. **Do not recommend Leg
 | Model                            | Model ID                                 | Provider  | Input $/1M | Output $/1M | Context | Tier      | Status                                              |
 | -------------------------------- | ---------------------------------------- | --------- | ---------- | ----------- | ------- | --------- | --------------------------------------------------- |
 | Claude Fable 5                   | anthropic.claude-fable-5                 | Anthropic | 10.00      | 50.00       | 1M      | frontier  | active                                              |
-| Claude Sonnet 5                  | anthropic.claude-sonnet-5                | Anthropic | 2.00       | 10.00       | 1M      | flagship  | active (intro pricing thru Aug 31; then 3.00/15.00) |
+| Claude Sonnet 5                  | anthropic.claude-sonnet-5                | Anthropic | 2.00       | 10.00       | 1M      | flagship  | active (intro $2/$10 thru Aug 31, 2026; then $3/$15) |
 | Claude Opus 4.8                  | anthropic.claude-opus-4-8                | Anthropic | 5.00       | 25.00       | 200K    | premium   | active                                              |
 | Claude Sonnet 4.6                | anthropic.claude-sonnet-4-6              | Anthropic | 3.00       | 15.00       | 200K    | flagship  | active                                              |
 | Claude Sonnet 4.6 — Long Context | anthropic.claude-sonnet-4-6              | Anthropic | 3.00       | 15.00       | 200K+   | flagship  | active                                              |
@@ -423,9 +423,15 @@ See `shared/ai-model-lifecycle.md` for lifecycle details. **Do not recommend Leg
 | GPT-5.6 Sol                      | openai.gpt-5.6-sol                       | OpenAI    | 4.00       | 20.00       | 1M      | flagship  | active (Mantle/Responses API only)                  |
 | GPT-5.6 Terra                    | openai.gpt-5.6-terra                     | OpenAI    | 2.20       | 13.20       | 1M      | mid       | active (Mantle/Responses API only)                  |
 | GPT-5.6 Luna                     | openai.gpt-5.6-luna                      | OpenAI    | 0.22       | 1.32        | 1M      | fast      | active (Mantle/Responses API only)                  |
+| Gemma 4 31B                      | google.gemma-4-31b                       | Google    | 0.14       | 0.40        | 256K    | mid       | active (Mantle only)                                |
+| Gemma 4 26B-A4B                  | google.gemma-4-26b-a4b                   | Google    | 0.13       | 0.40        | 256K    | efficient | active (Mantle only)                                |
+| Gemma 4 E2B                      | google.gemma-4-e2b                       | Google    | 0.04       | 0.08        | 128K    | budget    | active (Mantle only)                                |
 | Gemma 3 4B IT                    | google.gemma-3-4b-it                     | Google    | 0.04       | 0.08        | 128K    | budget    | active                                              |
 | Gemma 3 12B IT                   | google.gemma-3-12b-it                    | Google    | 0.09       | 0.29        | 128K    | budget    | active                                              |
 | Gemma 3 27B IT                   | google.gemma-3-27b-it                    | Google    | 0.23       | 0.38        | 128K    | efficient | active                                              |
+| MiniMax M2                       | minimax.minimax-m2                       | MiniMax   | 0.30       | 1.20        | 1M      | mid       | active                                              |
+| MiniMax M2.1                     | minimax.minimax-m2.1                     | MiniMax   | 0.30       | 1.20        | 196K    | mid       | active                                              |
+| MiniMax M2.5                     | minimax.minimax-m2.5                     | MiniMax   | 0.30       | 1.20        | 196K    | mid       | active                                              |
 | Jamba 1.5 Large                  | ai21.jamba-1-5-large-v1:0                | AI21 Labs | 2.00       | 8.00        | —       | mid       | legacy (EOL Nov 26, 2026)                           |
 | Jamba 1.5 Mini                   | ai21.jamba-1-5-mini-v1:0                 | AI21 Labs | 0.20       | 0.40        | —       | efficient | legacy (EOL Nov 26, 2026)                           |
 | Jurassic-2 Mid                   | —                                        | AI21 Labs | 12.50      | 12.50       | —       | legacy    | legacy                                              |
@@ -742,8 +748,8 @@ Per 1M tokens.
 
 | Model               | Modality | Input $/1M | Output $/1M | Status                    |
 | ------------------- | -------- | ---------- | ----------- | ------------------------- |
-| Amazon Nova Sonic   | Speech   | 3.40       | 13.60       | legacy (EOL Sep 14, 2026) |
-| Amazon Nova Sonic   | Text     | 0.06       | 0.24        | legacy (EOL Sep 14, 2026) |
+| Amazon Nova Sonic   | Speech   | 3.40       | 13.60       | excluded (EOL Sep 14, 2026) |
+| Amazon Nova Sonic   | Text     | 0.06       | 0.24        | excluded (EOL Sep 14, 2026) |
 | Amazon Nova 2 Sonic | Speech   | 3.00       | 12.00       | active                    |
 | Amazon Nova 2 Sonic | Text     | 0.33       | 2.75        | active                    |
 
