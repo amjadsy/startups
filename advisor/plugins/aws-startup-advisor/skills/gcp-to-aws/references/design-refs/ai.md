@@ -73,6 +73,15 @@ Apply in order:
 - → **AWS: Textract (if document OCR) or Rekognition (if image classification)**
 - Confidence: `inferred`
 
+### Example 3: AutoML (image classification)
+
+- GCP: `google_automl_image_classification_dataset`
+- Signals: Training pipeline, classification
+- Criterion 1 (Eliminators): PASS
+- Criterion 2 (Operational Model): SageMaker Autopilot (managed)
+- → **AWS: SageMaker Autopilot + Canvas (for low-code)**
+- Confidence: `inferred`
+
 ### Example 4: Document AI (workload capability `document_extraction`)
 
 - GCP: `documentai.process_document` call detected in app code
@@ -85,15 +94,6 @@ Apply in order:
 - GCP: `speech.recognize` or `speech.long_running_recognize` call detected in app code
 - Signals: Pre-built speech-to-text API
 - → **AWS: Transcribe** (streaming → `StartStreamTranscription`; batch → `StartTranscriptionJob`)
-- Confidence: `inferred`
-
-### Example 3: AutoML (image classification)
-
-- GCP: `google_automl_image_classification_dataset`
-- Signals: Training pipeline, classification
-- Criterion 1 (Eliminators): PASS
-- Criterion 2 (Operational Model): SageMaker Autopilot (managed)
-- → **AWS: SageMaker Autopilot + Canvas (for low-code)**
 - Confidence: `inferred`
 
 ## Output Schema
