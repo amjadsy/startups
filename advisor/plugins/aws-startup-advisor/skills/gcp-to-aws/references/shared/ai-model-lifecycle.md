@@ -63,7 +63,7 @@ Check the [model lifecycle page](https://docs.aws.amazon.com/bedrock/latest/user
 | Jamba 1.5 Large    | `ai21.jamba-1-5-large-v1:0`               | Nov 26, 2026 | 94          | legacy       | —                       |
 | Jamba 1.5 Mini     | `ai21.jamba-1-5-mini-v1:0`                | Nov 26, 2026 | 94          | legacy       | —                       |
 | Marengo Embed v2.7 | `twelvelabs.marengo-embed-2-7-v1:0`       | Nov 30, 2026 | 98          | legacy       | Marengo Embed 3.0       |
-| Claude Opus 4.1    | `anthropic.claude-opus-4-1-20250805-v1:0` | Jan 8, 2027  | 175         | legacy       | Claude Opus 4.8 / 4.6   |
+| Claude Opus 4.1    | `anthropic.claude-opus-4-1-20250805-v1:0` | Jan 8, 2027  | 137         | legacy       | Claude Opus 4.8 / 4.6   |
 
 **Notes (as of Aug 24, 2026):** Jamba 1.5 Large / Mini enter public extended access on **Aug 26, 2026** (provider pricing may increase) and the 90-day exclusion zone on **Aug 28, 2026**. Marengo Embed v2.7 is listed on the official lifecycle page; the Active replacement is Marengo Embed 3.0.
 

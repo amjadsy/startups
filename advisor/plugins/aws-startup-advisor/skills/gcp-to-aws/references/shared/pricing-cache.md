@@ -742,7 +742,7 @@ Per 1M tokens. **Nova 2 Omni** and **Nova 2 Pro** are **Preview**. Image column 
 
 #### Speech — US East (N. Virginia)
 
-> **Lifecycle note:** Nova Sonic v1 is **Legacy** (EOL Sep 14, 2026). Prefer **Nova 2 Sonic** for new migrations. See `shared/ai-model-lifecycle.md`.
+> **Lifecycle note:** Nova Sonic v1 is **excluded** (EOL Sep 14, 2026, within the 90-day exclusion window). Do not recommend for new migrations. Prefer **Nova 2 Sonic**. See `shared/ai-model-lifecycle.md`.
 
 Per 1M tokens.
 
