@@ -248,12 +248,33 @@ def test_agentic_workload_uses_trajectory_evaluation():
 
 # --- 11.5 Catalog and verification ----------------------------------------
 
-def test_unknown_limits_do_not_pass_hard_numeric_requirement():
+def test_context_requirement_beyond_every_catalog_window_requires_decision():
     # 2M exceeds every cataloged window (GPT-5.6 is 1M as of 2026-08-21 — a 400K
     # requirement now legitimately passes, which an earlier version of this test
-    # used as its probe value).
+    # used as its probe value). This is the KNOWN-limit-too-small case; the
+    # unknown-limit invariant has its own probe below.
     rec = _recommend(_workload(requirements={"min_context_tokens": 2000000}))
     assert rec["decision_status"] == "decision_required"
+
+
+def test_unknown_limits_do_not_pass_hard_numeric_requirement():
+    # Fail-closed invariant: an unknown catalog limit cannot satisfy a hard numeric
+    # need. output_token_ceiling is "unknown" on every entry as of 2026-08-21, so it
+    # probes the invariant the way min_context_tokens no longer can.
+    rec = _recommend(_workload(requirements={"expected_output_tokens": 100000}))
+    assert rec["decision_status"] == "decision_required"
+    assert "unverified_capacity" in _codes(rec["blocks"])
+
+
+def test_cris_only_path_with_unresolvable_residency_blocks_explicitly():
+    # GPT-5.6 on bedrock-runtime is CRIS-only. A residency posture permitting
+    # neither Global nor Geo CRIS must surface an explicit block, not a silent
+    # invocation_model_id: None.
+    rec = _recommend(_workload(
+        source={"model_ids": ["gpt-5.6-terra"], "api_surface": "responses"},
+        requirements={"governance": ["guardrails"], "data_residency": "in_region_required"},
+    ))
+    assert "cris_residency_unresolved" in _codes(rec["blocks"])
 
 def test_no_aws_account_leaves_probe_not_run_and_provisional():
     rec = _recommend()

@@ -720,9 +720,9 @@ def _decision_options(catalog, workload, region):
                 "requires_cris": path_config["requires_cris"],
                 "reason": (
                     "SAME-MODEL governance path: this GPT-5.6 target runs on bedrock-runtime via a "
-                    "CRIS id — Guardrails (Converse API only), invocation logging, and Global-CRIS "
-                    "cost parity, without a model change."
-                    if model_key.startswith("openai_")
+                    "CRIS id — Guardrails (Converse API only), invocation logging, and cost parity "
+                    "on Global CRIS (1.10x on Geo/In-Region pricing), without a model change."
+                    if model_key == _same_model_runtime_key(workload["source"])
                     else "Uses Bedrock-native Converse request/response shapes and a Bedrock-native "
                     "model; requires rewriting the OpenAI integration."
                 ),
@@ -915,6 +915,23 @@ def recommend_openai_workload(workload, region, catalog):
     blocks = r_blocks + f_blocks
     tuning = r_tuning + f_tuning
     deltas = list(r_deltas)
+
+    if path == "runtime_converse" and path_config["requires_cris"] and invocation_model_id is None:
+        # GPT-5.6 on bedrock-runtime is CRIS-only — there is no in-region invocation
+        # form. A residency posture that forbids both Global and Geo CRIS makes the
+        # same-model governance path unusable; say so explicitly instead of shipping
+        # a recommendation with an unresolvable invocation id.
+        blocks.append(
+            _finding(
+                "cris_residency_unresolved",
+                "[BLOCKS]",
+                "This runtime path is CRIS-only, and the stated data-residency posture "
+                "permits neither Global nor Geo cross-region inference, so no invocation "
+                "id can be resolved.",
+                "Relax residency to Global or a Geo CRIS geography, supply an explicit "
+                "inference_profile_id, or take the Claude cross-family Converse path.",
+            )
+        )
 
     if path == "mantle_openai_responses" and surface == "chat_completions":
         deltas.extend(_chat_to_responses_deltas())

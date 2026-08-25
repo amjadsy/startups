@@ -131,7 +131,7 @@
         "reasoning",
         "tool_or_function_calling"
       ],
-      "capability_source": "AWS model card 2026-08-21: balanced performance at half GPT-5.5 cost; tool calling via the Responses API's built-in tool use. Context window not captured from the card — treat as unknown. Re-verified 2026-08-21: context window is 1M per the current card (272K was the 2026-07-21 value); long-context (>272K) is a separate price tier at 2.0x input / 1.5x output per inference option.",
+      "capability_source": "AWS model card 2026-08-21: balanced performance at half GPT-5.5 cost; tool calling via the Responses API's built-in tool use. Re-verified 2026-08-21: context window is 1M per the current card (the 2026-07-21 card did not state it — cataloged as unknown then); long-context (>272K) is a separate price tier at 2.0x input / 1.5x output per inference option.",
       "paths": {
         "mantle_openai_responses": {
           "available": true,
@@ -159,7 +159,7 @@
         "reasoning",
         "tool_or_function_calling"
       ],
-      "capability_source": "AWS model card 2026-08-21: fastest/lowest-cost OpenAI tier for high-volume tasks; tool calling via the Responses API's built-in tool use. Context window not captured from the card — treat as unknown. Re-verified 2026-08-21: context window is 1M per the current card (272K was the 2026-07-21 value); long-context (>272K) is a separate price tier at 2.0x input / 1.5x output per inference option.",
+      "capability_source": "AWS model card 2026-08-21: fastest/lowest-cost OpenAI tier for high-volume tasks; tool calling via the Responses API's built-in tool use. Re-verified 2026-08-21: context window is 1M per the current card (the 2026-07-21 card did not state it — cataloged as unknown then); long-context (>272K) is a separate price tier at 2.0x input / 1.5x output per inference option.",
       "paths": {
         "mantle_openai_responses": {
           "available": true,
