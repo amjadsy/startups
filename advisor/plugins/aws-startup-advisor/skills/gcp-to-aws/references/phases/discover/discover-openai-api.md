@@ -67,8 +67,8 @@ fixed list of usage/cost endpoints:
     data from projects you don't select. No management endpoints.
     No request that creates, changes, or deletes anything will run.
 
-Window: last 30 days. You'll need an OpenAI ADMIN API key with the
-read-only api.usage.read scope (I'll walk you through it — the key
+Window: last 30 days. You'll need an OpenAI ADMIN API key with
+Usage set to Read (I'll walk you through it — the key
 is written to a chmod-600 file inside the gitignored .migration/
 directory, never echoed, and deleted when capture completes).
 
@@ -87,8 +87,10 @@ directory, never echoed, and deleted when capture completes).
 2. **Explain the key requirement** (before asking for anything):
    "OpenAI usage discovery needs an **Admin API key** (`sk-admin-...`) — regular
    project keys (`sk-proj-...`) cannot read org usage. Create one at
-   platform.openai.com → Settings → Organization → Admin keys. Grant it the
-   **read-only** `api.usage.read` scope (usage and costs) — nothing else."
+   platform.openai.com → Settings → Organization → Admin keys. In the key
+   permissions, set **Usage** to **Read** and leave every other permission
+   off. (The API reports that as `api.usage.read` — you will not see that
+   string in the UI.)"
 3. **Check the environment first** (presence only, never the value):
 
    ```bash
@@ -159,7 +161,7 @@ GET /v1/organization/costs?start_time=<t>&bucket_width=1d&group_by=project_id&li
 ```
 
 - On 401: stop and tell the user: "The key was rejected. Confirm it is an
-  **Admin** key (`sk-admin-...`) with the `api.usage.read` scope — project keys
+  **Admin** key (`sk-admin-...`) with **Usage** set to **Read** — project keys
   cannot read org usage." Offer to re-run Step 1 intake or skip. On 429, wait
   30 seconds and retry once.
 - On success: sum spend per `project_id` and present the list (project id +
@@ -328,7 +330,7 @@ The parent `discover.md` owns the phase status update — do not touch
 | Error                                                       | Behavior                                                                                                                                                                                                                              |
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | curl / script runtime missing, or user skips                | Exit cleanly with no output (orchestrator falls back to billing files)                                                                                                                                                                |
-| 401 on probe                                                | Not an Admin key or missing `api.usage.read` scope — offer re-intake or skip                                                                                                                                                          |
+| 401 on probe                                                | Not an Admin key or Usage is not set to Read (API error may say `api.usage.read`) — offer re-intake or skip                                                                                                                           |
 | 401 mid-capture (probe succeeded, key then revoked/rotated) | Script aborts remaining calls, keeping completed files. Tell the user the key stopped working mid-run; offer Step 1 re-intake ("create/fix the key, then tell me to continue") or skip. On resume, re-run Step 2 — captures overwrite |
 | 429 rate limit                                              | Wait 30s, retry once; second 429 → record `failed`, continue                                                                                                                                                                          |
 | Individual endpoint fails                                   | Record `failed`/`skipped` in manifest, continue — zero usage on an endpoint is normal, never a halt                                                                                                                                   |

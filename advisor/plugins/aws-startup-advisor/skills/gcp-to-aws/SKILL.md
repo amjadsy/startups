@@ -74,7 +74,7 @@ User must provide at least one GCP source:
 - **Terraform IaC**: `.tf` files (with optional `.tfvars`, `.tfstate`)
 - **Application code**: Source files with GCP SDK or AI framework imports
 - **Billing data**: GCP billing/cost/usage export files (CSV or JSON)
-- **OpenAI usage API** (supplement, for AI workloads on OpenAI): an OpenAI **Admin** API key with the read-only `api.usage.read` scope — read-only, consent-gated capture of real cost and token usage (see `references/phases/discover/discover-openai-api.md`); replaces manual billing CSV exports for OpenAI spend. Not a standalone source: usage data supplies spend and volumes but not integration or capability detail, so AI migration design still requires application code (or another source above)
+- **OpenAI usage API** (supplement, for AI workloads on OpenAI): an OpenAI **Admin** API key with **Usage** set to **Read** (API scope `api.usage.read`) — read-only, consent-gated capture of real cost and token usage (see `references/phases/discover/discover-openai-api.md`); replaces manual billing CSV exports for OpenAI spend. Not a standalone source: usage data supplies spend and volumes but not integration or capability detail, so AI migration design still requires application code (or another source above)
 
 If no Terraform is found (even when app code or billing files exist — they cannot produce an infrastructure inventory), offer live discovery per `discover.md` Step 1d; stop only when nothing will produce any artifact. Live discovery covers infrastructure only — AI/agentic workload detection still requires application code.
 

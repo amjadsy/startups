@@ -91,7 +91,7 @@ and Generate phases. The source code to scan is at `$REPO`.
 - Unless the user offers billing data, skip billing discovery. If the source provider is
   OpenAI, the skill may instead offer its OpenAI Admin API usage discovery
   (`discover-openai-api.md` — read-only, consent-gated, needs an Admin key with
-  `api.usage.read`); accepting it gives Estimate real spend and token volumes without
+  **Usage** set to **Read**); accepting it gives Estimate real spend and token volumes without
   manual CSV exports
 
 ### A2 — Wait for Assess completion
