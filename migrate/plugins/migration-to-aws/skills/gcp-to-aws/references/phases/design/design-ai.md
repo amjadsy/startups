@@ -14,7 +14,7 @@ Read `$MIGRATION_DIR/ai-workload-profile.json`:
 - `models[]` — Detected AI models with service, capabilities, evidence
 - `integration` — SDK, frameworks, languages, gateway type, capability summary
 - `infrastructure[]` — Terraform resources related to AI (may be empty)
-- `current_costs` — Present only if billing data was provided
+- `current_costs` — Present only if billing data or OpenAI usage API data was provided (`source` field records which)
 
 Read `$MIGRATION_DIR/preferences.json` → `ai_constraints` (if present). If absent: use defaults (prefer managed Bedrock, no latency constraint, no budget cap).
 
@@ -315,7 +315,7 @@ Generate concrete code examples using actual model IDs from the selected Bedrock
 
 **OpenRouter-specific guidance** (if `gateway_type == "llm_router"` AND `detection_signals` contains OpenRouter evidence):
 
-OpenRouter is a hosted routing service (not self-hosted like LiteLLM). It adds a margin on top of provider pricing. Present three options to the user:
+OpenRouter is a hosted routing service (not self-hosted like LiteLLM). It adds a margin on top of provider pricing. **First check whether the underlying model is an OpenAI model with a Mantle target** (`ai_source == "openai"`, per the Mantle guidance above) — OpenRouter is a transport layer, not a different model, so an OpenAI model routed through OpenRouter is eligible for the same same-model Mantle path a direct-SDK OpenAI source gets. Present the options below to the user:
 
 > **If the startup was using OpenRouter primarily for cost-based routing within one model family**
 > (e.g., routing between Claude Haiku and Claude Sonnet, or Nova Lite and Nova Pro),
@@ -323,13 +323,14 @@ OpenRouter is a hosted routing service (not self-hosted like LiteLLM). It adds a
 > needed. If they routed across providers (e.g., Claude ↔ GPT-4o), they still need
 > app-level or LiteLLM routing after migration.
 
-| Option                          | Action                                                    | Effort    | Trade-off                                                                  |
-| ------------------------------- | --------------------------------------------------------- | --------- | -------------------------------------------------------------------------- |
-| A) Direct Bedrock (recommended) | Remove OpenRouter, call Bedrock API directly              | 1–2 weeks | Removes middleman + margin; requires SDK changes                           |
-| B) Self-hosted LiteLLM          | Replace OpenRouter with LiteLLM proxy pointing to Bedrock | 1–3 days  | Preserves router pattern; removes OpenRouter dependency; adds self-hosting |
-| C) Keep OpenRouter              | Use OpenRouter with `amazon/` prefixed Bedrock models     | Hours     | Lowest effort; retains OpenRouter dependency and margin                    |
+| Option                                                                     | Action                                                                                    | Effort    | Trade-off                                                                                                                                                                                           |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A) Same model via Mantle (recommended when the source model is on Bedrock) | Remove OpenRouter, point the existing OpenAI SDK at Bedrock Mantle with the same model ID | Days      | Keeps the same model — no eval/prompt-behavior risk; requires base URL, credential, and model-ID-format changes (e.g. `openai/gpt-4o` → an OpenAI-compatible Bedrock model ID); not a one-line swap |
+| B) Direct Bedrock, cross-family                                            | Remove OpenRouter, call Bedrock API directly with a Claude/Nova model                     | 1–2 weeks | Removes middleman + margin; requires SDK + prompt changes; use when no Mantle target exists or cost is the priority                                                                                 |
+| C) Self-hosted LiteLLM                                                     | Replace OpenRouter with LiteLLM proxy pointing to Bedrock                                 | 1–3 days  | Preserves router pattern; removes OpenRouter dependency; adds self-hosting                                                                                                                          |
+| D) Keep OpenRouter                                                         | Use OpenRouter with `amazon/` prefixed Bedrock models                                     | Hours     | Lowest effort; retains OpenRouter dependency and margin; this is a model switch, not a same-model move                                                                                              |
 
-Record user's choice (or recommend A if not asked) in `aws-design-ai.json` → `code_migration.openrouter_path`: `"direct"` / `"litellm"` / `"keep_openrouter"`.
+Recommend **A** when `ai_source == "openai"` and a Mantle target exists (region gate passes per the Mantle guidance above); otherwise recommend **B** and present C/D as lower-effort alternatives. Record user's choice (or the recommended default if not asked) in `aws-design-ai.json` → `code_migration.openrouter_path`: `"same_model_mantle"` / `"direct"` / `"litellm"` / `"keep_openrouter"`.
 
 ---
 
