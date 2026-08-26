@@ -425,7 +425,8 @@ Before presenting Category G questions, show:
 
 **Auto-detect signals** — recommend default based on `agentic_profile.framework`:
 
-- `gateway_type` is `"llm_router"` (LiteLLM or OpenRouter detected) → Default to **A (retarget)**. These users are already abstracted from the model provider — migration is a config change (swap model IDs), not a code rewrite. Set `migration_approach: "retarget"` automatically and skip Q23 unless the user explicitly asks to evaluate Harness or Strands.
+- `gateway_type` is `"llm_router"` and evidence is **LiteLLM** → Default to **A (retarget)**. Already abstracted from the model provider — migration is a config change (swap model IDs), not a code rewrite. Set `migration_approach: "retarget"` automatically and skip Q23 unless the user explicitly asks to evaluate Harness or Strands.
+- `gateway_type` is `"llm_router"` and evidence is **OpenRouter** → Default to **A (retarget)** only when the underlying model is an OpenAI model with a Mantle target (same-model Mantle move, per `design-ai.md`'s OpenRouter guidance). Otherwise surface the full option set — an OpenRouter → Mantle move changes the base URL, credential type, and model-ID format, so it is not the same one-line change LiteLLM users get. Set `migration_approach: "retarget"` with `chosen_by: "extracted"` only in the Mantle-eligible case; otherwise ask Q23.
 - `langgraph`, `crewai`, `autogen` → Default to A (retarget). These frameworks support Bedrock as a model provider with minimal code changes.
 - `openai_agents` → Surface all options. OpenAI Agents SDK is tightly coupled to OpenAI API; retarget is harder. Note partial retarget (HTTP-compatible routing to Bedrock) as a bridge.
 - `strands` → Already AWS-native. Recommend B (Harness) for managed deployment or note "already on target framework."
