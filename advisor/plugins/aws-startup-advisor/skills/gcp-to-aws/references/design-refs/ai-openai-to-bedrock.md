@@ -115,11 +115,11 @@ Percentages below are blended savings using a 2:1 input-to-output token ratio.
 
 ### OpenAI GPT-5.6 on Bedrock (Sol / Terra / Luna) — same-provider path
 
-GPT-5.6 launched July 13, 2026 and is GA on Bedrock. This is the preferred first mapping for OpenAI-sourced applications: the model family does not change, so prompt adaptation, behavior-delta analysis, and quality re-evaluation are largely unnecessary. Bedrock in-region pricing is at parity with OpenAI's data-residency tier (a ~10% premium over OpenAI Standard; rates below reflect the July 30 price reduction).
+GPT-5.6 launched July 13, 2026 and is GA on Bedrock. This is the preferred first mapping for OpenAI-sourced applications: the model family does not change, so prompt adaptation, behavior-delta analysis, and quality re-evaluation are largely unnecessary. Bedrock in-region pricing is at parity with OpenAI's data-residency tier (a ~10% premium over OpenAI Standard; rates below reflect the November 2026 Sol price reduction (following the July 30 Terra/Luna reductions)ce reduction).
 
 | OpenAI Model (source)            | Bedrock GPT-5.6 Target | Model ID               | Bedrock Price (≤272K ctx) | Notes                                          |
 | -------------------------------- | ---------------------- | ---------------------- | ------------------------- | ---------------------------------------------- |
-| GPT-5.6 Sol / GPT-5.5 / o3-pro   | GPT-5.6 Sol            | `openai.gpt-5.6-sol`   | $5.50 / $33.00            | Flagship; frontier reasoning + agentic         |
+| GPT-5.6 Sol / GPT-5.5 / o3-pro   | GPT-5.6 Sol            | `openai.gpt-5.6-sol`   | $4.00 / $20.00            | Flagship; frontier reasoning + agentic         |
 | GPT-5.6 Terra / GPT-5.4 / GPT-4o | GPT-5.6 Terra          | `openai.gpt-5.6-terra` | $2.20 / $13.20            | Balanced tier; ≈ GPT-5.5 quality at lower cost |
 | GPT-5.6 Luna / Mini & Nano tiers | GPT-5.6 Luna           | `openai.gpt-5.6-luna`  | $0.22 / $1.32             | Fast/affordable; high-volume inference         |
 
@@ -130,7 +130,7 @@ Long-context (>272K, up to 1M) rates are 2× input / 1.5× output — see `prici
 - **Mantle-only.** GPT-5.6 models are served exclusively on the `bedrock-mantle` endpoint via the OpenAI **Responses API** path (`openai/v1/responses`). No `bedrock-runtime`, no Converse API, no Invoke ([model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-terra.html)). Applications on the OpenAI SDK migrate with an env-var + model-string swap; applications you plan to rewrite onto boto3 `converse()` cannot target GPT-5.6.
 - **No geo/global inference profiles.** Model IDs are bare (`openai.gpt-5.6-terra`); geo-prefixed (`us.`) and global inference IDs are not supported.
 - **No Bedrock Guardrails / Knowledge Bases integration on the Mantle path.** If those are requirements, use a Converse-capable family (Claude, Nova) instead.
-- **Region availability.** Confirm the target region serves GPT-5.6 on Mantle (us-east-1, us-east-2, us-west-2 at minimum; check the pricing page for current list).
+- **Region availability.** Confirm the target region serves GPT-5.6 on Mantle (us-east-1, us-east-2, us-west-2 at minimum for commercial regions; Terra and Luna are now also available in AWS GovCloud (US-West, US-East); check the pricing page for current list).
 
 **Cost cross-check vs Claude:** Sonnet 4.6 ($3.00/$15.00, Converse-capable, prompt caching, geo profiles) is in the same capability tier as Terra ($2.20/$13.20). Terra is ~15% cheaper on blended tokens; Sonnet 4.6 wins on Bedrock-native features and long-context pricing. Present both; let workload requirements decide.
 
@@ -179,19 +179,19 @@ _Percentages are blended savings using a 2:1 input-to-output token ratio. Actual
 
 ## Feature Migration
 
-| OpenAI Feature       | Bedrock Equivalent                       | Notes                                                                                                                          |
-| -------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| OpenAI SDK (direct)  | Mantle OpenAI-compat endpoints           | Zero code changes — set `OPENAI_BASE_URL` + API key + model ID                                                                 |
-| Function calling     | Claude tools (excellent, similar format) | Minimal changes (works via Mantle or Converse API)                                                                             |
-| Streaming            | All major models                         | Verify gateway format                                                                                                          |
-| Vision (GPT-4V)      | Claude Sonnet/Haiku, Llama 4 Maverick    | 70-95% cheaper                                                                                                                 |
-| Embeddings (ada-002) | Titan Embeddings ($0.02/1M, 1536 dims)   | Must re-embed all docs                                                                                                         |
-| DALL-E / gpt-image   | Nova Canvas ($0.04-$0.08/img)            | DALL-E EOL May 12, 2026; OpenAI replacement is gpt-image-1.5; Titan Image Gen v2 is Legacy (EOL Jun 30, 2026); use Nova Canvas |
-| Whisper (STT)        | Amazon Transcribe ($0.024/min)           | 4x more expensive but more features                                                                                            |
-| TTS                  | Amazon Polly                             | Different pricing model                                                                                                        |
-| Assistants API       | See Assistants API decision tree below   | Path depends on which Assistants features are used — see decision tree                                                         |
-| JSON mode            | Claude (excellent), Nova Pro (good)      | Most models via prompt                                                                                                         |
-| Realtime API         | No equivalent                            | Stay on OpenAI for this                                                                                                        |
+| OpenAI Feature       | Bedrock Equivalent                                | Notes                                                                                                                      |
+| -------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| OpenAI SDK (direct)  | Mantle OpenAI-compat endpoints                    | Zero code changes — set `OPENAI_BASE_URL` + API key + model ID                                                             |
+| Function calling     | Claude tools (excellent, similar format)          | Minimal changes (works via Mantle or Converse API)                                                                         |
+| Streaming            | All major models                                  | Verify gateway format                                                                                                      |
+| Vision (GPT-4V)      | Claude Sonnet/Haiku, Llama 4 Maverick             | 70-95% cheaper                                                                                                             |
+| Embeddings (ada-002) | Titan Embeddings ($0.02/1M, 1536 dims)            | Must re-embed all docs                                                                                                     |
+| DALL-E / gpt-image   | Stable Image Core ($0.04/img) / Ultra ($0.08/img) | DALL-E EOL May 12, 2026; OpenAI replacement is gpt-image-1.5; Nova Canvas is excluded (EOL Sep 30, 2026); use Stability AI |
+| Whisper (STT)        | Amazon Transcribe ($0.024/min)                    | 4x more expensive but more features                                                                                        |
+| TTS                  | Amazon Polly                                      | Different pricing model                                                                                                    |
+| Assistants API       | See Assistants API decision tree below            | Path depends on which Assistants features are used — see decision tree                                                     |
+| JSON mode            | Claude (excellent), Nova Pro (good)               | Most models via prompt                                                                                                     |
+| Realtime API         | No equivalent                                     | Stay on OpenAI for this                                                                                                    |
 
 ---
 
