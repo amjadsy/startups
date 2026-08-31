@@ -131,10 +131,14 @@ the Pricing MCP does not carry GPT-5.x (see `shared/openai-on-bedrock.md`).
 > Claude Sonnet 5 rows use the standard rate ($3/$15). Its promotional launch rate ($2/$10, through
 > Aug 31, 2026) may be cited as a dated aside but never as the basis of a comparison — these documents
 > outlive the promo window.
+>
+> GPT-5.6 Sol rows use $4.40/$22.00 in-region — 1.10x the $4/$20 standard rate set by the Aug 21, 2026
+> reduction, which AWS lists as promotional through at least Nov 21, 2026. The pre-reduction in-region
+> rate was $5.50/$33.00; GPT-5.5 keeps that rate.
 
 | Bedrock GPT baseline | Price        | Cross-family alternative | Price        | Delta                           |
 | -------------------- | ------------ | ------------------------ | ------------ | ------------------------------- |
-| GPT-5.6 Sol          | 5.50 / 33.00 | Claude Opus 4.8          | 5.00 / 25.00 | Opus 20% cheaper                |
+| GPT-5.6 Sol          | 4.40 / 22.00 | Claude Opus 4.8          | 5.00 / 25.00 | Sol 12% cheaper                 |
 | GPT-5.6 Terra        | 2.20 / 13.20 | Claude Sonnet 5          | 3.00 / 15.00 | Terra 19% cheaper               |
 | GPT-5.5              | 5.50 / 33.00 | Claude Sonnet 5          | 3.00 / 15.00 | Sonnet 52% cheaper              |
 | GPT-5.5              | 5.50 / 33.00 | Claude Opus 4.8          | 5.00 / 25.00 | Opus 20% cheaper                |
@@ -143,8 +147,11 @@ the Pricing MCP does not carry GPT-5.x (see `shared/openai-on-bedrock.md`).
 | GPT-5.6 Luna         | 0.22 / 1.32  | Nova Lite                | 0.06 / 0.24  | Nova Lite 80% cheaper           |
 | GPT-5.6 Luna         | 0.22 / 1.32  | Nova Micro               | 0.035 / 0.14 | Nova Micro 88% cheaper          |
 
-Two findings worth surfacing to users:
+Findings worth surfacing to users:
 
+- **The Aug 21, 2026 Sol price cut flips the Sol↔Opus comparison.** GPT-5.6 Sol is now ~12% cheaper blended
+  than Claude Opus 4.8, where Opus was previously 20% cheaper — but the cut is promotional (through at least
+  Nov 21, 2026), so do not present the saving as durable.
 - **GPT-5.6 Luna undercuts Claude Haiku 4.5 by ~75%.** For the fast/cheap tier, the OpenAI model is the cheaper
   Bedrock option. Do not reflexively map a cheap OpenAI model to Haiku on cost grounds.
 - **GPT-5.4 and Sonnet 5 are within 5%, with Sonnet now the cheaper side.** Earlier revisions of this guide had that
@@ -240,6 +247,7 @@ rather than dismissing it. For a long-context (>272K) workload the gap is much w
 | Prompt caching                             | GPT-5.6 only (90% off cached input)                        | Not listed for GPT-5.5 / 5.4; Claude has its own caching                                             |
 | Streaming                                  | Supported                                                  | Verify per surface                                                                                   |
 | Vision                                     | GPT-5.x (image input) or Claude / Llama 4                  | Same-model preserves behavior                                                                        |
+| JSON mode                                  | Claude (excellent), Nova Pro (good)                        | Most models via prompt                                                                               |
 | Embeddings (ada-002, `text-embedding-3-*`) | Titan Embeddings v2                                        | No OpenAI embedding model on Bedrock; must re-embed all documents                                    |
 | DALL-E / gpt-image                         | Stability AI                                               | Nova Canvas v1 is Legacy; see `ai-model-lifecycle.md`                                                |
 | Whisper (STT)                              | Amazon Transcribe                                          | Different service, API, and pricing model                                                            |

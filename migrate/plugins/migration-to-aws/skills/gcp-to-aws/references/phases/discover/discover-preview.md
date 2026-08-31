@@ -96,9 +96,11 @@ the comparison is a ~10% premium (Bedrock in-region is at OpenAI's data-residenc
 | `gpt-5.5` (not `-pro`)                 | GPT-5.5            | `openai.gpt-5.5`       |
 | `gpt-5.4` (not `-pro`/`-mini`/`-nano`) | GPT-5.4            | `openai.gpt-5.4`       |
 
-These are `bedrock-mantle` / Responses-API only and in-region only (us-east-1, us-east-2, plus us-west-2 for Terra,
-Luna, and GPT-5.4; us-gov-west-1 for GPT-5.4). At Discover time the target region may not be known — record the
-same-model mapping and let Design apply the region gate. See `references/shared/openai-on-bedrock.md`.
+On the mantle endpoint these are in-region only (us-east-1, us-east-2; us-west-2 additionally for Terra, Luna,
+and GPT-5.4; AWS GovCloud us-gov-west-1 / us-gov-east-1 for Terra and Luna, us-gov-west-1 also for GPT-5.4).
+GPT-5.6 additionally reaches most commercial regions via `bedrock-runtime` CRIS ids; GPT-5.5 / GPT-5.4 have no
+CRIS. At Discover time the target region may not be known — record the same-model mapping and let Design apply
+the region gate. See `references/shared/openai-on-bedrock.md`.
 
 **Cross-family rows** — for sources with no Bedrock equivalent:
 

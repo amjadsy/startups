@@ -14,7 +14,8 @@ sub-second cold starts.
 
 ## Hard limits (verify via MCP — volatile)
 
-- Session cap: 8h (max 28,800s) — same as AgentCore; NOT longer
+- Session cap: 8h (max 28,800s) — same as AgentCore microVMs; AgentCore's
+  Instances compute type goes to 14 days, MicroVMs has no equivalent
 - Max compute: up to 16 vCPU / 32 GB
 - Launch rate: RunMicrovm 5 TPS, NOT adjustable (hard scaling weakness)
 - Account memory cap: ~1,024 GB in select regions
@@ -40,4 +41,4 @@ launch cap is the decisive weakness for high-volume platforms.
 
 ## Serving & security notes
 
-Entry: ARM64 handler packaging + lifecycle hooks (/ready, /launch, /resume, /suspend, /terminate); event-source wiring as needed. IAM: execution role with `bedrock:InvokeModel` (model-bearing units only — a model-less unit omits it) + service-specific permissions. Networking: per-MicroVM URL over TLS; public service endpoints; VPC endpoints only if policy demands.
+Entry: ARM64 handler packaging + lifecycle hooks (/ready, /launch, /resume, /suspend, /terminate); event-source wiring as needed. IAM: execution role with `bedrock:InvokeModel` (model-bearing units only — a model-less unit omits it) + service-specific permissions. Networking: per-MicroVM URL over TLS; public service endpoints OR private connectivity via AWS PrivateLink VPC Endpoints (for MicroVM control-plane API calls and per-MicroVM HTTP endpoint connections), available in all regions where Lambda MicroVMs is available.

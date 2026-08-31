@@ -66,19 +66,19 @@ STATIC_FALLBACK = {
     # The GPT-5.6 family also has a LONG-CONTEXT (1M) tier at 2.0x input / 1.5x
     # output per option, NOT represented here — a >272K workload priced from this
     # table is understated. GPT-5.5 and GPT-5.4: mantle-only, no CRIS, no 1M tier.
-    "openai.gpt-5.6-sol":                           {"input_per_1k_usd": 0.0055, "output_per_1k_usd": 0.033},
+    "openai.gpt-5.6-sol":                           {"input_per_1k_usd": 0.0044, "output_per_1k_usd": 0.022},
     "openai.gpt-5.6-terra":                         {"input_per_1k_usd": 0.0022, "output_per_1k_usd": 0.0132},
     "openai.gpt-5.6-luna":                          {"input_per_1k_usd": 0.00022, "output_per_1k_usd": 0.00132},
     "openai.gpt-5.5":                               {"input_per_1k_usd": 0.0055, "output_per_1k_usd": 0.033},
     "openai.gpt-5.4":                               {"input_per_1k_usd": 0.00275, "output_per_1k_usd": 0.0165},
     # GPT-5.6 CRIS profile ids (bedrock-runtime). Geo = data-residency tier
     # (same as in-region); Global = standard-price parity.
-    "us.openai.gpt-5.6-sol":                        {"input_per_1k_usd": 0.0055, "output_per_1k_usd": 0.033},
+    "us.openai.gpt-5.6-sol":                        {"input_per_1k_usd": 0.0044, "output_per_1k_usd": 0.022},
     "us.openai.gpt-5.6-terra":                      {"input_per_1k_usd": 0.0022, "output_per_1k_usd": 0.0132},
     "us.openai.gpt-5.6-luna":                       {"input_per_1k_usd": 0.00022, "output_per_1k_usd": 0.00132},
     "in.openai.gpt-5.6-terra":                      {"input_per_1k_usd": 0.0022, "output_per_1k_usd": 0.0132},
     "in.openai.gpt-5.6-luna":                       {"input_per_1k_usd": 0.00022, "output_per_1k_usd": 0.00132},
-    "global.openai.gpt-5.6-sol":                    {"input_per_1k_usd": 0.005, "output_per_1k_usd": 0.030},
+    "global.openai.gpt-5.6-sol":                    {"input_per_1k_usd": 0.004, "output_per_1k_usd": 0.020},
     "global.openai.gpt-5.6-terra":                  {"input_per_1k_usd": 0.002, "output_per_1k_usd": 0.012},
     "global.openai.gpt-5.6-luna":                   {"input_per_1k_usd": 0.0002, "output_per_1k_usd": 0.0012},
 }

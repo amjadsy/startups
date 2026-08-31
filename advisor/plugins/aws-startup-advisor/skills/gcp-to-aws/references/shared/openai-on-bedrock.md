@@ -114,13 +114,15 @@ request for multi-turn and tool-calling flows.
 
 **The mantle in-region matrix** (the only reach for GPT-5.5 / GPT-5.4, and the in-region option for GPT-5.6):
 
-| Model         | us-east-1 | us-east-2 | us-west-2 | us-gov-west-1 |
-| ------------- | --------- | --------- | --------- | ------------- |
-| GPT-5.6 Sol   | yes       | yes       | —         | —             |
-| GPT-5.6 Terra | yes       | yes       | yes       | —             |
-| GPT-5.6 Luna  | yes       | yes       | yes       | —             |
-| GPT-5.5       | yes       | yes       | —         | —             |
-| GPT-5.4       | yes       | yes       | yes       | yes           |
+| Model         | us-east-1 | us-east-2 | us-west-2 | us-gov-west-1 | us-gov-east-1 |
+| ------------- | --------- | --------- | --------- | ------------- | ------------- |
+| GPT-5.6 Sol   | yes       | yes       | —         | —             | —             |
+| GPT-5.6 Terra | yes       | yes       | yes       | yes           | yes           |
+| GPT-5.6 Luna  | yes       | yes       | yes       | yes           | yes           |
+| GPT-5.5       | yes       | yes       | —         | —             | —             |
+| GPT-5.4       | yes       | yes       | yes       | yes           | —             |
+
+Terra and Luna reached AWS GovCloud (US-West, US-East) in August 2026 — newer than the rest of this matrix.
 
 **GPT-5.6 additionally reaches most commercial regions via `bedrock-runtime` CRIS** (Geo `us.` / `in.`, Global
 `global.` inference profiles; the Sol card's runtime footprint spans 30+ regions). So a region outside the mantle
@@ -132,8 +134,10 @@ Verify current footprints per model card / `get_regional_availability` — the C
 
 ## Pricing
 
-Read off the model cards, 2026-08-21. All rates per 1M tokens, Standard tier (Priority and Flex are NOT supported
-for these models). **Pricing now has an inference-option dimension:**
+Read off the model cards, 2026-08-31. All rates per 1M tokens, Standard tier (Priority and Flex are NOT supported
+for these models). Sol rates reflect the Aug 21, 2026 reduction (−20% input / −33% output vs launch rates), which
+the AWS What's New announcement lists as promotional through at least Nov 21, 2026. **Pricing now has an
+inference-option dimension:**
 
 - **In-Region and Geo CRIS: 1.10x OpenAI's standard list price** (parity with OpenAI's _data residency_ tier).
 - **Global CRIS: OpenAI's standard list price** — cost parity, available for GPT-5.6 only, and only when the
@@ -147,7 +151,7 @@ Never state either number without stating the inference option it belongs to.
 
 | Model | In-Region / Geo (in · out) | Global CRIS (in · out) | Cache write / read (In-Region) |
 | ----- | -------------------------- | ---------------------- | ------------------------------ |
-| Sol   | 5.50 · 33.00               | 5.00 · 30.00           | 6.875 / 0.55                   |
+| Sol   | 4.40 · 22.00               | 4.00 · 20.00           | 5.50 / 0.44                    |
 | Terra | 2.20 · 13.20               | 2.00 · 12.00           | 2.75 / 0.22                    |
 | Luna  | 0.22 · 1.32                | 0.20 · 1.20            | 0.275 / 0.022                  |
 
@@ -155,7 +159,7 @@ Never state either number without stating the inference option it belongs to.
 
 | Model | In-Region / Geo (in · out) | Global CRIS (in · out) |
 | ----- | -------------------------- | ---------------------- |
-| Sol   | 11.00 · 49.50              | 10.00 · 45.00          |
+| Sol   | 8.80 · 33.00               | 8.00 · 30.00           |
 | Terra | 4.40 · 19.80               | 4.00 · 18.00           |
 | Luna  | 0.44 · 1.98                | 0.40 · 1.80            |
 

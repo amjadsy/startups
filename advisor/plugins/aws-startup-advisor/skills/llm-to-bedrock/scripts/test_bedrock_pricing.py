@@ -168,7 +168,7 @@ def test_gpt_rates_by_inference_option():
     # data-residency tier); Global CRIS (global., GPT-5.6 only) is exactly the
     # standard price — cost parity. A future edit that flattens either direction
     # (all-standard, as shipped once, or all-premium) fails here.
-    standard = {"gpt-5.6-sol": (0.005, 0.030),
+    standard = {"gpt-5.6-sol": (0.004, 0.020),  # Aug 21, 2026 cut; promo >= Nov 21, 2026
                 "gpt-5.6-terra": (0.002, 0.012),
                 "gpt-5.6-luna": (0.0002, 0.0012),
                 "gpt-5.5": (0.005, 0.030),
