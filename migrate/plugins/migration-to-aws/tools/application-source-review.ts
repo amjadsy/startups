@@ -1,11 +1,24 @@
-// application-source-review.ts — production contract checks for a planned
-// read-only Heroku application-source review.
+// application-source-review.ts — production validation for a planned read-only
+// Heroku application-source review.
 //
-// Tests import this zero-dependency implementation directly so contract behavior is
-// established before any migration phase invokes it.
+// Tests import this zero-dependency implementation directly so the contract,
+// filesystem, security, and fail-closed behavior are established before any
+// migration phase invokes it.
 //
-// Later changes add source-path checks, fail-closed retention, command-line
-// publication, and workflow activation.
+// Later changes add command-line publication and workflow activation.
+
+import {
+  lstatSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, relative, resolve, sep } from "node:path";
+import { randomUUID } from "node:crypto";
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type JsonObject = { [key: string]: Json };
@@ -306,4 +319,435 @@ export function validateSemantics(reviewRequest: JsonObject, answer: JsonObject)
     if (new Set(valuesToCheck).size !== valuesToCheck.length) errors.push(`duplicate ${label} id`);
   }
   return errors;
+}
+
+function validateRuntimeSupport(reviewRequest: JsonObject, answer: JsonObject): string[] {
+  const requested = reviewRequest.requested_questions as string[];
+  if (!requested.includes("runtime_framework")) return [];
+
+  const raw = (answer.findings as Json[]).find(
+    (finding) => object(finding).question === "runtime_framework",
+  );
+  if (!raw) return ["runtime support could not be established"];
+
+  const finding = object(raw);
+  if (finding.status !== "PRESENT" || !Array.isArray(finding.value)) {
+    return ["runtime support could not be established"];
+  }
+
+  const unsupported = finding.value
+    .map((record) => String(object(record).runtime).trim().toLowerCase())
+    .filter((runtime) => !SUPPORTED_RUNTIME_NAMES.has(runtime));
+  return unsupported.length === 0
+    ? []
+    : [`unsupported runtime: ${[...new Set(unsupported)].join(", ")}`];
+}
+
+// --- disallowed-content scanning ----------------------------------------------
+// The reviewer records configuration NAMES, never values. It also never emits a
+// target decision, architecture, sizing, or cost. These high-confidence patterns
+// catch a submission that leaked a literal credential or a recommendation.
+
+const CREDENTIAL_PATTERNS: RegExp[] = [
+  /\bAKIA[0-9A-Z]{16}\b/, // AWS access key id
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/, // PEM private key
+  /\bxox[baprs]-[0-9A-Za-z-]{10,}\b/, // Slack token
+  /\bgh[pousr]_[0-9A-Za-z]{20,}\b/, // GitHub token
+  /\bBearer\s+[A-Za-z0-9._~+/-]{12,}=*\b/i, // bearer token
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/, // JWT
+  /\b[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/i, // URI userinfo
+  /\b(?:password|passwd|secret|token|api[_-]?key|access[_-]?key)\s*[:=]\s*["']?[^\s"']{8,}/i, // literal assignment
+  /--?(?:password|passwd|secret|token|api[_-]?key|access[_-]?key)(?:=|\s+)["']?[^\s"']{8,}/i, // CLI literal
+];
+
+const TARGET_PATTERNS: RegExp[] = [
+  /\b(?:target|destination|deploy(?:ment)?|migrat(?:e|ion))\b.{0,80}\b(?:elastic beanstalk|fargate|amazon rds\b|amazon aurora|elasticache|amazon eks|amazon msk|app runner)\b/i,
+  /\b(?:recommend|recommends|recommended)\s+(?:using|use|deploying|deploy|moving|move|migrating|migrate|to|on)\b/i,
+  /\b(?:recommended|proposed)\s+architecture\b/i,
+  /(?:\$\s?\d|\bmonthly cost\b|\bUSD\b|\bper month\b)/i,
+];
+
+function walkStrings(value: Json, visit: (text: string) => void): void {
+  const pending: Json[] = [value];
+  while (pending.length > 0) {
+    const current = pending.pop() as Json;
+    if (typeof current === "string") visit(current);
+    else if (Array.isArray(current)) pending.push(...current);
+    else if (current !== null && typeof current === "object") pending.push(...Object.values(current));
+  }
+}
+
+function scanCredentialContent(value: Json): string[] {
+  const reasons: string[] = [];
+  walkStrings(value, (text) => {
+    for (const pattern of CREDENTIAL_PATTERNS) {
+      if (pattern.test(text)) reasons.push(`high-confidence credential in output: ${pattern.source}`);
+    }
+  });
+  return reasons;
+}
+
+/** Returns the reasons a submission's string values are disallowed (empty when clean). */
+export function scanDisallowedContent(answer: JsonObject): string[] {
+  const content = answer.findings ?? null;
+  const reasons = scanCredentialContent(content);
+  walkStrings(content, (text) => {
+    for (const pattern of TARGET_PATTERNS) {
+      if (pattern.test(text)) reasons.push(`target/architecture/cost content in output: ${pattern.source}`);
+    }
+  });
+  return reasons;
+}
+
+/** Retained output must be at most 256 KiB per application. */
+export function retainedBytes(answer: JsonObject): number {
+  return new TextEncoder().encode(JSON.stringify(answer)).length;
+}
+
+// --- filesystem containment + budgets -----------------------------------------
+
+/** True when `candidateAbs` resolves (through symlinks) to inside `workspaceAbs`. */
+export function isContainedPath(workspaceAbs: string, candidateAbs: string): boolean {
+  try {
+    const workspaceReal = realpathSync(workspaceAbs);
+    const candidateReal = realpathSync(candidateAbs);
+    return candidateReal === workspaceReal || candidateReal.startsWith(workspaceReal + sep);
+  } catch {
+    return false;
+  }
+}
+
+function pathTraversesSymlink(workspaceAbs: string, candidateAbs: string): boolean {
+  const lexical = relative(resolve(workspaceAbs), resolve(candidateAbs));
+  if (lexical === "" || lexical.startsWith(`..${sep}`) || lexical === "..") return false;
+  let current = resolve(workspaceAbs);
+  for (const segment of lexical.split(sep)) {
+    current = resolve(current, segment);
+    try {
+      if (lstatSync(current).isSymbolicLink()) return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+export interface RootMeasurement {
+  files: number;
+  totalBytes: number;
+  maxFileBytes: number;
+  unreadableEntries: number;
+  withinLimits: boolean;
+}
+
+/** Walk a source root counting regular files and bytes; never follows symlinked dirs. */
+export function measureSourceRoot(rootAbs: string): RootMeasurement {
+  let files = 0;
+  let totalBytes = 0;
+  let maxFileBytes = 0;
+  let unreadableEntries = 0;
+  const stack = [rootAbs];
+  while (stack.length > 0) {
+    const dir = stack.pop() as string;
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      unreadableEntries += 1;
+      continue;
+    }
+    for (const entry of entries) {
+      if ([".git", ".migration", "node_modules", ".venv"].includes(entry)) continue;
+      const child = resolve(dir, entry);
+      let info;
+      try {
+        info = lstatSync(child);
+      } catch {
+        unreadableEntries += 1;
+        continue;
+      }
+      if (info.isSymbolicLink()) {
+        continue; // never follow or count symlinked source entries
+      }
+      if (info.isDirectory()) {
+        if (dir === rootAbs && entry === ".git") continue;
+        stack.push(child);
+      } else if (info.isFile()) {
+        files += 1;
+        totalBytes += info.size;
+        if (info.size > maxFileBytes) maxFileBytes = info.size;
+        if (
+          files > LIMITS.maxSourceFiles
+          || totalBytes > LIMITS.maxTotalBytes
+          || maxFileBytes > LIMITS.maxFileBytes
+        ) {
+          return { files, totalBytes, maxFileBytes, unreadableEntries, withinLimits: false };
+        }
+      }
+    }
+  }
+  const withinLimits = files <= LIMITS.maxSourceFiles
+    && totalBytes <= LIMITS.maxTotalBytes
+    && maxFileBytes <= LIMITS.maxFileBytes;
+  return { files, totalBytes, maxFileBytes, unreadableEntries, withinLimits };
+}
+
+function citationResolves(roots: string[], workspaceAbs: string, source: JsonObject): boolean {
+  const relPath = source.path;
+  if (typeof relPath !== "string") return false;
+  if (relPath.split("/").some((segment) => [".git", ".migration", "node_modules", ".venv"].includes(segment))) {
+    return false;
+  }
+  const candidate = resolve(workspaceAbs, relPath);
+  if (!isContainedPath(workspaceAbs, candidate)) return false;
+  if (!roots.some((root) => isContainedPath(root, candidate))) return false;
+  if (pathTraversesSymlink(workspaceAbs, candidate)) return false;
+  let info;
+  try {
+    info = lstatSync(candidate);
+  } catch {
+    return false;
+  }
+  if (!info.isFile() || info.isSymbolicLink()) return false;
+  const start = source.line_start;
+  const end = source.line_end;
+  if (typeof start === "number" || typeof end === "number") {
+    const text = readFileSync(candidate, "utf8");
+    const newlineCount = text.match(/\r\n|\r|\n/gu)?.length ?? 0;
+    const lineCount = text.length === 0
+      ? 0
+      : newlineCount + (/(\r\n|\r|\n)$/u.test(text) ? 0 : 1);
+    if (typeof start === "number" && start > lineCount) return false;
+    if (typeof end === "number" && end > lineCount) return false;
+  }
+  return true;
+}
+
+/** Validate source roots before dispatching a reviewer. */
+export function validateSourceRoots(workspaceAbs: string, roots: string[]): string[] {
+  const reasons: string[] = [];
+  if (roots.length !== 1) return ["exactly one source root is required per application"];
+  for (const root of roots) {
+    if (!isContainedPath(workspaceAbs, root)) {
+      reasons.push(`source root escapes workspace: ${root}`);
+      continue;
+    }
+    if (lstatSync(root).isSymbolicLink()) {
+      reasons.push(`source root is a symlink: ${root}`);
+      continue;
+    }
+    const measurement = measureSourceRoot(root);
+    if (measurement.unreadableEntries > 0) reasons.push(`source root contains unreadable entries: ${root}`);
+    else if (measurement.files === 0) reasons.push(`source root contains no readable files: ${root}`);
+    else if (!measurement.withinLimits) reasons.push(`source root exceeds file/byte budget: ${root}`);
+  }
+  return reasons;
+}
+
+// --- deterministic fail-closed replacement ------------------------------------
+
+const VALIDATION_UNKNOWN_DETAIL = "Source review could not be validated.";
+const UNKNOWN_REASONS: Record<string, string> = {
+  missing_source: "Application source was not available for review.",
+  review_interrupted: "Application source review was interrupted.",
+  review_unavailable: "Application source review was unavailable.",
+  review_over_budget: "Application source review exceeded an execution limit.",
+};
+const ALLOWED_UNKNOWN_DETAILS = new Set([VALIDATION_UNKNOWN_DETAIL, ...Object.values(UNKNOWN_REASONS)]);
+
+/** One deterministic UNKNOWN finding per requested question — the fail-closed output. */
+export function unknownForRequest(requestedQuestions: readonly string[], detail: string): JsonObject {
+  return {
+    findings: requestedQuestions.map((question) => ({
+      question,
+      status: "UNKNOWN",
+      value: null,
+      sources: [],
+      limitations: [{ kind: "OTHER", detail }],
+    })),
+  };
+}
+
+function jsonObject(value: Json): JsonObject | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function hasExactKeys(value: JsonObject, keys: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  return actual.length === keys.length && actual.every((key, index) => key === [...keys].sort()[index]);
+}
+
+function validRelativeRoot(value: string): boolean {
+  if (value === ".") return true;
+  if (value.length === 0 || value.length > 500 || value.startsWith("/") || /^[A-Za-z]:/u.test(value)) return false;
+  if (value.includes("\\") || value.includes("//")) return false;
+  return value.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
+}
+
+function validateRequest(schema: JsonObject, request: JsonObject, path: string): string[] {
+  const errors = validate(schema, request, schema, path);
+  if (errors.length > 0) return errors;
+
+  const context = jsonObject(request.context);
+  const names = context?.configuration_names;
+  if (
+    !Array.isArray(names)
+    || names.some((name) => typeof name !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name))
+  ) {
+    errors.push(`${path}: configuration_names must contain names only`);
+  }
+  errors.push(...scanCredentialContent(request).map((error) => `${path}: ${error}`));
+  return errors;
+}
+
+/**
+ * Validate the final wrapper before it becomes the canonical artifact. This repeats
+ * retained-submission validation so the controller cannot change accepted findings.
+ */
+export function validateReviewArtifact(
+  schema: JsonObject,
+  artifact: JsonObject,
+  workspaceRoot: string,
+  expectedRequests: readonly JsonObject[],
+): string[] {
+  const errors: string[] = [];
+  if (!hasExactKeys(artifact, ["reviews"]) || !Array.isArray(artifact.reviews)) {
+    return ["artifact must contain only a reviews array"];
+  }
+  if (artifact.reviews.length !== expectedRequests.length) {
+    errors.push(`artifact has ${artifact.reviews.length} reviews; expected ${expectedRequests.length}`);
+  }
+
+  const appIds = new Set<string>();
+  for (const [index, raw] of artifact.reviews.entries()) {
+    const entry = jsonObject(raw);
+    const at = `reviews[${index}]`;
+    if (!entry || !hasExactKeys(entry, ["findings", "limitations", "request", "source_root", "status"])) {
+      errors.push(`${at}: invalid entry shape`);
+      continue;
+    }
+    const request = jsonObject(entry.request);
+    const findings = jsonObject(entry.findings);
+    if (!request || !findings) {
+      errors.push(`${at}: request and findings must be objects`);
+      continue;
+    }
+    const requestErrors = validateRequest(schema, request, `${at}.request`);
+    const findingErrors = validate(schema, findings, schema, `${at}.findings`);
+    errors.push(...requestErrors, ...findingErrors);
+    if (requestErrors.length > 0 || findingErrors.length > 0) continue;
+    errors.push(...validateSemantics(request, findings).map((error) => `${at}: ${error}`));
+
+    const application = jsonObject(request.application);
+    const appId = application?.app_id;
+    if (typeof appId !== "string" || appIds.has(appId)) errors.push(`${at}: duplicate or missing app_id`);
+    else appIds.add(appId);
+    const expected = expectedRequests[index];
+    if (!expected || !same(request, expected)) {
+      errors.push(`${at}: request content or inventory order does not match`);
+    }
+
+    const limitations = Array.isArray(entry.limitations) ? entry.limitations : [];
+    if (
+      !Array.isArray(entry.limitations)
+      || limitations.some((item) => typeof item !== "string" || item.length === 0 || item.length > 500)
+    ) errors.push(`${at}: limitations must be concise strings`);
+    errors.push(...scanDisallowedContent({ findings: limitations }).map((error) => `${at}: ${error}`));
+
+    const sourceRoot = entry.source_root;
+    if (sourceRoot !== null && (typeof sourceRoot !== "string" || !validRelativeRoot(sourceRoot))) {
+      errors.push(`${at}: source_root must be workspace-relative or null`);
+    }
+
+    if (entry.status === "RETAINED") {
+      if (typeof sourceRoot !== "string") errors.push(`${at}: RETAINED requires a source_root`);
+      else {
+        const result = evaluateSubmission({
+          schema,
+          request,
+          submission: findings,
+          workspaceRoot,
+          roots: [resolve(workspaceRoot, sourceRoot)],
+        });
+        errors.push(...result.reasons.map((reason) => `${at}: ${reason}`));
+      }
+      if (limitations.length !== 0) errors.push(`${at}: RETAINED cannot have limitations`);
+    } else if (entry.status === "UNKNOWN") {
+      if (limitations.length === 0) errors.push(`${at}: UNKNOWN needs a limitation`);
+      const requested = request.requested_questions as string[];
+      const findingList = findings.findings as Json[];
+      const first = findingList.length > 0 ? jsonObject(findingList[0]) : null;
+      const firstLimitation = first && Array.isArray(first.limitations)
+        ? jsonObject(first.limitations[0] as Json)
+        : null;
+      const detail = firstLimitation?.detail;
+      if (
+        typeof detail !== "string"
+        || !ALLOWED_UNKNOWN_DETAILS.has(detail)
+        || !same(findings, unknownForRequest(requested, detail))
+      ) errors.push(`${at}: UNKNOWN findings must be a canonical fail-closed replacement`);
+      if (retainedBytes(findings) > LIMITS.maxRetainedBytes) errors.push(`${at}: findings exceed retained budget`);
+      errors.push(...scanDisallowedContent(findings).map((error) => `${at}: ${error}`));
+    } else {
+      errors.push(`${at}: status must be RETAINED or UNKNOWN`);
+    }
+  }
+  return errors;
+}
+
+export interface SubmissionContext {
+  schema: JsonObject;
+  request: JsonObject;
+  submission: JsonObject;
+  roots: string[];
+  workspaceRoot: string;
+}
+
+export interface SubmissionResult {
+  retained: boolean;
+  findings: JsonObject;
+  reasons: string[];
+}
+
+/**
+ * Validate a COMPLETE reviewer submission for one application and return either the
+ * retained findings (when every check passes) or one deterministic UNKNOWN finding
+ * per requested question (fail closed). No partial acceptance.
+ */
+export function evaluateSubmission(ctx: SubmissionContext): SubmissionResult {
+  const reasons: string[] = [];
+  reasons.push(...validateRequest(ctx.schema, ctx.request, "request").map((error) => `request ${error}`));
+  reasons.push(...validate(ctx.schema, ctx.submission, ctx.schema, "findings").map((error) => `findings ${error}`));
+  if (reasons.length === 0) {
+    reasons.push(...validateSemantics(ctx.request, ctx.submission));
+    reasons.push(...validateRuntimeSupport(ctx.request, ctx.submission));
+  }
+  reasons.push(...scanDisallowedContent(ctx.submission));
+
+  const bytes = retainedBytes(ctx.submission);
+  if (bytes > LIMITS.maxRetainedBytes) reasons.push(`retained output ${bytes} bytes exceeds ${LIMITS.maxRetainedBytes}`);
+
+  reasons.push(...validateSourceRoots(ctx.workspaceRoot, ctx.roots));
+
+  if (reasons.length === 0) {
+    for (const raw of ctx.submission.findings as Json[]) {
+      const finding = object(raw);
+      for (const source of (finding.sources ?? []) as JsonObject[]) {
+        if (!citationResolves(ctx.roots, ctx.workspaceRoot, source)) {
+          reasons.push(`${String(finding.question)}: cited path does not resolve within workspace`);
+        }
+      }
+    }
+  }
+
+  if (reasons.length === 0) return { retained: true, findings: ctx.submission, reasons: [] };
+  const rawRequested = ctx.request.requested_questions;
+  const requested = Array.isArray(rawRequested)
+    ? rawRequested.filter((question): question is string => typeof question === "string")
+    : [];
+  return {
+    retained: false,
+    findings: unknownForRequest(requested, VALIDATION_UNKNOWN_DETAIL),
+    reasons,
+  };
 }

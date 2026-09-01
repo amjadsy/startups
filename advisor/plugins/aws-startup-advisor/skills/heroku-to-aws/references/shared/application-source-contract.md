@@ -44,5 +44,8 @@ relationship IDs make references checkable; setting names never carry values.
 | `addon_usage`                 | `inventory_addon_id`, `component_id`, `setting_name`, `usage`, `roles`                                                                                                                     | Classify retained/external, customer-owned follow-up, blocking, or unknown add-on use only.  |
 | `webhooks`                    | `component_id`, `process_id`, `listener_id`, `path`, `methods`, `provider_reference`, `verification_mechanism`, `verification_setting_name`, `required_headers`                            | Generate ingress/health-adjacent settings and identify webhook verification work.            |
 
-The contract checks lexical path safety. Runtime filesystem and symlink containment are added
-separately before the reviewer is wired into the migration workflow.
+The contract checks lexical path safety. The production validator rejects a symlinked root, skips
+internal symlinks and non-source state/dependency directories, and checks real paths plus file and
+byte limits. Before retaining findings, it also rejects symlinked or non-source-state citations and
+checks cited files, root containment, and cited line bounds. The validator remains dormant in this
+PR.
