@@ -1,11 +1,11 @@
-// application-source-review.ts — production validation for a planned read-only
-// Heroku application-source review.
+// application-source-review.ts — production validation and command-line tooling
+// for a planned read-only Heroku application-source review.
 //
 // Tests import this zero-dependency implementation directly so the contract,
-// filesystem, security, and fail-closed behavior are established before any
-// migration phase invokes it.
+// filesystem, security, fail-closed, and artifact-publication behavior are
+// established before any migration phase invokes it.
 //
-// Later changes add command-line publication and workflow activation.
+// A later change activates the workflow.
 
 import {
   lstatSync,
@@ -750,4 +750,356 @@ export function evaluateSubmission(ctx: SubmissionContext): SubmissionResult {
     findings: unknownForRequest(requested, VALIDATION_UNKNOWN_DETAIL),
     reasons,
   };
+}
+
+// --- CLI ---------------------------------------------------------------------
+
+const USAGE = [
+  "usage:",
+  "  node application-source-review.ts questions <selection-signals.json>",
+  "  node application-source-review.ts check-roots <workspace-root> <roots.json>",
+  "  node application-source-review.ts unknown <schema.json> <request.json> <reason>",
+  "  node application-source-review.ts validate <schema.json> <request.json> <submission.json> <workspace-root> <roots.json>",
+  "  node application-source-review.ts publish-artifact <schema.json> <inventory.json> <candidate.json> <workspace-root> <output.json>",
+].join("\n");
+
+export interface CliResult {
+  exitCode: number;
+  stdout?: string;
+  stderr?: string;
+}
+
+function readJsonObject(path: string, maxBytes = LIMITS.maxFileBytes): JsonObject {
+  if (statSync(path).size > maxBytes) throw new Error(`${path} exceeds ${maxBytes} bytes`);
+  return object(JSON.parse(readFileSync(path, "utf8")) as Json);
+}
+
+function removeIfPresent(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    // The transient or stale artifact may not exist.
+  }
+}
+
+function readAndDeleteJsonObject(path: string, maxBytes: number): JsonObject {
+  try {
+    return readJsonObject(path, maxBytes);
+  } finally {
+    removeIfPresent(path);
+  }
+}
+
+function expectedRequestsFromInventory(path: string): JsonObject[] {
+  const inventory = readJsonObject(path, LIMITS.maxArtifactBytes);
+  if (!Array.isArray(inventory.apps)) throw new Error("inventory must contain an apps array");
+  if (!Array.isArray(inventory.resources)) throw new Error("inventory must contain a resources array");
+  const apps = inventory.apps.map((raw, index) => {
+    const app = jsonObject(raw);
+    if (!app || typeof app.app_id !== "string" || typeof app.app_name !== "string") {
+      throw new Error(`inventory apps[${index}] has no app_id/app_name`);
+    }
+    return app;
+  });
+  const resources = inventory.resources.map((raw, index) => {
+    const resource = jsonObject(raw);
+    if (!resource || typeof resource.resource_type !== "string" || typeof resource.heroku_app !== "string") {
+      throw new Error(`inventory resources[${index}] has no resource_type/heroku_app`);
+    }
+    return resource;
+  });
+  const unique = (values: string[]) => [...new Set(values)];
+
+  return apps.map((app) => {
+    const appResources = resources.filter((resource) => resource.heroku_app === app.app_name);
+    const formations = appResources.filter((resource) => resource.resource_type === "formation");
+    const addons = appResources.filter((resource) => resource.resource_type === "addon");
+    const configuration = appResources.find((resource) => resource.resource_type === "config");
+    const processTypes = unique(formations.flatMap((resource) => {
+      const config = jsonObject(resource.config);
+      return typeof config?.process_type === "string" ? [config.process_type] : [];
+    }));
+    const configurationNames = unique((() => {
+      const config = configuration ? jsonObject(configuration.config) : null;
+      return Array.isArray(config?.config_var_keys)
+        ? config.config_var_keys.filter((name): name is string => typeof name === "string")
+        : [];
+    })());
+    const addonServices = addons.map((resource) => {
+      const config = jsonObject(resource.config);
+      return typeof config?.addon_service === "string" ? config.addon_service : "";
+    });
+    const addonIds = unique(addons.flatMap((resource) =>
+      typeof resource.resource_id === "string" ? [resource.resource_id] : []
+    ));
+    const postgresAttached = addonServices.includes("heroku-postgresql");
+    const redisAttached = addonServices.includes("heroku-redis");
+    const privateSpacePresent = app.space !== null && app.space !== undefined;
+    const selection: SelectionInput = {
+      hasInboundWebProcess: processTypes.includes("web"),
+      privateSpaceOrMultiApp: privateSpacePresent || apps.length > 1,
+      postgresAttached,
+      redisAttached,
+      ambiguousAddons: addonServices.some((service) =>
+        service !== "heroku-postgresql" && service !== "heroku-redis"
+      ),
+    };
+    return {
+      application: { app_id: app.app_id, app_name: app.app_name },
+      requested_questions: selectQuestions(selection),
+      context: {
+        process_types: processTypes,
+        configuration_names: configurationNames,
+        postgres_attachment_present: postgresAttached,
+        redis_attachment_present: redisAttached,
+        addon_ids: addonIds,
+        private_space_present: privateSpacePresent,
+        selected_estate_application_ids: apps
+          .filter((other) => other.app_id !== app.app_id)
+          .map((other) => other.app_id as string),
+      },
+    };
+  });
+}
+
+function safeTransientFile(workspaceRoot: string, path: string, expectedName: string): string | null {
+  const absolute = resolve(path);
+  if (
+    basename(absolute) !== expectedName
+    || !isContainedPath(workspaceRoot, absolute)
+    || pathTraversesSymlink(workspaceRoot, absolute)
+  ) return null;
+  try {
+    const info = lstatSync(absolute);
+    return info.isFile() && !info.isSymbolicLink() ? absolute : null;
+  } catch {
+    return null;
+  }
+}
+
+function readSelectionInput(path: string): SelectionInput {
+  const value = readJsonObject(path, 4096);
+  const keys = [
+    "ambiguousAddons",
+    "hasInboundWebProcess",
+    "postgresAttached",
+    "privateSpaceOrMultiApp",
+    "redisAttached",
+  ];
+  if (!hasExactKeys(value, keys) || keys.some((key) => typeof value[key] !== "boolean")) {
+    throw new Error("selection signals must contain exactly five boolean fields");
+  }
+  return value as unknown as SelectionInput;
+}
+
+function readRoots(path: string, workspaceRoot: string): { roots: string[]; reasons: string[] } {
+  if (statSync(path).size > 4096) throw new Error("roots file exceeds 4096 bytes");
+  const value = JSON.parse(readFileSync(path, "utf8")) as Json;
+  if (!Array.isArray(value) || value.some((root) => typeof root !== "string")) {
+    throw new Error("roots file must be a JSON string array");
+  }
+  const relativeRoots = value as string[];
+  const reasons = relativeRoots
+    .filter((root) => !validRelativeRoot(root))
+    .map((root) => `source root is not workspace-relative: ${root}`);
+  return {
+    roots: reasons.length === 0 ? relativeRoots.map((root) => resolve(workspaceRoot, root)) : [],
+    reasons,
+  };
+}
+
+function rejectedSubmission(request: JsonObject, reasons: string[]): CliResult {
+  return {
+    exitCode: 1,
+    stdout: JSON.stringify({
+      retained: false,
+      findings: unknownForRequest(
+        request.requested_questions as string[],
+        "Source review could not be validated.",
+      ),
+      reasons,
+    }, null, 2),
+  };
+}
+
+/** Execute one CLI command without exiting, so tests can exercise the runtime path. */
+export function runCli(argv: readonly string[]): CliResult {
+  const command = argv[0];
+  if (command === "questions") {
+    if (argv.length !== 2) return { exitCode: 2, stderr: USAGE };
+    try {
+      return { exitCode: 0, stdout: JSON.stringify(selectQuestions(readSelectionInput(argv[1])), null, 2) };
+    } catch (error) {
+      return { exitCode: 2, stderr: `question selection did not run: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  if (command === "check-roots") {
+    if (argv.length !== 3) return { exitCode: 2, stderr: USAGE };
+    try {
+      const [, workspaceRoot, rootsPath] = argv;
+      const workspaceAbs = resolve(workspaceRoot);
+      const rootInput = readRoots(rootsPath, workspaceAbs);
+      const reasons = [...rootInput.reasons, ...validateSourceRoots(workspaceAbs, rootInput.roots)];
+      return {
+        exitCode: reasons.length === 0 ? 0 : 1,
+        stdout: JSON.stringify({ valid: reasons.length === 0, reasons }, null, 2),
+      };
+    } catch (error) {
+      return { exitCode: 2, stderr: `source-root preflight did not run: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  if (command === "unknown") {
+    if (argv.length !== 4 || !Object.keys(UNKNOWN_REASONS).includes(argv[3])) return { exitCode: 2, stderr: USAGE };
+    try {
+      const [, schemaPath, requestPath, reason] = argv;
+      const schema = readJsonObject(schemaPath);
+      const request = readJsonObject(requestPath, LIMITS.maxRetainedBytes);
+      const requestErrors = validateRequest(schema, request, "request");
+      if (requestErrors.length > 0) {
+        return { exitCode: 2, stderr: `source-review request is invalid: ${requestErrors.join("; ")}` };
+      }
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify(
+          unknownForRequest(request.requested_questions as string[], UNKNOWN_REASONS[reason]),
+          null,
+          2,
+        ),
+      };
+    } catch (error) {
+      return { exitCode: 2, stderr: `UNKNOWN findings were not generated: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  if (command === "validate") {
+    if (argv.length !== 6) return { exitCode: 2, stderr: USAGE };
+    const workspaceAbs = resolve(argv[4]);
+    const submissionPath = safeTransientFile(
+      workspaceAbs,
+      argv[3],
+      ".source-review-candidate.json",
+    );
+    if (!submissionPath) return { exitCode: 2, stderr: "submission must be the contained source-review transient" };
+    try {
+      const [, schemaPath, requestPath, , workspaceRoot, rootsPath] = argv;
+      if (resolve(workspaceRoot) !== workspaceAbs) return { exitCode: 2, stderr: USAGE };
+      const schema = readJsonObject(schemaPath);
+      const request = readJsonObject(requestPath, LIMITS.maxRetainedBytes);
+      const requestErrors = validateRequest(schema, request, "request");
+      if (requestErrors.length > 0) {
+        removeIfPresent(submissionPath);
+        return { exitCode: 2, stderr: `source-review request is invalid: ${requestErrors.join("; ")}` };
+      }
+      const rootInput = readRoots(rootsPath, workspaceAbs);
+      let submission: JsonObject;
+      try {
+        submission = readAndDeleteJsonObject(submissionPath, LIMITS.maxRetainedBytes);
+      } catch (error) {
+        return rejectedSubmission(request, [
+          `reviewer submission could not be read: ${error instanceof Error ? error.message : String(error)}`,
+        ]);
+      }
+      let result: SubmissionResult;
+      try {
+        result = evaluateSubmission({
+          schema,
+          request,
+          submission,
+          workspaceRoot: workspaceAbs,
+          roots: rootInput.roots,
+        });
+      } catch (error) {
+        return rejectedSubmission(request, [
+          `reviewer submission could not be validated: ${error instanceof Error ? error.message : String(error)}`,
+        ]);
+      }
+      if (rootInput.reasons.length > 0) {
+        result.retained = false;
+        result.reasons.unshift(...rootInput.reasons);
+        result.findings = unknownForRequest(request.requested_questions as string[], VALIDATION_UNKNOWN_DETAIL);
+      }
+      return {
+        exitCode: result.retained ? 0 : 1,
+        stdout: JSON.stringify(result, null, 2),
+      };
+    } catch (error) {
+      removeIfPresent(submissionPath);
+      return {
+        exitCode: 2,
+        stderr: `source-review validator did not run: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  if (command === "publish-artifact") {
+    if (argv.length !== 6) return { exitCode: 2, stderr: USAGE };
+    let temporary = "";
+    let candidateAbs = "";
+    try {
+      const [, schemaPath, inventoryPath, candidatePath, workspaceRoot, outputPath] = argv;
+      const workspaceAbs = resolve(workspaceRoot);
+      const outputAbs = resolve(outputPath);
+      if (
+        basename(outputAbs) !== "application-source-review.json"
+        || !isContainedPath(workspaceAbs, dirname(outputAbs))
+        || pathTraversesSymlink(workspaceAbs, dirname(outputAbs))
+      ) {
+        return { exitCode: 2, stderr: "output must be the contained canonical source-review artifact" };
+      }
+      removeIfPresent(outputAbs);
+      const safeCandidate = safeTransientFile(
+        workspaceAbs,
+        candidatePath,
+        ".application-source-review.candidate.json",
+      );
+      if (!safeCandidate) return { exitCode: 2, stderr: "candidate must be the contained source-review transient" };
+      candidateAbs = safeCandidate;
+      const schema = readJsonObject(schemaPath);
+      const expectedRequests = expectedRequestsFromInventory(inventoryPath);
+      let artifact: JsonObject;
+      try {
+        artifact = readAndDeleteJsonObject(candidateAbs, LIMITS.maxArtifactBytes);
+      } catch (error) {
+        return {
+          exitCode: 1,
+          stdout: JSON.stringify({
+            published: false,
+            reasons: [`candidate artifact could not be read: ${error instanceof Error ? error.message : String(error)}`],
+          }, null, 2),
+        };
+      }
+      let reasons: string[];
+      try {
+        reasons = validateReviewArtifact(schema, artifact, workspaceAbs, expectedRequests);
+      } catch (error) {
+        reasons = [`candidate artifact could not be validated: ${error instanceof Error ? error.message : String(error)}`];
+      }
+      if (reasons.length > 0) {
+        return { exitCode: 1, stdout: JSON.stringify({ published: false, reasons }, null, 2) };
+      }
+      temporary = `${outputAbs}.tmp-${process.pid}-${randomUUID()}`;
+      writeFileSync(temporary, `${JSON.stringify(artifact, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+      renameSync(temporary, outputAbs);
+      return { exitCode: 0, stdout: JSON.stringify({ published: true }, null, 2) };
+    } catch (error) {
+      if (candidateAbs !== "") removeIfPresent(candidateAbs);
+      if (temporary !== "") {
+        removeIfPresent(temporary);
+      }
+      return { exitCode: 2, stderr: `artifact publisher did not run: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  return { exitCode: 2, stderr: USAGE };
+}
+
+// Run only when invoked directly, not when imported by tests.
+const invokedPath = process.argv[1] ?? "";
+if (invokedPath.endsWith("application-source-review.ts")) {
+  const result = runCli(process.argv.slice(2));
+  if (result.stdout) console.log(result.stdout);
+  if (result.stderr) console.error(result.stderr);
+  process.exit(result.exitCode);
 }

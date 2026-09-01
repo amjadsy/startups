@@ -47,5 +47,5 @@ relationship IDs make references checkable; setting names never carry values.
 The contract checks lexical path safety. The production validator rejects a symlinked root, skips
 internal symlinks and non-source state/dependency directories, and checks real paths plus file and
 byte limits. Before retaining findings, it also rejects symlinked or non-source-state citations and
-checks cited files, root containment, and cited line bounds. The validator remains dormant in this
-PR.
+checks cited files, root containment, and cited line bounds. The validator and its command-line
+artifact publisher remain dormant in this PR.

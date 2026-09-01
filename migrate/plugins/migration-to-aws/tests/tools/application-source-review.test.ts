@@ -29,6 +29,7 @@ import {
   QUESTIONS,
   type Question,
   retainedBytes,
+  runCli,
   scanDisallowedContent,
   selectQuestions,
   unknownForRequest,
@@ -156,6 +157,258 @@ describe('question selection from Heroku inventory', () => {
     }
     // ordering matches the canonical question list
     assert.deepEqual(selected, QUESTIONS.filter((q) => selected.includes(q)));
+  });
+});
+
+// --- runtime CLI --------------------------------------------------------------
+
+describe('runtime CLI', () => {
+  it('selects conditional questions through the shipped command path', () => {
+    const ws = makeWorkspace({
+      'signals.json': JSON.stringify({
+        hasInboundWebProcess: true,
+        privateSpaceOrMultiApp: false,
+        postgresAttached: true,
+        redisAttached: false,
+        ambiguousAddons: false,
+      }),
+    });
+    const result = runCli(['questions', resolve(ws, 'signals.json')]);
+    assert.equal(result.exitCode, 0);
+    const selected = JSON.parse(result.stdout as string) as string[];
+    assert.ok(selected.includes('health_routes'));
+    assert.ok(selected.includes('webhooks'));
+    assert.ok(selected.includes('postgresql_extensions'));
+    assert.equal(selected.includes('redis_usage'), false);
+  });
+
+  it('validates and fails closed through the shipped command path', () => {
+    const ws = makeWorkspace({
+      'package.json': '{\n  "name": "app"\n}\n',
+      'request.json': JSON.stringify(request(['runtime_framework'])),
+      '.source-review-candidate.json': JSON.stringify(findings([runtimeFramework('nodejs', NODE_SOURCES)])),
+      'roots.json': JSON.stringify(['.']),
+    });
+    const args = [
+      resolve(migrate, 'skills/heroku-to-aws/references/shared/application-source-contract.schema.json'),
+      resolve(ws, 'request.json'),
+    ];
+
+    const candidate = resolve(ws, '.source-review-candidate.json');
+    const valid = runCli(['validate', ...args, candidate, ws, resolve(ws, 'roots.json')]);
+    assert.equal(valid.exitCode, 0);
+    assert.equal(object(JSON.parse(valid.stdout as string) as Json).retained, true);
+
+    writeFileSync(candidate, JSON.stringify(findings([runtimeFramework('nodejs', [{ path: 'missing.json' }])])));
+    const invalid = runCli(['validate', ...args, candidate, ws, resolve(ws, 'roots.json')]);
+    assert.equal(invalid.exitCode, 1);
+    const result = object(JSON.parse(invalid.stdout as string) as Json);
+    assert.equal(result.retained, false);
+    assert.equal(object((object(result.findings).findings as Json[])[0]).status, 'UNKNOWN');
+
+    writeFileSync(candidate, '{');
+    const malformed = runCli(['validate', ...args, candidate, ws, resolve(ws, 'roots.json')]);
+    assert.equal(malformed.exitCode, 1);
+    assert.equal(
+      object((object(object(JSON.parse(malformed.stdout as string) as Json).findings).findings as Json[])[0]).status,
+      'UNKNOWN',
+    );
+    assert.equal(existsSync(candidate), false);
+
+    const deep = `${'['.repeat(12000)}null${']'.repeat(12000)}`;
+    writeFileSync(candidate, `{"findings":[],"extra":${deep}}`);
+    const pathological = runCli([
+      'validate',
+      ...args,
+      candidate,
+      ws,
+      resolve(ws, 'roots.json'),
+    ]);
+    assert.equal(pathological.exitCode, 1);
+    assert.equal(
+      object((object(object(JSON.parse(pathological.stdout as string) as Json).findings).findings as Json[])[0]).status,
+      'UNKNOWN',
+    );
+  });
+
+  it('distinguishes a validator setup error from a rejected submission', () => {
+    const ws = makeWorkspace({
+      '.source-review-candidate.json': '{}',
+      'package.json': '{"name":"keep-me"}\n',
+    });
+    const refused = runCli([
+      'validate',
+      'schema.json',
+      'request.json',
+      resolve(ws, 'package.json'),
+      ws,
+      'roots.json',
+    ]);
+    assert.equal(refused.exitCode, 2);
+    assert.equal(readFileSync(resolve(ws, 'package.json'), 'utf8'), '{"name":"keep-me"}\n');
+
+    const result = runCli([
+      'validate',
+      'missing-schema.json',
+      'request.json',
+      resolve(ws, '.source-review-candidate.json'),
+      ws,
+      'roots.json',
+    ]);
+    assert.equal(result.exitCode, 2);
+    assert.match(result.stderr as string, /validator did not run/);
+    assert.equal(existsSync(resolve(ws, '.source-review-candidate.json')), false);
+  });
+
+  it('checks source roots before review and resolves them from the workspace', () => {
+    const ws = makeWorkspace({
+      'apps/web/package.json': '{}\n',
+      'valid-roots.json': JSON.stringify(['apps/web']),
+      'invalid-roots.json': JSON.stringify(['../missing']),
+    });
+    const valid = runCli(['check-roots', ws, resolve(ws, 'valid-roots.json')]);
+    assert.equal(valid.exitCode, 0);
+
+    const invalid = runCli(['check-roots', ws, resolve(ws, 'invalid-roots.json')]);
+    assert.equal(invalid.exitCode, 1);
+    assert.match(invalid.stdout as string, /not workspace-relative/);
+  });
+
+  it('generates deterministic UNKNOWN findings for a valid request', () => {
+    const ws = makeWorkspace({ 'request.json': JSON.stringify(request(['runtime_framework'])) });
+    const result = runCli([
+      'unknown',
+      resolve(migrate, 'skills/heroku-to-aws/references/shared/application-source-contract.schema.json'),
+      resolve(ws, 'request.json'),
+      'missing_source',
+    ]);
+    assert.equal(result.exitCode, 0);
+    const answer = object(JSON.parse(result.stdout as string) as Json);
+    assert.equal(object((answer.findings as Json[])[0]).status, 'UNKNOWN');
+  });
+
+  it('publishes only a mechanically valid canonical wrapper', () => {
+    const candidate = publishableUnknown();
+    const ws = makeWorkspace({
+      'package.json': '{\n  "name": "app"\n}\n',
+      'inventory.json': JSON.stringify(inventory()),
+      '.application-source-review.candidate.json': JSON.stringify(candidate),
+    });
+    const output = resolve(ws, 'application-source-review.json');
+    const result = runCli([
+      'publish-artifact',
+      resolve(migrate, 'skills/heroku-to-aws/references/shared/application-source-contract.schema.json'),
+      resolve(ws, 'inventory.json'),
+      resolve(ws, '.application-source-review.candidate.json'),
+      ws,
+      output,
+    ]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(readFileSync(output, 'utf8')), candidate);
+    assert.equal(existsSync(resolve(ws, '.application-source-review.candidate.json')), false);
+
+    candidate.reviews[0].status = 'RETAINED';
+    writeFileSync(resolve(ws, '.application-source-review.candidate.json'), JSON.stringify(candidate));
+    writeFileSync(output, '{"stale":true}\n');
+    const invalid = runCli([
+      'publish-artifact',
+      resolve(migrate, 'skills/heroku-to-aws/references/shared/application-source-contract.schema.json'),
+      resolve(ws, 'inventory.json'),
+      resolve(ws, '.application-source-review.candidate.json'),
+      ws,
+      output,
+    ]);
+    assert.equal(invalid.exitCode, 1);
+    assert.equal(existsSync(output), false);
+    assert.equal(existsSync(resolve(ws, '.application-source-review.candidate.json')), false);
+
+    writeFileSync(output, '{"stale":true}\n');
+    const missingCandidate = runCli([
+      'publish-artifact',
+      resolve(migrate, 'skills/heroku-to-aws/references/shared/application-source-contract.schema.json'),
+      resolve(ws, 'inventory.json'),
+      resolve(ws, '.application-source-review.candidate.json'),
+      ws,
+      output,
+    ]);
+    assert.equal(missingCandidate.exitCode, 2);
+    assert.equal(existsSync(output), false);
+  });
+
+  it('binds publication to inventory order and replaces a stale output symlink', () => {
+    const retained = publishableUnknown();
+    const outside = makeWorkspace({ 'victim.json': '{"unchanged":true}\n' });
+    const ws = makeWorkspace({
+      'package.json': '{\n  "name": "app"\n}\n',
+      'inventory.json': JSON.stringify(inventory()),
+      '.application-source-review.candidate.json': JSON.stringify(retained),
+    });
+    const output = resolve(ws, 'application-source-review.json');
+    symlinkSync(resolve(outside, 'victim.json'), output);
+    const published = runCli([
+      'publish-artifact',
+      resolve(migrate, 'skills/heroku-to-aws/references/shared/application-source-contract.schema.json'),
+      resolve(ws, 'inventory.json'),
+      resolve(ws, '.application-source-review.candidate.json'),
+      ws,
+      output,
+    ]);
+    assert.equal(published.exitCode, 0);
+    assert.equal(lstatSync(output).isSymbolicLink(), false);
+    assert.equal(readFileSync(resolve(outside, 'victim.json'), 'utf8'), '{"unchanged":true}\n');
+
+    writeFileSync(resolve(ws, '.application-source-review.candidate.json'), JSON.stringify({ reviews: [] }));
+    const incomplete = runCli([
+      'publish-artifact',
+      resolve(migrate, 'skills/heroku-to-aws/references/shared/application-source-contract.schema.json'),
+      resolve(ws, 'inventory.json'),
+      resolve(ws, '.application-source-review.candidate.json'),
+      ws,
+      output,
+    ]);
+    assert.equal(incomplete.exitCode, 1);
+    assert.match(incomplete.stdout as string, /expected 1/);
+    assert.equal(existsSync(output), false);
+
+    const wrongRequest = publicationRequest();
+    wrongRequest.application = { app_id: 'app-other', app_name: 'other-app' };
+    writeFileSync(resolve(ws, '.application-source-review.candidate.json'), JSON.stringify({
+      reviews: [{
+        ...retained.reviews[0],
+        request: wrongRequest,
+      }],
+    }));
+    const wrongApp = runCli([
+      'publish-artifact',
+      resolve(migrate, 'skills/heroku-to-aws/references/shared/application-source-contract.schema.json'),
+      resolve(ws, 'inventory.json'),
+      resolve(ws, '.application-source-review.candidate.json'),
+      ws,
+      output,
+    ]);
+    assert.equal(wrongApp.exitCode, 1);
+    assert.match(wrongApp.stdout as string, /request content or inventory order does not match/);
+
+    const unknown = {
+      reviews: [{
+        source_root: null,
+        request: publicationRequest(),
+        status: 'UNKNOWN',
+        findings: unknownForRequest(ALWAYS_QUESTIONS, 'A made-up reason.'),
+        limitations: ['A made-up reason.'],
+      }],
+    };
+    writeFileSync(resolve(ws, '.application-source-review.candidate.json'), JSON.stringify(unknown));
+    const noncanonical = runCli([
+      'publish-artifact',
+      resolve(migrate, 'skills/heroku-to-aws/references/shared/application-source-contract.schema.json'),
+      resolve(ws, 'inventory.json'),
+      resolve(ws, '.application-source-review.candidate.json'),
+      ws,
+      output,
+    ]);
+    assert.equal(noncanonical.exitCode, 1);
+    assert.match(noncanonical.stdout as string, /canonical fail-closed replacement/);
   });
 });
 
@@ -427,6 +680,30 @@ describe('configuration names vs literal credentials', () => {
       limitations: [],
     }]);
     assert.ok(scanDisallowedContent(leaked).length > 0);
+  });
+
+  it('rejects a configuration value smuggled into a request name', () => {
+    const ws = makeWorkspace({
+      'package.json': '{}\n',
+      'request.json': JSON.stringify(
+        request(['runtime_framework'], context({ configuration_names: ['API_KEY=supersecret'] })),
+      ),
+      '.source-review-candidate.json': JSON.stringify(
+        findings([runtimeFramework('nodejs', [{ path: 'package.json' }])]),
+      ),
+      'roots.json': JSON.stringify(['.']),
+    });
+    const result = runCli([
+      'validate',
+      resolve(migrate, 'skills/heroku-to-aws/references/shared/application-source-contract.schema.json'),
+      resolve(ws, 'request.json'),
+      resolve(ws, '.source-review-candidate.json'),
+      ws,
+      resolve(ws, 'roots.json'),
+    ]);
+    assert.equal(result.exitCode, 2);
+    assert.match(result.stderr as string, /source-review request is invalid/);
+    assert.equal(existsSync(resolve(ws, '.source-review-candidate.json')), false);
   });
 
   it('allows source identifiers containing architecture or recommendation', () => {
