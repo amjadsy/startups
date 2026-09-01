@@ -4,6 +4,7 @@
   "current_phase": "estimate",
   "phases": {
     "discover": "completed",
+    "source_review": "completed",
     "clarify": "completed",
     "design": "completed",
     "estimate": "pending",

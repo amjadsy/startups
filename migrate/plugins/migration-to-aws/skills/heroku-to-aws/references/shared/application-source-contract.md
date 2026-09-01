@@ -1,7 +1,8 @@
 # Application-Source Contract
 
-`application-source-contract.schema.json` defines request and findings documents used by the
-production contract checker. The checker is not wired into a migration phase in this PR.
+`application-source-contract.schema.json` defines the request and findings documents used by the
+read-only `source_review` phase. Findings remain inert in this PR: no target or downstream phase
+reads them.
 
 Requests expose only selected question names, application identity, process/configuration names,
 attachment and Private Space presence, add-on IDs, and selected estate application IDs.
@@ -44,8 +45,7 @@ relationship IDs make references checkable; setting names never carry values.
 | `addon_usage`                 | `inventory_addon_id`, `component_id`, `setting_name`, `usage`, `roles`                                                                                                                     | Classify retained/external, customer-owned follow-up, blocking, or unknown add-on use only.  |
 | `webhooks`                    | `component_id`, `process_id`, `listener_id`, `path`, `methods`, `provider_reference`, `verification_mechanism`, `verification_setting_name`, `required_headers`                            | Generate ingress/health-adjacent settings and identify webhook verification work.            |
 
-The contract checks lexical path safety. The production validator rejects a symlinked root, skips
-internal symlinks and non-source state/dependency directories, and checks real paths plus file and
-byte limits. Before retaining findings, it also rejects symlinked or non-source-state citations and
-checks cited files, root containment, and cited line bounds. The validator and its command-line
-artifact publisher remain dormant in this PR.
+The schema checks lexical path safety. Before review, the source-review validator rejects a
+symlinked root, skips internal symlinks and non-source state/dependency directories, and checks real
+paths plus file and byte limits. Before retaining findings, it also rejects symlinked or
+non-source-state citations and checks cited files, root containment, and cited line bounds.

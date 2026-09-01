@@ -803,3 +803,99 @@ describe('path containment', () => {
     }
   });
 });
+
+// --- cross-plugin identity ----------------------------------------------------
+
+describe('cross-plugin identity', () => {
+  const mirrored = [
+    'tools/application-source-review.ts',
+    'agents/source-review-reader.md',
+    'skills/heroku-to-aws/references/phases/source_review/source_review.md',
+    'skills/heroku-to-aws/references/phases/source_review/source-review-scan.md',
+    'skills/heroku-to-aws/references/phases/source_review/source-review-assemble.md',
+  ];
+  for (const rel of mirrored) {
+    it(`ships identical ${rel} in both plugins`, () => {
+      assert.equal(readFileSync(resolve(migrate, rel), 'utf8'), readFileSync(resolve(advisor, rel), 'utf8'));
+    });
+  }
+});
+
+describe('read-only reviewer boundary', () => {
+  for (const plugin of [migrate, advisor]) {
+    it(`limits the reviewer tools and records classification boundaries (${plugin.includes('advisor') ? 'advisor' : 'migrate'})`, () => {
+      const reader = readFileSync(resolve(plugin, 'agents/source-review-reader.md'), 'utf8');
+      const frontmatter = reader.split('---', 3)[1];
+      assert.match(frontmatter, /^tools: Read, Grep, Glob$/m);
+      assert.doesNotMatch(frontmatter, /\b(?:Bash|Write|Edit)\b/);
+      assert.match(reader, /never run commands or a shell/i);
+      assert.match(reader, /Skip `\.git`, `\.migration`,[\s\S]*`node_modules`, and `\.venv`/);
+      assert.match(reader, /WebSocket heartbeats[\s\S]*NOT recurring jobs/);
+      assert.match(reader, /Do not substitute an undocumented framework default/);
+    });
+  }
+});
+
+// --- phase wiring + downstream isolation + fixtures ---------------------------
+
+function phaseFile(plugin: string, name: string): string {
+  return readFileSync(resolve(plugin, `skills/heroku-to-aws/references/phases/${name}`), 'utf8');
+}
+
+describe('phase wiring: discover -> source_review -> clarify', () => {
+  for (const plugin of [migrate, advisor]) {
+    it(`chains the new phase in ${plugin.includes('advisor') ? 'advisor' : 'migrate'}`, () => {
+      const discover = phaseFile(plugin, 'discover/discover.md');
+      const review = phaseFile(plugin, 'source_review/source_review.md');
+      const scan = phaseFile(plugin, 'source_review/source-review-scan.md');
+      const assemble = phaseFile(plugin, 'source_review/source-review-assemble.md');
+      const clarify = phaseFile(plugin, 'clarify/clarify.md');
+      assert.match(discover, /^_advances_to: source_review$/m);
+      assert.match(review, /^_phase: source_review$/m);
+      assert.match(review, /^_requires_phase: discover$/m);
+      assert.match(review, /^_advances_to: clarify$/m);
+      assert.match(review, /^ {2}- application-source-review\.json$/m);
+      assert.ok(scan.indexOf('check-roots') < scan.indexOf('dispatch the dedicated read-only'));
+      assert.match(assemble, /"reviews": \[/);
+      assert.match(assemble, /"status": "UNKNOWN"/);
+      assert.match(assemble, /publish-artifact/);
+      assert.match(scan, /hasInboundWebProcess[\s\S]*formation/);
+      const skill = readFileSync(resolve(plugin, 'skills/heroku-to-aws/SKILL.md'), 'utf8');
+      assert.match(skill, /Runs created before Source Review existed/);
+      assert.match(skill, /Discover is pending or in progress[\s\S]*preserve[\s\S]*current_phase: discover/);
+      assert.match(skill, /route to Source Review only after[\s\S]*Discover completes/);
+      assert.match(clarify, /^_requires_phase: source_review$/m);
+    });
+  }
+});
+
+describe('source_review findings are not consumed downstream', () => {
+  for (const plugin of [migrate, advisor]) {
+    for (const name of ['design/design.md', 'estimate/estimate.md', 'generate/generate.md', 'workshop/workshop.md']) {
+      it(`${name} does not read application-source-review.json (${plugin.includes('advisor') ? 'advisor' : 'migrate'})`, () => {
+        assert.doesNotMatch(phaseFile(plugin, name), /application-source-review/);
+      });
+    }
+  }
+});
+
+describe('downstream heroku fixtures record source_review completed', () => {
+  const seeds = [
+    'fixtures/heroku-live-capture/seed-estimate/.phase-status.json',
+    'fixtures/heroku-nonweb-scaling/seed/.phase-status.json',
+    'fixtures/heroku-nonweb-scaling/after-design/.phase-status.json',
+    'fixtures/heroku-workshop/seed/.phase-status.json',
+    'fixtures/heroku-workshop/after-arm64-reprice/.phase-status.json',
+  ];
+  for (const plugin of [migrate, advisor]) {
+    for (const seed of seeds) {
+      it(`${seed} (${plugin.includes('advisor') ? 'advisor' : 'migrate'})`, () => {
+        const status = JSON.parse(readFileSync(resolve(plugin, seed), 'utf8')) as JsonObject;
+        const phases = object(status.phases);
+        assert.equal(phases.discover, 'completed');
+        assert.equal(phases.source_review, 'completed');
+        assert.equal(phases.clarify, 'completed');
+      });
+    }
+  }
+});
