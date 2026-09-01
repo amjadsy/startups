@@ -1,11 +1,16 @@
-// application-source-review.ts — production validation and command-line tooling
-// for a planned read-only Heroku application-source review.
+// application-source-review.ts — production validation for the read-only Heroku
+// application-source review phase (PR3, `source_review`).
 //
-// Tests import this zero-dependency implementation directly so the contract,
-// filesystem, security, fail-closed, and artifact-publication behavior are
-// established before any migration phase invokes it.
+// This is the ONE validator the phase relies on and the ONE the tests import, so a
+// green test suite proves the checks the runtime performs. It is zero-dependency
+// (node:fs + node:path only) and runs under Node 24 native TS type-stripping, the
+// same as the frontmatter validator and fixtures-check.
 //
-// A later change activates the workflow.
+// It answers a single question for the controller-owned assembler: given a complete
+// reviewer submission for one application, is it valid enough to RETAIN, or must it
+// fail closed to one deterministic UNKNOWN finding per requested question? There is
+// NO partial acceptance — a submission is retained whole or replaced whole. Partial
+// acceptance, retries, and resume are out of scope (PR4).
 
 import {
   lstatSync,

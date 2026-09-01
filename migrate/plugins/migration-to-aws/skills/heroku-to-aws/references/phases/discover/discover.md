@@ -17,13 +17,13 @@ _assemble:
   _file: phases/discover/discover-assemble.md
 _produces:
   - heroku-resource-inventory.json
-_advances_to: clarify
+_advances_to: source_review
 _interactive: false
 _exec:
   _agent: rw
 _re_entry_guard:
-  _stale_if_completed: clarify
-  _stale_artifact: preferences.json
+  _stale_if_completed: source_review
+  _stale_artifact: application-source-review.json
   _on_reentry: stop_unless_confirmed
   _on_confirm: reset_downstream_to_pending
 _preconditions:
@@ -123,7 +123,7 @@ completion message from the inventory contents:
 - If Pipeline detected: "Detected N pipeline(s) (detect-only)."
 - If Cedar/Fir mixed: "Generation detection: N Cedar, M Fir, P unknown."
 
-Format: "Discover phase complete. [artifact summaries] Next required step: Phase 2 — Clarify. Load `references/phases/clarify/clarify.md` now. Do not load Design, Estimate, or Generate until Clarify completes and `.phase-status.json` marks `phases.clarify` as `completed`."
+Format: "Discover phase complete. [artifact summaries] Next required step: Source Review. Load `references/phases/source_review/source_review.md` now. Do not load Clarify, Design, Estimate, or Generate until Source Review completes and `.phase-status.json` marks `phases.source_review` as `completed`."
 
 ---
 

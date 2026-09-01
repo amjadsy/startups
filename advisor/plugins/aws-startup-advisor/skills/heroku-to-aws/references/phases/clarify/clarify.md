@@ -1,7 +1,7 @@
 ---
 _phase: clarify
 _title: "Clarify Requirements"
-_requires_phase: discover
+_requires_phase: source_review
 _input:
   - heroku-resource-inventory.json
 _fragments:
@@ -19,7 +19,7 @@ _re_entry_guard:
   _on_reentry: stop_unless_confirmed
   _on_confirm: reset_downstream_to_pending
 _preconditions:
-  - _check_phase_completed: discover
+  - _check_phase_completed: source_review
     _on_failure: _halt_and_inform
   - _check_single_active_phase: true
     _on_failure: _halt_and_inform
