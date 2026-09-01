@@ -68,13 +68,15 @@ Sibling skills, each with its own SKILL.md and (where applicable) `references/` 
 
 ### `llm-to-bedrock` — OpenAI/Gemini/Anthropic → Amazon Bedrock SDK rewrite
 
-- Executes a pure model/SDK migration: assess the codebase, rewrite call sites, evaluate output quality against Bedrock, and deliver a ready-to-merge git branch. Delegates its Assess phase to the `gcp-to-aws` skill.
+- Executes a pure model/SDK migration: assess the codebase, rewrite call sites, evaluate output quality against Bedrock, and deliver a ready-to-merge git branch. Delegates its Assess phase entirely to the `gcp-to-aws` skill via a cross-skill invocation — **requires `gcp-to-aws` installed alongside it**, with no standalone Assess fallback if it's missing.
 - Triggered by _"rewrite my OpenAI calls for Bedrock"_, _"migrate LangChain to Bedrock"_, etc.
+- If the user installed `llm-to-bedrock` on its own (single-skill `npx skills add`), also install `gcp-to-aws` before using it: `npx skills add https://github.com/awslabs/startups/tree/main/advisor/plugins/aws-startup-advisor --skill llm-to-bedrock --skill gcp-to-aws --agent <agent>`.
 
 ### `agent-advisor` — AI-agent runtime advisor + migration plan + POC
 
 - A DSL-driven skill that picks an AWS runtime for AI agents (AgentCore vs ECS/EKS/Lambda vs Lambda MicroVMs), can generate a full migration plan (reusing the `gcp-to-aws` engine in-skill), and optionally builds a deployable POC. Also handles Temporal workers.
 - Triggered by _"which runtime for my agent"_, _"AgentCore vs Lambda"_, _"deploy an AI agent on AWS"_, _"migrate Temporal workers to AWS"_, etc.
+- Runtime recommendations and design-backed POCs work with `agent-advisor` installed alone. The full migration-plan step additionally reads `gcp-to-aws`'s phase files directly — install `gcp-to-aws` alongside it for that step; without it, migration-plan degrades gracefully to `not_applicable` rather than failing.
 
 ### `tf-best-practices` — Terraform authoring guidance + policy gate
 
