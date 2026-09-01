@@ -1,6 +1,6 @@
 ---
 name: heroku-to-aws
-description: "Migrate workloads from Heroku to AWS. Triggers on: migrate from Heroku, Heroku to AWS, move off Heroku, migrate Heroku app, migrate Heroku Postgres to RDS, migrate Heroku Redis to ElastiCache, migrate Heroku Kafka to MSK, migrate dynos to Elastic Beanstalk, migrate dynos to Fargate, Heroku migration, move from Heroku to AWS, migrate Heroku Private Space, Heroku to Elastic Beanstalk, Heroku to ECS, Heroku to Fargate, leave Heroku, migrate off Heroku platform, what-if workshop, reprice Heroku migration, compare migration scenarios, workshop mode. Runs a 6-phase process: discover Heroku resources live via the authenticated Heroku CLI (read-only, consent-gated) and/or from Terraform files, Procfile/app.json, and optional billing exports, clarify migration requirements, design AWS architecture, estimate costs, generate migration artifacts, and collect optional feedback. After Estimate, an optional what-if workshop can reprice region/HA/compute/Graviton scenarios without re-discovery. Clarify must finish before Design, Estimate, or Generate. Uses a flat resource model (no clustering or dependency graphs) with deterministic mapping tables for core services (Dynos → Elastic Beanstalk by default, Postgres → RDS/Aurora, Redis → ElastiCache, Kafka → MSK) and a fast-path table for 13+ common add-ons. Cedar/Fir generation detection is detect-only in v1. Pipeline/Review Apps are detect-only. Do not use for: GCP or Azure migrations to AWS, AWS-to-Heroku reverse migration, general AWS architecture advice without migration intent, Heroku-to-Heroku refactoring, or multi-cloud deployments that do not involve migrating off Heroku."
+description: "Migrate workloads from Heroku to AWS. Triggers on: migrate from Heroku, Heroku to AWS, move off Heroku, migrate Heroku app, migrate Heroku Postgres to RDS, migrate Heroku Redis to ElastiCache, migrate Heroku Kafka to MSK, migrate dynos to Elastic Beanstalk, migrate dynos to Fargate, Heroku migration, move from Heroku to AWS, migrate Heroku Private Space, Heroku to Elastic Beanstalk, Heroku to ECS, Heroku to Fargate, leave Heroku, migrate off Heroku platform, what-if workshop, reprice Heroku migration, compare migration scenarios, workshop mode. Runs six migration phases plus a read-only source-review gate: discover Heroku resources live via the authenticated Heroku CLI (read-only, consent-gated) and/or from Terraform files, Procfile/app.json, and optional billing exports, review application source, clarify migration requirements, design AWS architecture, estimate costs, generate migration artifacts, and collect optional feedback. After Estimate, an optional what-if workshop can reprice region/HA/compute/Graviton scenarios without re-discovery. Source Review must finish before Clarify; Clarify must finish before Design, Estimate, or Generate. Uses a flat resource model (no clustering or dependency graphs) with deterministic mapping tables for core services (Dynos → Elastic Beanstalk by default, Postgres → RDS/Aurora, Redis → ElastiCache, Kafka → MSK) and a fast-path table for 13+ common add-ons. Cedar/Fir generation detection is detect-only in v1. Pipeline/Review Apps are detect-only. Do not use for: GCP or Azure migrations to AWS, AWS-to-Heroku reverse migration, general AWS architecture advice without migration intent, Heroku-to-Heroku refactoring, or multi-cloud deployments that do not involve migrating off Heroku."
 ---
 
 # Heroku-to-AWS Migration Skill
@@ -99,6 +99,15 @@ the first phase and persisted across invocations. The state file is
 updated across the lifecycle is defined in `INTERPRETER.md` § The interpreter loop.
 The `.migration/` directory is protected by a `.gitignore` created at init.
 
+**Runs created before Source Review existed:** if `phases.source_review` is absent,
+add it as `pending`. When Discover is pending or in progress, preserve
+`current_phase: discover` and continue Discover; route to Source Review only after
+Discover completes. If Discover is complete and Clarify has not started, route to
+Source Review. If Clarify or a later phase is already completed or in progress, set
+`source_review: completed`, continue the existing run without fabricating
+`application-source-review.json`, and state that source review was not performed for
+that legacy run. A new assessment is required to obtain source findings.
+
 ---
 
 ## MCP Servers
@@ -125,6 +134,10 @@ heroku-to-aws/
 │   │   │   ├── discover-live-capture.md        # Live CLI capture (main-window pre-work, consent-gated)
 │   │   │   ├── discover-live.md                # Live discovery fragment (parses live-capture/)
 │   │   │   └── discover-billing.md             # Billing data parsing
+│   │   ├── source_review/
+│   │   │   ├── source_review.md                 # Read-only source-review gate
+│   │   │   ├── source-review-scan.md            # One source review per application
+│   │   │   └── source-review-assemble.md        # Validate findings or fail closed
 │   │   ├── clarify/
 │   │   │   └── clarify.md                      # Phase 2: Adaptive questions (12–15, batched ≤5)
 │   │   ├── design/
@@ -148,7 +161,7 @@ heroku-to-aws/
 │   │
 │   └── shared/                                 # heroku-to-aws's own shared references
 │           ├── README.md                       # what lives here + pointers to plugin-neutral shared data
-│           ├── application-source-contract.schema.json # future source-review request/findings contract
+│           ├── application-source-contract.schema.json # source-review request/findings contract
 │           ├── application-source-contract.md  # contract semantics + retained-field purpose review
 │           ├── heroku-pricing-cache.md          # Heroku plan pricing (source-side baseline)
 │           ├── schema-discover-heroku.md        # heroku-resource-inventory.json schema
@@ -198,7 +211,8 @@ contract). Both are `_kind: sidebar` — off-backbone, trigger-entered, never
 > (itself gated) for when the page ships; restoring the share prompts here is the
 > un-gating change.
 
-- **After Discover**: No prompt. Proceed directly to Clarify.
+- **After Discover**: No optional sidebar prompt. Proceed directly to Source Review,
+  then Clarify.
 
 - **After Estimate**: First offer the what-if workshop sidebar per
   `estimate-assemble.md` (Enter workshop / Proceed toward Generate). Outer
