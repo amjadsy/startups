@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://awslabs.github.io/startups/heroku-to-aws/application-source-contract.schema.json",
   "title": "Heroku application-source request and findings",
-  "description": "Contract-only definitions for a future application-source review.",
+  "description": "Request and findings definitions for planned application-source validation.",
   "oneOf": [{ "$ref": "#/definitions/request" }, { "$ref": "#/definitions/findings" }],
   "definitions": {
     "question": {
@@ -42,6 +42,12 @@
       "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.\\.?(/|$)).+$"
     },
     "stringList": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/definitions/name" } },
+    "configurationNameList": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" }
+    },
     "identifierList": {
       "type": "array",
       "maxItems": 64,
@@ -68,7 +74,7 @@
       "additionalProperties": false,
       "properties": {
         "process_types": { "$ref": "#/definitions/stringList" },
-        "configuration_names": { "$ref": "#/definitions/stringList" },
+        "configuration_names": { "$ref": "#/definitions/configurationNameList" },
         "postgres_attachment_present": { "type": "boolean" },
         "redis_attachment_present": { "type": "boolean" },
         "addon_ids": { "$ref": "#/definitions/identifierList" },

@@ -1,7 +1,7 @@
 # Application-Source Contract
 
-`application-source-contract.schema.json` defines a request and findings document for a future
-application-source reviewer. It is data only: no current phase or target reads it.
+`application-source-contract.schema.json` defines request and findings documents used by the
+production contract checker. The checker is not wired into a migration phase in this PR.
 
 Requests expose only selected question names, application identity, process/configuration names,
 attachment and Private Space presence, add-on IDs, and selected estate application IDs.
@@ -10,7 +10,8 @@ Configuration values, credentials, connection strings, and source excerpts have 
 Every requested question has exactly one finding. `PRESENT` carries a non-empty typed record array;
 `ABSENT_WITHIN_REVIEWED_SCOPE`, `UNKNOWN`, and `NOT_APPLICABLE` carry `null`. `UNKNOWN` requires a
 limitation. Absence is invalid if a `SKIPPED_SOURCE`, `UNREADABLE_SOURCE`, `TRUNCATED_SOURCE`, or
-`DYNAMIC_SOURCE` limitation could affect it. Sources are optional direct relative paths with
+`DYNAMIC_SOURCE` limitation could affect it. `PRESENT` and `ABSENT_WITHIN_REVIEWED_SCOPE` require at
+least one direct workspace-relative source; `UNKNOWN` and `NOT_APPLICABLE` do not. Sources support
 optional line bounds.
 
 ## Field-Purpose Review
@@ -30,7 +31,7 @@ relationship IDs make references checkable; setting names never carry values.
 | `heroku_runtime_behavior`     | `component_id`, `process_ids`, `metadata_name`, `use`, `effect`                                                                                                                            | Identify Heroku metadata dependencies requiring customer action.                             |
 | `native_dependencies`         | `component_id`, `kind`, `name`, `phase`, `process_ids`, `os_constraints`, `architecture_constraints`                                                                                       | Assess platform compatibility and required build/runtime packages.                           |
 | `release_setup_commands`      | `component_id`, `process_id`, `command`, `timing`, `purpose`                                                                                                                               | Generate deployment hooks or record required customer-run setup.                             |
-| `recurring_jobs`              | `job_id`, `component_id`, `process_ids`, `name`, `mechanism`, `entrypoint`, `schedule`, `coordination`                                                                                     | Identify scheduler artifacts and coordination work.                                          |
+| `recurring_jobs`              | `job_id`, `component_id`, `process_ids`, `name`, `mechanism`, `entrypoint`, `schedule`, `coordination`                                                                                     | Identify recurring application/business work, excluding protocol-maintenance timers.         |
 | `health_routes`               | `component_id`, `process_id`, `listener_id`, `path`, `methods`, `success_statuses`, `redirects`, `authentication`, `required_headers`                                                      | Generate health checks and assess whether unauthenticated checks are viable.                 |
 | `local_file_writes`           | `component_id`, `process_ids`, `setting_name`, `default_path`, `read_after_write`, `purpose`, `required_lifetime`, `cross_instance_required`                                               | Assess ephemeral storage compatibility and required persistent/shared storage work.          |
 | `network_protocols`           | `component_id`, `process_ids`, `direction`, `listener_id`, `transport`, `application_protocol`, `port`, `application_managed_tls`                                                          | Assess Beanstalk protocol support and retain inputs for a private adapter.                   |
@@ -43,5 +44,5 @@ relationship IDs make references checkable; setting names never carry values.
 | `addon_usage`                 | `inventory_addon_id`, `component_id`, `setting_name`, `usage`, `roles`                                                                                                                     | Classify retained/external, customer-owned follow-up, blocking, or unknown add-on use only.  |
 | `webhooks`                    | `component_id`, `process_id`, `listener_id`, `path`, `methods`, `provider_reference`, `verification_mechanism`, `verification_setting_name`, `required_headers`                            | Generate ingress/health-adjacent settings and identify webhook verification work.            |
 
-Runtime filesystem and symlink containment checks are intentionally deferred until a reviewer is
-wired in; this contract checks only lexical path safety.
+The contract checks lexical path safety. Runtime filesystem and symlink containment are added
+separately before the reviewer is wired into the migration workflow.
