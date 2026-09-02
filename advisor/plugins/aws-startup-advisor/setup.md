@@ -93,7 +93,7 @@ If any skill failed to install, show the error output to the user and suggest th
 
 ## MCP servers (migration skills)
 
-The migration skills (`gcp-to-aws`, `heroku-to-aws`, `llm-to-bedrock`, `agent-advisor`) depend on MCP servers declared in the plugin's `.mcp.json`:
+The migration skills (`gcp-to-aws`, `heroku-to-aws`, `llm-to-bedrock`, `agent-advisor`) use MCP servers, declared in the plugin's `.mcp.json`, for live data. They are enhancements, not hard dependencies — the skills run without them, with pricing falling back to a bundled cache and docs lookups skipped:
 
 - **`awsknowledge`** (HTTP) — current AWS documentation lookups.
 - **`awspricing`** (stdio via `uvx`) — live pricing data for cost estimates. **Requires [`uv`/`uvx`](https://docs.astral.sh/uv/) on your machine**; without it, estimates fall back to cached rates.
