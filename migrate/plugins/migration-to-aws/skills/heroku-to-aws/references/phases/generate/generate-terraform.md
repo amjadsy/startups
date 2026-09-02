@@ -140,7 +140,7 @@ Always emitted. The baseline applies account-wide security controls that should 
 
 2. **Compute budget limit.** Read `estimation-infra.json.projected_costs.aws_monthly_balanced` (the Balanced-tier monthly total — the same key this skill's Estimate postconditions assert is a positive number). Compute `budget_limit = max(50, ceil(aws_monthly_balanced * 1.2))`. If `estimation-infra.json` is missing or the key is unreadable, use `50` and emit an inline comment noting that the projection was unavailable.
 
-3. **Choose file-header variant.** If `compliance` contains any of `soc2`, `pci`, `hipaa`, `fedramp`, emit the compliance-expansion header. Otherwise emit the base header. Both variants include a two-sentence provenance note stating per-unit rates in the cost-disclosure comments were verified against the AWS Pricing API for us-east-1 on 2026-05-04. Substitute the resolved `cloudtrail_retention_days` value into the header.
+3. **Choose file-header variant.** If `compliance` contains any of `soc2`, `pci`, `hipaa`, `fedramp`, emit the compliance-expansion header. Otherwise emit the base header. Both variants include a two-sentence provenance note stating per-unit rates in the cost-disclosure comments were verified against the AWS Pricing API for us-east-1 on 2026-05-04. Substitute the resolved `cloudtrail_retention_days` value into the header. When item 1 encountered an unrecognized compliance value, append one header line naming it and the conservative 365-day retention applied (e.g. `# Unrecognized compliance framework "iso27001" — applied conservative 365-day CloudTrail retention`).
 
 4. **Emit `baseline.tf`** starting with the file-header comment block and a `locals` block containing the resolved `cloudtrail_retention_days` integer:
 
@@ -159,7 +159,7 @@ Always emitted. The baseline applies account-wide security controls that should 
    - `aws_ebs_encryption_by_default.baseline` (defense-in-depth; `enabled = true`)
    - `aws_accessanalyzer_analyzer.baseline` (ACCT.11; `type = "ACCOUNT"`)
    - `aws_ec2_instance_metadata_defaults.baseline` (defense-in-depth; `http_tokens = "required"`, `http_put_response_hop_limit = 2`)
-   - `aws_cloudtrail.baseline` (ACCT.07; multi-region, management events only, `enable_log_file_validation = true`)
+   - `aws_cloudtrail.baseline` (ACCT.07; `name = "${var.project_name}-baseline"` — MUST match the `aws:SourceArn` in the bucket policy exactly, see the golden HCL; multi-region, management events only, `enable_log_file_validation = true`, `depends_on = [aws_s3_bucket_policy.cloudtrail_logs]` — CloudTrail validates the bucket policy at create time)
    - `aws_s3_bucket.cloudtrail_logs` plus `aws_s3_bucket_public_access_block`, `aws_s3_bucket_server_side_encryption_configuration`, `aws_s3_bucket_versioning`, `aws_s3_bucket_lifecycle_configuration` (transitions driven by `local.cloudtrail_retention_days` per item 7), and `aws_s3_bucket_policy` restricting the CloudTrail service principal by `aws:SourceArn`
    - `aws_budgets_budget.monthly_spend` (ACCT.10; `limit_amount = "<budget_limit>"` from item 2; three `notification` blocks at 50/80/100% `ACTUAL`; `subscriber_email_addresses = [var.billing_email]` — same fill-once variable as the alternate contact, entered exactly once in tfvars)
    - `aws_guardduty_detector.baseline` (defense-in-depth; `enable = true`, `finding_publishing_frequency = "FIFTEEN_MINUTES"`)
@@ -179,16 +179,15 @@ Always emitted. The baseline applies account-wide security controls that should 
 7. **Lifecycle rule adjustment.** Omit the `STANDARD_IA` transition block when the resolved retention is less than 90 days. Omit the `GLACIER` transition block when retention is less than 365 days. Both rules apply to both the CloudTrail log bucket and (when emitted) the Config log bucket.
 
 8. **Attach inline HCL comments**:
-   - On each `aws_account_alternate_contact.*`: a comment pointing at the tfvars fill-once variable (`# set var.operations_email in terraform.tfvars — plan fails until you do`).
+   - On each `aws_account_alternate_contact.*`: a comment pointing at the tfvars fill-once variable (`# set var.operations_email in terraform.tfvars — plan fails until you do`) and noting the phone number is a placeholder to update post-apply.
    - On `aws_cloudtrail.baseline`: a collision warning for users who already have a trail in the region.
    - On `aws_budgets_budget.monthly_spend`: the limit-rationale comment (`max(50, ceil(aws_monthly_balanced * 1.2))`; $50 floor prevents alert noise; users may edit `limit_amount` directly post-apply).
-   - On each `aws_account_alternate_contact.*`: a comment noting the phone number is a placeholder to update post-apply (or in tfvars if the user prefers).
    - On `aws_guardduty_detector.baseline`: a cost disclosure noting the 30-day free trial and ~$2–25/mo post-trial.
    - On `aws_config_configuration_recorder.baseline`: a cost disclosure ($0.003/CI continuous; $0.012/daily-CI as an opt-in for cost-sensitive users).
    - On `aws_securityhub_account.baseline`: a cost disclosure noting the 30-day free trial and ~$1–15/mo post-trial.
    - On every defense-in-depth resource (EBS encryption, IMDSv2 account default, GuardDuty, Config, Security Hub): the literal token `defense-in-depth` in the inline comment.
 
-**Golden HCL for the shapes agents get wrong.** The resource lists above name types; these four shapes have required arguments or policy documents that must not be improvised. Match them exactly (identifiers/CIDR-free values may vary):
+**Golden HCL for the shapes agents get wrong.** The resource lists above name types; the shapes below have required arguments, policy documents, or cross-resource name/ordering couplings that must not be improvised. Match them exactly (identifiers/region values may vary, but the trail name and the `aws:SourceArn` conditions must agree):
 
 ```hcl
 # Alternate contact — all four of name / title / email_address / phone_number are REQUIRED
@@ -231,7 +230,31 @@ data "aws_iam_policy_document" "cloudtrail_logs" {
       variable = "s3:x-amz-acl"
       values   = ["bucket-owner-full-control"]
     }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:cloudtrail:${var.aws_region}:${data.aws_caller_identity.current.account_id}:trail/${var.project_name}-baseline"]
+    }
   }
+}
+
+# The policy document must be ATTACHED, and the trail name must match the
+# SourceArn above exactly — CloudTrail validates the bucket policy at create
+# time, so the trail depends_on the attachment.
+resource "aws_s3_bucket_policy" "cloudtrail_logs" {
+  bucket = aws_s3_bucket.cloudtrail_logs.id
+  policy = data.aws_iam_policy_document.cloudtrail_logs.json
+}
+
+resource "aws_cloudtrail" "baseline" {
+  # Trail already in this region? See the collision warning in item 8.
+  name                          = "${var.project_name}-baseline" # MUST match the SourceArn conditions above
+  s3_bucket_name                = aws_s3_bucket.cloudtrail_logs.id
+  is_multi_region_trail         = true
+  enable_log_file_validation    = true
+  include_global_service_events = true
+
+  depends_on = [aws_s3_bucket_policy.cloudtrail_logs]
 }
 
 # Config role — trust policy + the CURRENT managed policy name (underscore)
