@@ -79,7 +79,7 @@ Interpret:
 8 -> compliance: ["unknown"] — not confirmed; verify with compliance team before production
 ```
 
-**Defaulted / "I don't know" semantics:** When Q2 resolves without an explicit user selection — answer 8, or "use defaults for the rest" — write `compliance: ["unknown"]` (`chosen_by: "user"` for H, `"default"` with `source: "default:Q2"` for defaults). Never silently record "no requirements". Downstream, `["unknown"]` behaves exactly like "none" for architecture and service selection (no speculative BAA-only stack), but it triggers the report's compliance caveat and counts as unverified in decision confidence.
+**Defaulted / "I don't know" semantics:** When Q2 resolves without an explicit user selection — answer 8, or "use defaults for the rest" — write `compliance: ["unknown"]` (`chosen_by: "user"` for 8, `"default"` with `source: "default:Q2"` for defaults). Never silently record "no requirements". Downstream, `["unknown"]` behaves exactly like "none" for architecture and service selection (no speculative BAA-only stack), but it triggers the report's compliance caveat and counts as unverified in decision confidence.
 
 Default: `compliance: ["unknown"]` — unconfirmed, with report caveat (only reachable via "use defaults for the rest"; Q2 is otherwise always asked).
 

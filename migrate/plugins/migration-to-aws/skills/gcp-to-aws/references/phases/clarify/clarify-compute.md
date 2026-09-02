@@ -66,7 +66,7 @@ Interpret:
 4 -> same as default (1)
 ```
 
-**Default:** **A** (`compute_model: "managed_platform"`). App Engine is PaaS; Elastic Beanstalk is the closest AWS equivalent. Users who skip or say "I don't know" get the PaaS-to-PaaS path.
+**Default:** **1** (`compute_model: "managed_platform"`). App Engine is PaaS; Elastic Beanstalk is the closest AWS equivalent. Users who skip or say "I don't know" get the PaaS-to-PaaS path.
 
 _Note: If Q5=Yes (multi-cloud), this question is skipped — `compute: "eks"` is already decided and App Engine routes to EKS, overriding the EB default (mirrors Q8)._
 
