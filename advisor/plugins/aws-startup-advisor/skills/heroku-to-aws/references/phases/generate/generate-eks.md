@@ -128,7 +128,7 @@ resource "aws_launch_template" "eks_nodes" {
   EOF
   )
 
-  # IMDSv2 enforcement — security baseline, always applied (generate-terraform.md Step 1.5 item 9).
+  # IMDSv2 enforcement — security baseline, always applied (generate-terraform.md Step 1.5, EKS launch-template rider).
   # Hop limit 1 is intentionally stricter than the account default 2 in baseline.tf.
   metadata_options {
     http_tokens                 = "required"

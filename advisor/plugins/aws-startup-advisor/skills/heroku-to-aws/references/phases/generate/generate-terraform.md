@@ -43,7 +43,7 @@ Generate `$MIGRATION_DIR/terraform/` with the following file organization. Only 
 
 **File emission rules:**
 
-- `main.tf`, `baseline.tf`, `variables.tf`, `outputs.tf` — ALWAYS emitted (`baseline.tf` is workload-independent; users who do not want it delete the file before `terraform apply`)
+- `main.tf`, `baseline.tf`, `variables.tf`, `outputs.tf` — ALWAYS emitted (`baseline.tf` is workload-independent; opting out takes two steps — delete the file AND remove its three contact variables — documented in MIGRATION_GUIDE.md Phase 1)
 - `vpc.tf` — Emitted when `vpc_design` is present in `aws-design.json` (either existing or new VPC)
 - `compute.tf` — Emitted when `aws_service` contains "Fargate" or "ALB" entries
 - `beanstalk.tf` — Emitted when `aws_service` contains "Elastic Beanstalk" entries
@@ -125,9 +125,9 @@ data "aws_availability_zones" "available" {
 
 ## Step 1.5: Generate `baseline.tf`
 
-Always emitted. The baseline applies account-wide security controls that should be in place on any new AWS account. Users who do not want the baseline can delete `terraform/baseline.tf` before `terraform apply`. It is workload-independent: emit it regardless of which services `aws-design.json` contains.
+Always emitted. The baseline applies account-wide security controls that should be in place on any new AWS account. Users who do not want the baseline delete `terraform/baseline.tf` AND remove its three contact email variables from `variables.tf`/tfvars (they have no defaults, so plan fails on them even unreferenced) — MIGRATION_GUIDE.md Phase 1 documents both steps. It is workload-independent: emit it regardless of which services `aws-design.json` contains.
 
-0. **Normalize compliance.** Read `preferences.json.global.compliance`. It is a scalar string (`"none"`, `"soc2"`, `"hipaa"`, `"pci"`) or, when the user specified multiple frameworks in Clarify Q2 option E, an array of strings. Normalize to an array: absent or `"none"` → `[]`; scalar → single-element array; array → lowercase as-is. Every reference to `compliance` below means this normalized array.
+0. **Normalize compliance.** Read `preferences.json.global.compliance`. It is a scalar string (`"none"`, `"soc2"`, `"hipaa"`, `"pci"`) or, when the user specified multiple frameworks in Clarify Q2 option E, an array of strings. Normalize to an array: absent, `"none"`, or `"unknown"` → `[]` (an absent or unconfirmed answer is not a framework); scalar → single-element array; array → lowercase as-is, dropping any `"none"`/`"unknown"` entries. Every reference to `compliance` below means this normalized array.
 
 1. **Compute retention.** Compute `cloudtrail_retention_days` from the normalized `compliance` array using this mapping, taking `max()` across all declared values (use 90 if the array is empty):
    - `[]` → 90
@@ -136,9 +136,9 @@ Always emitted. The baseline applies account-wide security controls that should 
    - `hipaa` → 2190
    - `fedramp` → 1095
    - `gdpr` → 365
-   - unrecognized value → 365 (conservative), and record a `generation-warnings.json` entry naming the unrecognized framework
+   - unrecognized value → 365 (conservative), and note the unrecognized framework in the `baseline.tf` file-header comment (item 3) — do NOT add it to `generation-warnings.json`, whose entries are service-shaped and feed the every-service-accounted-for gate
 
-2. **Compute budget limit.** Read `estimation-infra.json.projected_costs.breakdown.total.mid` (or the canonical equivalent). Compute `budget_limit = max(50, ceil(total_mid * 1.2))`. If `estimation-infra.json` is missing or the path is unreadable, use `50` and emit an inline comment noting that the projection was unavailable.
+2. **Compute budget limit.** Read `estimation-infra.json.projected_costs.aws_monthly_balanced` (the Balanced-tier monthly total — the same key this skill's Estimate postconditions assert is a positive number). Compute `budget_limit = max(50, ceil(aws_monthly_balanced * 1.2))`. If `estimation-infra.json` is missing or the key is unreadable, use `50` and emit an inline comment noting that the projection was unavailable.
 
 3. **Choose file-header variant.** If `compliance` contains any of `soc2`, `pci`, `hipaa`, `fedramp`, emit the compliance-expansion header. Otherwise emit the base header. Both variants include a two-sentence provenance note stating per-unit rates in the cost-disclosure comments were verified against the AWS Pricing API for us-east-1 on 2026-05-04. Substitute the resolved `cloudtrail_retention_days` value into the header.
 
@@ -151,9 +151,9 @@ Always emitted. The baseline applies account-wide security controls that should 
    ```
 
 5. **Append the always-on resources**, in this order. Provider `default_tags` (Step 1) supply the standard tags; each baseline resource additionally carries `tags = { Component = "security-baseline" }` where the resource type supports tags:
-   - `aws_account_alternate_contact.operations` (ACCT.01, `email_address = var.operations_email` — fill-once variable, see Step 2)
-   - `aws_account_alternate_contact.billing` (ACCT.01, `email_address = var.billing_email`)
-   - `aws_account_alternate_contact.security` (ACCT.01, `email_address = var.security_email`)
+   - `aws_account_alternate_contact.operations` (ACCT.01; `alternate_contact_type = "OPERATIONS"`, `email_address = var.operations_email` — fill-once variable, see Step 2. `name`, `title`, and `phone_number` are ALSO required by this resource type: pin `name = "Operations Contact"`, `title = "Operations"`, and the placeholder `phone_number = "+1-555-0100"` with an inline comment telling the user to update the phone number post-apply — see the golden HCL below)
+   - `aws_account_alternate_contact.billing` (ACCT.01; `alternate_contact_type = "BILLING"`, `email_address = var.billing_email`; pinned `name = "Billing Contact"`, `title = "Billing"`, same placeholder phone pattern)
+   - `aws_account_alternate_contact.security` (ACCT.01; `alternate_contact_type = "SECURITY"`, `email_address = var.security_email`; pinned `name = "Security Contact"`, `title = "Security"`, same placeholder phone pattern)
    - `aws_iam_account_password_policy.baseline` (ACCT.06; `minimum_password_length = 14`, `password_reuse_prevention = 24`, `max_password_age = 90`, all four character-class requirements `true`, `hard_expiry = false`)
    - `aws_s3_account_public_access_block.baseline` (ACCT.08; all four flags `true`)
    - `aws_ebs_encryption_by_default.baseline` (defense-in-depth; `enabled = true`)
@@ -165,7 +165,7 @@ Always emitted. The baseline applies account-wide security controls that should 
    - `aws_guardduty_detector.baseline` (defense-in-depth; `enable = true`, `finding_publishing_frequency = "FIFTEEN_MINUTES"`)
 
 6. **If `compliance` contains any of `soc2`, `pci`, `hipaa`, `fedramp`, append the compliance-conditional section**, wrapped in `########## Compliance-Conditional ##########` / `########## End Compliance-Conditional ##########` dividers:
-   - `aws_iam_role.config` + `aws_iam_role_policy_attachment` for the managed policy `AWSConfigRole`
+   - `aws_iam_role.config` (trust policy for `config.amazonaws.com` — see the golden HCL below) + `aws_iam_role_policy_attachment` for the managed policy `arn:aws:iam::aws:policy/service-role/AWS_ConfigRole` (note the underscore — `AWSConfigRole` without it is a different, deprecated policy name and fails apply)
    - `aws_config_configuration_recorder.baseline` with `recording_group { all_supported = true, include_global_resource_types = true }`
    - `aws_config_delivery_channel.baseline` pointing at the Config S3 bucket
    - `aws_config_configuration_recorder_status.baseline` with `is_enabled = true`
@@ -181,24 +181,104 @@ Always emitted. The baseline applies account-wide security controls that should 
 8. **Attach inline HCL comments**:
    - On each `aws_account_alternate_contact.*`: a comment pointing at the tfvars fill-once variable (`# set var.operations_email in terraform.tfvars — plan fails until you do`).
    - On `aws_cloudtrail.baseline`: a collision warning for users who already have a trail in the region.
-   - On `aws_budgets_budget.monthly_spend`: the limit-rationale comment (`max(50, ceil(total_mid * 1.2))`; $50 floor prevents alert noise; users may edit `limit_amount` directly post-apply).
+   - On `aws_budgets_budget.monthly_spend`: the limit-rationale comment (`max(50, ceil(aws_monthly_balanced * 1.2))`; $50 floor prevents alert noise; users may edit `limit_amount` directly post-apply).
+   - On each `aws_account_alternate_contact.*`: a comment noting the phone number is a placeholder to update post-apply (or in tfvars if the user prefers).
    - On `aws_guardduty_detector.baseline`: a cost disclosure noting the 30-day free trial and ~$2–25/mo post-trial.
    - On `aws_config_configuration_recorder.baseline`: a cost disclosure ($0.003/CI continuous; $0.012/daily-CI as an opt-in for cost-sensitive users).
    - On `aws_securityhub_account.baseline`: a cost disclosure noting the 30-day free trial and ~$1–15/mo post-trial.
    - On every defense-in-depth resource (EBS encryption, IMDSv2 account default, GuardDuty, Config, Security Hub): the literal token `defense-in-depth` in the inline comment.
 
-9. **EKS launch-template rider (runs in the eks-generate fragment, not here):** when the design routes compute to EKS with self-managed node groups, the `aws_launch_template` emitted by `generate-eks.md` receives IMDSv2 enforcement unconditionally:
+**Golden HCL for the shapes agents get wrong.** The resource lists above name types; these four shapes have required arguments or policy documents that must not be improvised. Match them exactly (identifiers/CIDR-free values may vary):
 
-   ```hcl
-   metadata_options {
-     http_tokens                 = "required"
-     http_put_response_hop_limit = 1
-     http_endpoint               = "enabled"
-     instance_metadata_tags      = "enabled"
-   }
-   ```
+```hcl
+# Alternate contact — all four of name / title / email_address / phone_number are REQUIRED
+resource "aws_account_alternate_contact" "operations" {
+  alternate_contact_type = "OPERATIONS"
+  name                   = "Operations Contact"
+  title                  = "Operations"
+  email_address          = var.operations_email
+  phone_number           = "+1-555-0100" # placeholder — update post-apply with a real number
+}
 
-   Fargate and Elastic Beanstalk do not emit launch templates in this skill and are unaffected (no synthetic launch template is created). Hop limit `1` here is intentionally different from the account-level default `2` in `aws_ec2_instance_metadata_defaults.baseline` — strict on templates the plugin owns, permissive at the account default.
+# CloudTrail log bucket policy — service principal scoped by SourceArn
+data "aws_iam_policy_document" "cloudtrail_logs" {
+  statement {
+    sid       = "AWSCloudTrailAclCheck"
+    effect    = "Allow"
+    actions   = ["s3:GetBucketAcl"]
+    resources = [aws_s3_bucket.cloudtrail_logs.arn]
+    principals {
+      type        = "Service"
+      identifiers = ["cloudtrail.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:cloudtrail:${var.aws_region}:${data.aws_caller_identity.current.account_id}:trail/${var.project_name}-baseline"]
+    }
+  }
+  statement {
+    sid       = "AWSCloudTrailWrite"
+    effect    = "Allow"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.cloudtrail_logs.arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/*"]
+    principals {
+      type        = "Service"
+      identifiers = ["cloudtrail.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "s3:x-amz-acl"
+      values   = ["bucket-owner-full-control"]
+    }
+  }
+}
+
+# Config role — trust policy + the CURRENT managed policy name (underscore)
+resource "aws_iam_role" "config" {
+  name = "${var.project_name}-config-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRole"
+      Principal = { Service = "config.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "config" {
+  role       = aws_iam_role.config.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWS_ConfigRole"
+}
+
+# Lifecycle configuration — every rule needs a filter (or prefix) block
+resource "aws_s3_bucket_lifecycle_configuration" "cloudtrail_logs" {
+  bucket = aws_s3_bucket.cloudtrail_logs.id
+  rule {
+    id     = "retention"
+    status = "Enabled"
+    filter {} # applies to the whole bucket
+    expiration {
+      days = local.cloudtrail_retention_days
+    }
+    # STANDARD_IA / GLACIER transition blocks per item 7's thresholds
+  }
+}
+```
+
+**EKS launch-template rider (runs in the eks-generate fragment, not here):** when the design routes compute to EKS with self-managed node groups, the `aws_launch_template` emitted by `generate-eks.md` receives IMDSv2 enforcement unconditionally:
+
+```hcl
+metadata_options {
+  http_tokens                 = "required"
+  http_put_response_hop_limit = 1
+  http_endpoint               = "enabled"
+  instance_metadata_tags      = "enabled"
+}
+```
+
+Fargate and Elastic Beanstalk do not emit launch templates in this skill and are unaffected (no synthetic launch template is created). Hop limit `1` here is intentionally different from the account-level default `2` in `aws_ec2_instance_metadata_defaults.baseline` — strict on templates the plugin owns, permissive at the account default.
 
 **Emission conditions**:
 
@@ -241,32 +321,32 @@ variable "migration_id" {
 
 ```hcl
 variable "operations_email" {
-  description = "Operations contact for AWS account alternate contacts (fill-in checklist)"
+  description = "Operations contact for AWS account alternate contacts (MIGRATION_GUIDE.md Phase 1)"
   type        = string
 
   validation {
     condition     = !strcontains(var.operations_email, "TODO") && !strcontains(var.operations_email, "example.com") && strcontains(var.operations_email, "@")
-    error_message = "Set operations_email in terraform.tfvars to a real inbox (see MIGRATION_GUIDE.md fill-in checklist)."
+    error_message = "Set operations_email in terraform.tfvars to a real inbox (see MIGRATION_GUIDE.md Phase 1, Security baseline contacts)."
   }
 }
 
 variable "billing_email" {
-  description = "Billing contact + budget alert recipient (fill-in checklist)"
+  description = "Billing contact + budget alert recipient (MIGRATION_GUIDE.md Phase 1)"
   type        = string
 
   validation {
     condition     = !strcontains(var.billing_email, "TODO") && !strcontains(var.billing_email, "example.com") && strcontains(var.billing_email, "@")
-    error_message = "Set billing_email in terraform.tfvars to a real inbox (see MIGRATION_GUIDE.md fill-in checklist)."
+    error_message = "Set billing_email in terraform.tfvars to a real inbox (see MIGRATION_GUIDE.md Phase 1, Security baseline contacts)."
   }
 }
 
 variable "security_email" {
-  description = "Security contact for AWS account alternate contacts (fill-in checklist)"
+  description = "Security contact for AWS account alternate contacts (MIGRATION_GUIDE.md Phase 1)"
   type        = string
 
   validation {
     condition     = !strcontains(var.security_email, "TODO") && !strcontains(var.security_email, "example.com") && strcontains(var.security_email, "@")
-    error_message = "Set security_email in terraform.tfvars to a real inbox (see MIGRATION_GUIDE.md fill-in checklist)."
+    error_message = "Set security_email in terraform.tfvars to a real inbox (see MIGRATION_GUIDE.md Phase 1, Security baseline contacts)."
   }
 }
 ```

@@ -70,7 +70,7 @@ Output to user:
 Phase 5 of 6 complete (Generate). Optional remaining: Feedback.
 
 Artifacts produced:
-• terraform/ — [N] Terraform files for AWS infrastructure (includes baseline.tf, the account security baseline — delete it before apply to opt out)
+• terraform/ — [N] Terraform files for AWS infrastructure (includes baseline.tf, the account security baseline — MIGRATION_GUIDE.md Phase 1 covers its contact variables and how to opt out)
 • MIGRATION_GUIDE.md — Step-by-step migration procedure
 • README.md — Artifact listing and quick start
 • migration-report.html — Stakeholder summary (costs + what-if scenarios when present)
