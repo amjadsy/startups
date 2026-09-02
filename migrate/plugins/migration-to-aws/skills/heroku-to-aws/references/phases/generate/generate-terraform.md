@@ -3,6 +3,7 @@ _fragment: terraform
 _of_phase: generate
 _contributes:
   - terraform/main.tf
+  - terraform/baseline.tf
   - terraform/variables.tf
   - terraform/outputs.tf
   - terraform/security.tf
@@ -25,23 +26,24 @@ Transform `aws-design.json` into review-ready Terraform HCL configurations. Prod
 
 Generate `$MIGRATION_DIR/terraform/` with the following file organization. Only emit domain files that have resources in `aws-design.json`:
 
-| File           | Domain     | Contains                                                   |
-| -------------- | ---------- | ---------------------------------------------------------- |
-| `main.tf`      | core       | Provider config, backend, data sources                     |
-| `variables.tf` | core       | All input variables with types and defaults                |
-| `outputs.tf`   | core       | Resource outputs and migration summary                     |
-| `vpc.tf`       | networking | VPC, subnets, route tables, internet gateway, NAT, peering |
-| `compute.tf`   | compute    | ECS cluster, Fargate task definitions, services, ALBs      |
-| `beanstalk.tf` | compute    | Elastic Beanstalk applications and environments            |
-| `pipeline.tf`  | deploy     | Optional CodePipeline source-to-EB deploy path             |
-| `database.tf`  | database   | RDS/Aurora instances, parameter groups, RDS Proxy          |
-| `cache.tf`     | cache      | ElastiCache replication groups, subnet groups              |
-| `messaging.tf` | messaging  | MSK clusters, configurations                               |
-| `security.tf`  | security   | Security groups, IAM roles/policies                        |
+| File           | Domain     | Contains                                                                                                                               |
+| -------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `main.tf`      | core       | Provider config, backend, data sources                                                                                                 |
+| `baseline.tf`  | security   | Account-wide security baseline (contacts, CloudTrail, GuardDuty, budget, IMDSv2 default; compliance-conditional Config + Security Hub) |
+| `variables.tf` | core       | All input variables with types and defaults                                                                                            |
+| `outputs.tf`   | core       | Resource outputs and migration summary                                                                                                 |
+| `vpc.tf`       | networking | VPC, subnets, route tables, internet gateway, NAT, peering                                                                             |
+| `compute.tf`   | compute    | ECS cluster, Fargate task definitions, services, ALBs                                                                                  |
+| `beanstalk.tf` | compute    | Elastic Beanstalk applications and environments                                                                                        |
+| `pipeline.tf`  | deploy     | Optional CodePipeline source-to-EB deploy path                                                                                         |
+| `database.tf`  | database   | RDS/Aurora instances, parameter groups, RDS Proxy                                                                                      |
+| `cache.tf`     | cache      | ElastiCache replication groups, subnet groups                                                                                          |
+| `messaging.tf` | messaging  | MSK clusters, configurations                                                                                                           |
+| `security.tf`  | security   | Security groups, IAM roles/policies                                                                                                    |
 
 **File emission rules:**
 
-- `main.tf`, `variables.tf`, `outputs.tf` — ALWAYS emitted
+- `main.tf`, `baseline.tf`, `variables.tf`, `outputs.tf` — ALWAYS emitted (`baseline.tf` is workload-independent; users who do not want it delete the file before `terraform apply`)
 - `vpc.tf` — Emitted when `vpc_design` is present in `aws-design.json` (either existing or new VPC)
 - `compute.tf` — Emitted when `aws_service` contains "Fargate" or "ALB" entries
 - `beanstalk.tf` — Emitted when `aws_service` contains "Elastic Beanstalk" entries
@@ -121,6 +123,90 @@ data "aws_availability_zones" "available" {
 
 ---
 
+## Step 1.5: Generate `baseline.tf`
+
+Always emitted. The baseline applies account-wide security controls that should be in place on any new AWS account. Users who do not want the baseline can delete `terraform/baseline.tf` before `terraform apply`. It is workload-independent: emit it regardless of which services `aws-design.json` contains.
+
+0. **Normalize compliance.** Read `preferences.json.global.compliance`. It is a scalar string (`"none"`, `"soc2"`, `"hipaa"`, `"pci"`) or, when the user specified multiple frameworks in Clarify Q2 option E, an array of strings. Normalize to an array: absent or `"none"` → `[]`; scalar → single-element array; array → lowercase as-is. Every reference to `compliance` below means this normalized array.
+
+1. **Compute retention.** Compute `cloudtrail_retention_days` from the normalized `compliance` array using this mapping, taking `max()` across all declared values (use 90 if the array is empty):
+   - `[]` → 90
+   - `soc2` → 365
+   - `pci` → 365
+   - `hipaa` → 2190
+   - `fedramp` → 1095
+   - `gdpr` → 365
+   - unrecognized value → 365 (conservative), and record a `generation-warnings.json` entry naming the unrecognized framework
+
+2. **Compute budget limit.** Read `estimation-infra.json.projected_costs.breakdown.total.mid` (or the canonical equivalent). Compute `budget_limit = max(50, ceil(total_mid * 1.2))`. If `estimation-infra.json` is missing or the path is unreadable, use `50` and emit an inline comment noting that the projection was unavailable.
+
+3. **Choose file-header variant.** If `compliance` contains any of `soc2`, `pci`, `hipaa`, `fedramp`, emit the compliance-expansion header. Otherwise emit the base header. Both variants include a two-sentence provenance note stating per-unit rates in the cost-disclosure comments were verified against the AWS Pricing API for us-east-1 on 2026-05-04. Substitute the resolved `cloudtrail_retention_days` value into the header.
+
+4. **Emit `baseline.tf`** starting with the file-header comment block and a `locals` block containing the resolved `cloudtrail_retention_days` integer:
+
+   ```hcl
+   locals {
+     cloudtrail_retention_days = <N>
+   }
+   ```
+
+5. **Append the always-on resources**, in this order. Provider `default_tags` (Step 1) supply the standard tags; each baseline resource additionally carries `tags = { Component = "security-baseline" }` where the resource type supports tags:
+   - `aws_account_alternate_contact.operations` (ACCT.01, `email_address = var.operations_email` — fill-once variable, see Step 2)
+   - `aws_account_alternate_contact.billing` (ACCT.01, `email_address = var.billing_email`)
+   - `aws_account_alternate_contact.security` (ACCT.01, `email_address = var.security_email`)
+   - `aws_iam_account_password_policy.baseline` (ACCT.06; `minimum_password_length = 14`, `password_reuse_prevention = 24`, `max_password_age = 90`, all four character-class requirements `true`, `hard_expiry = false`)
+   - `aws_s3_account_public_access_block.baseline` (ACCT.08; all four flags `true`)
+   - `aws_ebs_encryption_by_default.baseline` (defense-in-depth; `enabled = true`)
+   - `aws_accessanalyzer_analyzer.baseline` (ACCT.11; `type = "ACCOUNT"`)
+   - `aws_ec2_instance_metadata_defaults.baseline` (defense-in-depth; `http_tokens = "required"`, `http_put_response_hop_limit = 2`)
+   - `aws_cloudtrail.baseline` (ACCT.07; multi-region, management events only, `enable_log_file_validation = true`)
+   - `aws_s3_bucket.cloudtrail_logs` plus `aws_s3_bucket_public_access_block`, `aws_s3_bucket_server_side_encryption_configuration`, `aws_s3_bucket_versioning`, `aws_s3_bucket_lifecycle_configuration` (transitions driven by `local.cloudtrail_retention_days` per item 7), and `aws_s3_bucket_policy` restricting the CloudTrail service principal by `aws:SourceArn`
+   - `aws_budgets_budget.monthly_spend` (ACCT.10; `limit_amount = "<budget_limit>"` from item 2; three `notification` blocks at 50/80/100% `ACTUAL`; `subscriber_email_addresses = [var.billing_email]` — same fill-once variable as the alternate contact, entered exactly once in tfvars)
+   - `aws_guardduty_detector.baseline` (defense-in-depth; `enable = true`, `finding_publishing_frequency = "FIFTEEN_MINUTES"`)
+
+6. **If `compliance` contains any of `soc2`, `pci`, `hipaa`, `fedramp`, append the compliance-conditional section**, wrapped in `########## Compliance-Conditional ##########` / `########## End Compliance-Conditional ##########` dividers:
+   - `aws_iam_role.config` + `aws_iam_role_policy_attachment` for the managed policy `AWSConfigRole`
+   - `aws_config_configuration_recorder.baseline` with `recording_group { all_supported = true, include_global_resource_types = true }`
+   - `aws_config_delivery_channel.baseline` pointing at the Config S3 bucket
+   - `aws_config_configuration_recorder_status.baseline` with `is_enabled = true`
+   - `aws_s3_bucket.config_logs` plus PAB, SSE, versioning, lifecycle (same `local.cloudtrail_retention_days`), and a bucket policy allowing the `config.amazonaws.com` service principal
+   - `aws_securityhub_account.baseline`
+   - `aws_securityhub_standards_subscription.fsbp` (always emitted in this section)
+   - `aws_securityhub_standards_subscription.pci_dss` (only if `compliance` contains `pci`)
+
+   Do NOT emit an NIST 800-53 standards subscription, even if `compliance` contains `hipaa` or `fedramp`. Security Hub does not provide a HIPAA-specific standard; FedRAMP attestation is out-of-band.
+
+7. **Lifecycle rule adjustment.** Omit the `STANDARD_IA` transition block when the resolved retention is less than 90 days. Omit the `GLACIER` transition block when retention is less than 365 days. Both rules apply to both the CloudTrail log bucket and (when emitted) the Config log bucket.
+
+8. **Attach inline HCL comments**:
+   - On each `aws_account_alternate_contact.*`: a comment pointing at the tfvars fill-once variable (`# set var.operations_email in terraform.tfvars — plan fails until you do`).
+   - On `aws_cloudtrail.baseline`: a collision warning for users who already have a trail in the region.
+   - On `aws_budgets_budget.monthly_spend`: the limit-rationale comment (`max(50, ceil(total_mid * 1.2))`; $50 floor prevents alert noise; users may edit `limit_amount` directly post-apply).
+   - On `aws_guardduty_detector.baseline`: a cost disclosure noting the 30-day free trial and ~$2–25/mo post-trial.
+   - On `aws_config_configuration_recorder.baseline`: a cost disclosure ($0.003/CI continuous; $0.012/daily-CI as an opt-in for cost-sensitive users).
+   - On `aws_securityhub_account.baseline`: a cost disclosure noting the 30-day free trial and ~$1–15/mo post-trial.
+   - On every defense-in-depth resource (EBS encryption, IMDSv2 account default, GuardDuty, Config, Security Hub): the literal token `defense-in-depth` in the inline comment.
+
+9. **EKS launch-template rider (runs in the eks-generate fragment, not here):** when the design routes compute to EKS with self-managed node groups, the `aws_launch_template` emitted by `generate-eks.md` receives IMDSv2 enforcement unconditionally:
+
+   ```hcl
+   metadata_options {
+     http_tokens                 = "required"
+     http_put_response_hop_limit = 1
+     http_endpoint               = "enabled"
+     instance_metadata_tags      = "enabled"
+   }
+   ```
+
+   Fargate and Elastic Beanstalk do not emit launch templates in this skill and are unaffected (no synthetic launch template is created). Hop limit `1` here is intentionally different from the account-level default `2` in `aws_ec2_instance_metadata_defaults.baseline` — strict on templates the plugin owns, permissive at the account default.
+
+**Emission conditions**:
+
+- Emit `baseline.tf` for every design, including EB-only, Fargate-only, and EKS designs. The baseline is workload-independent.
+- Do NOT probe for existing account resources (CloudTrail trails, Config recorders, Security Hub enrollment). Collision risk is surfaced by the inline comments listed in item 8.
+
+---
+
 ## Step 2: Generate `variables.tf`
 
 **Always include these global variables:**
@@ -148,6 +234,40 @@ variable "migration_id" {
   description = "Migration run identifier"
   type        = string
   default     = "<migration_id from .phase-status.json>"
+}
+```
+
+**Baseline contact variables (always include — `baseline.tf` depends on them):** the three fill-once contact emails referenced by `baseline.tf`'s alternate contacts and budget alerts. They intentionally have no `default` — `terraform plan` must fail until the customer supplies real values — and each carries a `validation` block rejecting placeholder tokens, so a copied-through `TODO-ops@example.com` fails loudly at `terraform plan` instead of silently becoming the account's security contact:
+
+```hcl
+variable "operations_email" {
+  description = "Operations contact for AWS account alternate contacts (fill-in checklist)"
+  type        = string
+
+  validation {
+    condition     = !strcontains(var.operations_email, "TODO") && !strcontains(var.operations_email, "example.com") && strcontains(var.operations_email, "@")
+    error_message = "Set operations_email in terraform.tfvars to a real inbox (see MIGRATION_GUIDE.md fill-in checklist)."
+  }
+}
+
+variable "billing_email" {
+  description = "Billing contact + budget alert recipient (fill-in checklist)"
+  type        = string
+
+  validation {
+    condition     = !strcontains(var.billing_email, "TODO") && !strcontains(var.billing_email, "example.com") && strcontains(var.billing_email, "@")
+    error_message = "Set billing_email in terraform.tfvars to a real inbox (see MIGRATION_GUIDE.md fill-in checklist)."
+  }
+}
+
+variable "security_email" {
+  description = "Security contact for AWS account alternate contacts (fill-in checklist)"
+  type        = string
+
+  validation {
+    condition     = !strcontains(var.security_email, "TODO") && !strcontains(var.security_email, "example.com") && strcontains(var.security_email, "@")
+    error_message = "Set security_email in terraform.tfvars to a real inbox (see MIGRATION_GUIDE.md fill-in checklist)."
+  }
 }
 ```
 
@@ -1944,6 +2064,11 @@ project_name = "<project_name>"
 environment  = "<environment>"
 migration_id = "<migration_id>"
 
+# Security baseline contacts (always required — plan fails until all three are real inboxes)
+operations_email = "TODO-ops@example.com"      # AWS account operations alternate contact
+billing_email    = "TODO-billing@example.com"  # billing alternate contact + budget alert recipient
+security_email   = "TODO-security@example.com" # security alternate contact
+
 # Database credentials (required if RDS/Aurora is in the design)
 # db_username = "app_user"
 # db_password = "CHANGE_ME"
@@ -1992,7 +2117,8 @@ After all files are written:
 3. **Variable completeness**: Every `var.*` reference has a corresponding `variable` block in `variables.tf`
 4. **Output references**: Every `output` references a declared resource attribute
 5. **Tag consistency**: Every resource has the default tags (applied via provider `default_tags`)
-6. **Elastic Beanstalk web runtime inputs**: For every EB web service, verify its per-app `eb_application_port_<app>_web` and `eb_health_check_path_<app>_web` variables are declared without defaults, include the required validation blocks, and are referenced directly by that app's `PORT` and `HealthCheckPath` settings. Verify non-web EB services do not require these variables. Do not report an EB web configuration as ready to plan until the customer has supplied both values for every web app.
+6. **Security baseline**: `baseline.tf` exists and contains the full always-on resource list from Step 1.5 (three `aws_account_alternate_contact`, password policy, S3 account PAB, EBS default encryption, Access Analyzer, IMDSv2 account default, CloudTrail + log bucket, budget, GuardDuty); its `locals.cloudtrail_retention_days` is a positive integer; the compliance-conditional section is present exactly when the normalized `compliance` array contains soc2/pci/hipaa/fedramp; the three contact email variables are declared without defaults and with placeholder-rejecting validation blocks
+7. **Elastic Beanstalk web runtime inputs**: For every EB web service, verify its per-app `eb_application_port_<app>_web` and `eb_health_check_path_<app>_web` variables are declared without defaults, include the required validation blocks, and are referenced directly by that app's `PORT` and `HealthCheckPath` settings. Verify non-web EB services do not require these variables. Do not report an EB web configuration as ready to plan until the customer has supplied both values for every web app.
 
 **Note:** Full `terraform validate` requires `terraform init` (provider download). The generated configuration SHOULD pass `terraform validate` when run with network access. If validation cannot run (no Terraform binary, no network), log a note but do NOT block generation.
 
