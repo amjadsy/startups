@@ -362,7 +362,7 @@ If `billing-profile.json` has `commitments.has_active_cuds == true`, add a `comm
 - **GCP effective committed rate**: The customer currently pays `effective_discount_percent`% below list via CUDs
 - **AWS equivalent**:
   - **Compute Savings Plans** (Fargate, Lambda, EC2): up to 66% vs On-Demand at maximum term/discount; typical 1-year no-upfront **20–40%**
-  - **Database Savings Plans** (Aurora, RDS, DynamoDB, ElastiCache, etc.): up to **35%** (serverless) / up to **~20%** (provisioned instances), 1-year no-upfront
+  - **Database Savings Plans** (Aurora, RDS, DynamoDB — any capacity mode, ElastiCache **for Valkey only**, etc.): up to **35%** (serverless) / up to **~20%** (provisioned instances), 1-year no-upfront
   - **RDS Reserved Instances** (alternative to Database Savings Plans on the same workload): up to **69%** (3-year All Upfront); locked to instance family/region — mutually exclusive with Database Savings Plans per workload
 - **Fair comparison framing**: Present both an uncommitted comparison (GCP list vs. AWS on-demand) and a committed comparison (GCP net-of-CUD vs. AWS with 1yr commitments where applicable)
 - **Migration timing note**: If the customer has active CUDs, note that CUD fees continue regardless of usage — migrating mid-commitment means paying both GCP CUD fees and AWS costs until the CUD term expires. For **Cloud Run → Fargate** or **GKE → Fargate** (re-platform) workloads, recommend establishing a 30–90 day AWS compute baseline before purchasing Compute Savings Plans (see Part 6).
@@ -376,7 +376,7 @@ Include in `estimation-infra.json` under `cost_comparison`:
   "gcp_monthly_at_list": 2450.00,
   "gcp_monthly_net_of_discounts": 2280.00,
   "aws_compute_savings_plan_discount": "up to 66% (Fargate/Lambda/EC2; max term); typical 20-40% (1yr no-upfront)",
-  "aws_database_savings_plan_discount": "up to 35% (serverless) / up to 20% (provisioned RDS/Aurora)",
+  "aws_database_savings_plan_discount": "up to 35% (serverless) / up to 20% (provisioned) -- covers Aurora, RDS, DynamoDB (any capacity mode), ElastiCache for Valkey only, DocumentDB, Neptune, Keyspaces, Timestream, DMS, OpenSearch",
   "aws_rds_reserved_instance_discount": "up to 69% (specific instance family, 3yr All Upfront)",
   "aws_1yr_savings_plan_typical_discount": "20-40%",
   "aws_3yr_savings_plan_typical_discount": "40-66%",
@@ -457,19 +457,37 @@ Present the monthly and annual cost difference between GCP baseline and each AWS
 
 ## Part 6: Cost Optimization Opportunities
 
+**Eligibility, the three-state rendering model, and the required caveats
+(baseline-before-committing, Activate credits, mutual exclusion) are defined
+in `references/shared/ri-sp-eligibility.md`.** Read that file before emitting
+`optimization_opportunities[]` — it is the source of truth for which AWS
+commitment product (if any) applies to a given service, including the
+ElastiCache Valkey-vs-Redis-OSS split and the DynamoDB on-demand-vs-provisioned
+split. The tables below cover the gcp-to-aws-specific entry shapes and
+migration-source guidance (Cloud Run/GKE sizing caveats); where the two
+disagree, `ri-sp-eligibility.md` governs.
+
+**Always render this section**, even when nothing in the design qualifies for
+an RI or Savings Plan — per the vendored file's three-state model, state
+explicitly which state the design landed in rather than omitting the section.
+
 **Relationship to cost tiers:** Premium / Balanced / Optimized totals in Part 2 are **pricing scenarios** for the same design. The **Optimized** tier already assumes illustrative trade-offs (e.g. reserved DB pricing, Fargate Spot). Entries in `optimization_opportunities` are **incremental post-migration actions** beyond the Balanced on-demand baseline — do **not** add their savings on top of Optimized tier totals (which already embed assumptions).
 
 **Itemize the scenario deltas (`projected_costs.scenario_deltas` — required with three tiers):** while computing the Premium and Optimized totals, record each concrete difference vs Balanced as a string: what changed, its monthly delta, and — when the change is architectural (a resource added or removed, e.g. NAT Gateway dropped, Multi-AZ added) — its operational consequence. Commitment-based savings must name the commitment ("1-year Savings Plan"). These strings render verbatim in the report's tier table ("vs Balanced, for this stack" column) and in the Present Summary tier table; never present an Optimized total whose embedded architectural changes are not itemized. Schema and examples: `shared/schema-estimate-infra.md` § Cost tiers.
 
 Present applicable optimizations with estimated savings:
 
-| Optimization                   | Savings Range                               | Applies To                                                                          | When                                            |
-| ------------------------------ | ------------------------------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------- |
-| Compute Savings Plans          | 20–66%                                      | Fargate, Lambda, EC2                                                                | Post-migration (after 30–90 day usage baseline) |
-| Database Savings Plans         | Up to 35% (serverless) / ~20% (provisioned) | Aurora, RDS, DynamoDB, ElastiCache, DocumentDB, Neptune, Keyspaces, Timestream, DMS | Post-migration or after instance right-sizing   |
-| RDS Reserved Instances         | Up to 69%                                   | RDS, Aurora (provisioned)                                                           | Post-migration (after architecture stabilizes)  |
-| S3 Intelligent-Tiering / S3-IA | 38–50%                                      | S3 storage                                                                          | During migration                                |
-| Spot Instances                 | 60–90%                                      | Batch/non-critical EC2 workloads                                                    | If batch jobs exist                             |
+| Optimization                   | Savings Range                               | Applies To                                                                                                                              | When                                            |
+| ------------------------------ | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| Compute Savings Plans          | 20–66%                                      | Fargate, Lambda, EC2                                                                                                                    | Post-migration (after 30–90 day usage baseline) |
+| Database Savings Plans         | Up to 35% (serverless) / ~20% (provisioned) | Aurora, RDS, DynamoDB (any capacity mode), ElastiCache **for Valkey only**, DocumentDB, Neptune, Keyspaces, Timestream, DMS, OpenSearch | Post-migration or after instance right-sizing   |
+| RDS Reserved Instances         | Up to 69%                                   | RDS, Aurora (provisioned)                                                                                                               | Post-migration (after architecture stabilizes)  |
+| DynamoDB Reserved Capacity     | Up to 54% (1yr) / up to 77% (3yr)           | DynamoDB, **provisioned Standard table class only** — not on-demand or Standard-IA                                                      | Post-migration (after usage baseline)           |
+| ElastiCache Reserved Nodes     | 30–55%                                      | ElastiCache **for Redis OSS or Memcached** — the lever when the target engine is not Valkey (Database SP does not cover it)             | Post-migration (after usage baseline)           |
+| S3 Intelligent-Tiering / S3-IA | 38–50%                                      | S3 storage                                                                                                                              | During migration                                |
+| Spot Instances                 | 60–90%                                      | Batch/non-critical EC2 workloads                                                                                                        | If batch jobs exist                             |
+
+**RI and Savings Plan / Reserved Capacity are mutually exclusive per workload** (RDS RI vs Database SP on the same instance; DynamoDB reserved capacity vs Database SP on the same table) — never present both as stacking on one resource.
 
 For each applicable optimization:
 
@@ -529,6 +547,8 @@ The plugin SHALL present Compute Savings Plans as a **post-migration optimizatio
 ### Database Savings Plans and Reserved Instances (Aurora / RDS)
 
 **Relevance to GCP migrations:** Cloud SQL instances typically run 24/7 with a known instance size. Unlike Cloud Run, Cloud SQL usage translates well to AWS RDS/Aurora steady-state workloads — commitment sizing is more predictable from source configuration.
+
+**Memorystore → ElastiCache and Firestore/Datastore → DynamoDB designs:** Database Savings Plans also apply to DynamoDB (any capacity mode) and to ElastiCache **for Valkey only** — see `references/shared/ri-sp-eligibility.md`. If Design mapped Memorystore for Redis to ElastiCache Redis OSS (not Valkey), do not include ElastiCache in this workload's Database Savings Plan `target_services`; surface an ElastiCache Reserved Nodes opportunity instead (Reserved Nodes cover all ElastiCache engines).
 
 **What Database Savings Plans offer:**
 

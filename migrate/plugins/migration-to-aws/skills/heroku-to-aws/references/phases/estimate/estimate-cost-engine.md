@@ -379,7 +379,18 @@ Present monthly and annual cost difference between Heroku baseline and each AWS 
 
 Present applicable optimizations with estimated savings. These are **incremental post-migration actions** beyond the Balanced on-demand baseline.
 
-The savings ranges + applicability come from [`knowledge/estimate/estimate-defaults.json`](../../../knowledge/estimate/estimate-defaults.json) → `optimization_savings_ranges` (keys: `compute_savings_plans`, `database_savings_plans`, `rds_reserved_instances`, `s3_intelligent_tiering`, `fargate_spot`, `ec2_spot`; each carries `savings_percent` / `target_services` / `timing`). Include ONLY opportunities relevant to the designed architecture (per each entry's `target_services` / `timing`).
+**Eligibility, the three-state rendering model, and the required caveats
+(baseline-before-committing, Activate credits, mutual exclusion) are defined
+in `references/vendored/estimate/ri-sp-eligibility.md`** (vendored from
+`skills/shared/estimate/ri-sp-eligibility.md`, kept byte-identical by
+`shared:sync`). Execute that file's eligibility matrix and rendering rules as
+part of this step — do not restate or fork the eligibility logic here. This
+section covers only the heroku-specific JSON entry shapes and gating
+thresholds.
+
+The savings ranges + `target_services` gating come from [`knowledge/estimate/estimate-defaults.json`](../../../knowledge/estimate/estimate-defaults.json) → `optimization_savings_ranges` (keys: `compute_savings_plans`, `database_savings_plans`, `rds_reserved_instances`, `s3_intelligent_tiering`, `fargate_spot`, `ec2_spot`; each carries `savings_percent` / `target_services` / `timing`). Include ONLY opportunities relevant to the designed architecture (per each entry's `target_services` / `timing`), cross-checked against the vendored eligibility matrix — the JSON below is the entry SHAPE; the vendored file is the eligibility SOURCE OF TRUTH when the two ever disagree (e.g. on ElastiCache engine).
+
+**Always render this section**, even when nothing in the design qualifies for an RI or Savings Plan — per the vendored file's three-state model, state explicitly which state the design landed in rather than omitting the section.
 
 **Emit in `optimization_opportunities[]`:**
 
@@ -404,7 +415,14 @@ The savings ranges + applicability come from [`knowledge/estimate/estimate-defau
 }
 ```
 
-### Database Savings Plans (when RDS/Aurora in design, projected > $50/month)
+### Database Savings Plans (when RDS/Aurora provisioned, or DynamoDB provisioned, or ElastiCache Valkey in design; projected > $50/month)
+
+**Eligibility check before emitting this entry (per the vendored eligibility matrix):**
+
+- RDS/Aurora **provisioned** — eligible. Mutually exclusive with RDS Reserved Instances on the same instance.
+- RDS/Aurora, DynamoDB — always eligible regardless of capacity mode.
+- **DynamoDB provisioned, Standard table class** — eligible, and also RI-eligible via DynamoDB reserved capacity (mutually exclusive with Database SP on the same capacity). **DynamoDB on-demand or Standard-IA** — Database-SP-eligible only; never emit an RI-style entry for on-demand DynamoDB.
+- **ElastiCache** — Database-SP-eligible **only when the target engine is Valkey.** `heroku-to-aws`'s default Redis mapping targets **Redis OSS**, which is Database-SP-**ineligible** — check the Design phase's actual selected engine before including ElastiCache in this entry's `target_services`. For a confirmed Redis OSS or Memcached target, do not list ElastiCache here; instead surface an ElastiCache Reserved Nodes-only note (Reserved Nodes remain available for all three engines).
 
 ```json
 {
@@ -417,7 +435,7 @@ The savings ranges + applicability come from [`knowledge/estimate/estimate-defau
   "timing": "immediately post-migration or after instance right-sizing",
   "implementation_effort": "low",
   "prerequisite": "Confirm target instance class; omit savings_monthly when DB on-demand < $50/month",
-  "description": "Heroku Postgres runs 24/7 with predictable usage. Database Savings Plans offer flexibility to change engines/instances post-migration. Mutually exclusive with RDS RIs on same workload.",
+  "description": "Heroku Postgres runs 24/7 with predictable usage. Database Savings Plans offer flexibility to change engines/instances post-migration. Mutually exclusive with RDS RIs on same workload. Include DynamoDB and/or ElastiCache in target_services only per the eligibility check above (ElastiCache: Valkey target only).",
   "alternative": {
     "opportunity": "RDS Reserved Instances",
     "type": "rds_reserved_instances",
@@ -427,6 +445,26 @@ The savings ranges + applicability come from [`knowledge/estimate/estimate-defau
   "references": [
     "https://aws.amazon.com/savingsplans/database-pricing/",
     "https://aws.amazon.com/rds/reserved-instances/"
+  ]
+}
+```
+
+### ElastiCache Reserved Nodes (when target engine is Redis OSS or Memcached — Database-SP-ineligible)
+
+```json
+{
+  "opportunity": "ElastiCache Reserved Nodes",
+  "type": "elasticache_reserved_nodes",
+  "target_services": ["ElastiCache"],
+  "savings_percent": "30-55%",
+  "savings_monthly": null,
+  "commitment": "1-year or 3-year",
+  "timing": "post-migration (after usage baseline)",
+  "implementation_effort": "low",
+  "prerequisite": "Confirm node type and count are stable before committing",
+  "description": "Database Savings Plans do not cover ElastiCache for Redis OSS or Memcached (Valkey-only) — Reserved Nodes are the only commitment lever for this target engine.",
+  "references": [
+    "https://aws.amazon.com/elasticache/pricing/"
   ]
 }
 ```
@@ -466,6 +504,8 @@ The savings ranges + applicability come from [`knowledge/estimate/estimate-defau
 ```
 
 Only include optimizations relevant to the designed architecture. Do not include EC2-specific optimizations if no Elastic Beanstalk/EC2 in design.
+
+**No eligible commitment product (per the vendored file's three-state model):** if the design contains nothing from the eligibility matrix's RI/SP-eligible or SP-only rows (e.g. an all-Lambda-equivalent or fully managed-service design with no Fargate/EB/EC2/RDS/Aurora/DynamoDB/ElastiCache), state this explicitly in the section rather than omitting it: "No 1-year/3-year commitment product applies to this architecture." Do not silently skip Part 6.
 
 ---
 
