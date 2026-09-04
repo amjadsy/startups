@@ -233,6 +233,7 @@ function recordsByQuestion(findings: JsonObject): Map<string, JsonObject[]> {
 export function validateSemantics(reviewRequest: JsonObject, answer: JsonObject): string[] {
   const errors: string[] = [];
   const requested = reviewRequest.requested_questions as string[];
+  const requestedSet = new Set(requested);
   const rawFindings = answer.findings as Json[];
   const findingNames = rawFindings.map((raw) => object(raw).question as string);
   for (const question of requested) {
@@ -286,15 +287,27 @@ export function validateSemantics(reviewRequest: JsonObject, answer: JsonObject)
   for (const [question, questionRecords] of records) {
     for (const record of questionRecords) {
       for (const key of ["component_id", "caller_component_id"]) {
-        if (typeof record[key] === "string" && !components.has(record[key])) errors.push(`${question}: broken ${key}`);
+        if (
+          requestedSet.has("runtime_framework")
+          && typeof record[key] === "string"
+          && !components.has(record[key])
+        ) errors.push(`${question}: broken ${key}`);
       }
       for (const key of ["process_id", "process_ids", "caller_process_ids"]) {
         const references = typeof record[key] === "string" ? [record[key]] : (record[key] ?? []) as Json[];
         for (const reference of references) {
-          if (typeof reference === "string" && !processes.has(reference)) errors.push(`${question}: broken ${key}`);
+          if (
+            requestedSet.has("process_commands")
+            && typeof reference === "string"
+            && !processes.has(reference)
+          ) errors.push(`${question}: broken ${key}`);
         }
       }
-      if (typeof record.listener_id === "string" && !listeners.has(record.listener_id)) {
+      if (
+        requestedSet.has("network_listeners")
+        && typeof record.listener_id === "string"
+        && !listeners.has(record.listener_id)
+      ) {
         errors.push(`${question}: broken listener_id`);
       }
       if (typeof record.callee_application_id === "string" && !estateApps.has(record.callee_application_id)) {
@@ -303,7 +316,11 @@ export function validateSemantics(reviewRequest: JsonObject, answer: JsonObject)
       if (typeof record.inventory_addon_id === "string" && !addons.has(record.inventory_addon_id)) {
         errors.push(`${question}: broken inventory_addon_id`);
       }
-      if (record.reference_kind === "DEPENDENCY" && !dependencies.has(record.reference_id as string)) {
+      if (
+        requestedSet.has("external_services")
+        && record.reference_kind === "DEPENDENCY"
+        && !dependencies.has(record.reference_id as string)
+      ) {
         errors.push(`${question}: broken dependency reference_id`);
       }
       if (record.reference_kind === "APPLICATION" && !estateApps.has(record.reference_id as string)) {
