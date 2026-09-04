@@ -5,13 +5,21 @@ application-source reviewer. It is data only: no current phase or target reads i
 
 Requests expose only selected question names, application identity, process/configuration names,
 attachment and Private Space presence, add-on IDs, and selected estate application IDs.
-Configuration values, credentials, connection strings, and source excerpts have no fields.
+Configuration values, credentials, connection strings, and source excerpts have no dedicated
+fields. Free-text fields must contain concise summaries or redacted commands, never literal secret
+values or copied source. JSON Schema cannot establish that property from arbitrary text; the
+producer and executable validator must enforce it before retaining findings.
 
-Every requested question has exactly one finding. `PRESENT` carries a non-empty typed record array;
-`ABSENT_WITHIN_REVIEWED_SCOPE`, `UNKNOWN`, and `NOT_APPLICABLE` carry `null`. `UNKNOWN` requires a
-limitation. Absence is invalid if a `SKIPPED_SOURCE`, `UNREADABLE_SOURCE`, `TRUNCATED_SOURCE`, or
-`DYNAMIC_SOURCE` limitation could affect it. Sources are optional direct relative paths with
-optional line bounds.
+`PRESENT` carries a non-empty typed record array; `ABSENT_WITHIN_REVIEWED_SCOPE`, `UNKNOWN`, and
+`NOT_APPLICABLE` carry `null`. JSON Schema requires an explanation for `UNKNOWN`. The executable
+validator must also require exactly one finding per requested question, reject unrequested
+findings, reject unsupported absence claims, check cross-record references when their defining
+questions are present, and reject reversed source line bounds. Sources are optional direct relative
+paths with optional line bounds.
+
+Heroku process and configuration names provide non-secret inventory context, not an allowlist.
+Source review may discover additional names; those differences must be retained for later drift or
+missing-configuration assessment rather than rejected.
 
 ## Field-Purpose Review
 
@@ -30,7 +38,7 @@ relationship IDs make references checkable; setting names never carry values.
 | `heroku_runtime_behavior`     | `component_id`, `process_ids`, `metadata_name`, `use`, `effect`                                                                                                                            | Identify Heroku metadata dependencies requiring customer action.                             |
 | `native_dependencies`         | `component_id`, `kind`, `name`, `phase`, `process_ids`, `os_constraints`, `architecture_constraints`                                                                                       | Assess platform compatibility and required build/runtime packages.                           |
 | `release_setup_commands`      | `component_id`, `process_id`, `command`, `timing`, `purpose`                                                                                                                               | Generate deployment hooks or record required customer-run setup.                             |
-| `recurring_jobs`              | `job_id`, `component_id`, `process_ids`, `name`, `mechanism`, `entrypoint`, `schedule`, `coordination`                                                                                     | Identify scheduler artifacts and coordination work.                                          |
+| `recurring_jobs`              | `job_id`, `component_id`, `process_ids`, `name`, `mechanism`, `command`, `schedule`, `coordination`                                                                                        | Identify scheduler artifacts and coordination work.                                          |
 | `health_routes`               | `component_id`, `process_id`, `listener_id`, `path`, `methods`, `success_statuses`, `redirects`, `authentication`, `required_headers`                                                      | Generate health checks and assess whether unauthenticated checks are viable.                 |
 | `local_file_writes`           | `component_id`, `process_ids`, `setting_name`, `default_path`, `read_after_write`, `purpose`, `required_lifetime`, `cross_instance_required`                                               | Assess ephemeral storage compatibility and required persistent/shared storage work.          |
 | `network_protocols`           | `component_id`, `process_ids`, `direction`, `listener_id`, `transport`, `application_protocol`, `port`, `application_managed_tls`                                                          | Assess Beanstalk protocol support and retain inputs for a private adapter.                   |

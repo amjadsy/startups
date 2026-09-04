@@ -226,7 +226,7 @@ const values: Record<(typeof questions)[number], Json[]> = {
     process_ids: ['process-web'],
     name: 'cleanup',
     mechanism: 'scheduler',
-    entrypoint: 'npm run cleanup',
+    command: 'npm run cleanup',
     schedule: '0 2 * * *',
     coordination: 'single execution',
   }],
@@ -360,6 +360,7 @@ function recordsByQuestion(findings: JsonObject): Map<string, JsonObject[]> {
 function validateSemantics(reviewRequest: JsonObject, answer: JsonObject): string[] {
   const errors: string[] = [];
   const requested = reviewRequest.requested_questions as string[];
+  const requestedSet = new Set(requested);
   const rawFindings = answer.findings as Json[];
   const findingNames = rawFindings.map((raw) => object(raw).question as string);
   for (const question of requested) {
@@ -404,22 +405,38 @@ function validateSemantics(reviewRequest: JsonObject, answer: JsonObject): strin
   for (const [question, questionRecords] of records) {
     for (const record of questionRecords) {
       for (const key of ['component_id', 'caller_component_id']) {
-        if (typeof record[key] === 'string' && !components.has(record[key])) errors.push(`${question}: broken ${key}`);
+        if (
+          requestedSet.has('runtime_framework')
+          && typeof record[key] === 'string'
+          && !components.has(record[key])
+        ) errors.push(`${question}: broken ${key}`);
       }
       for (const key of ['process_id', 'process_ids', 'caller_process_ids']) {
         const references = typeof record[key] === 'string' ? [record[key]] : (record[key] ?? []) as Json[];
         for (const reference of references) {
-          if (typeof reference === 'string' && !processes.has(reference)) errors.push(`${question}: broken ${key}`);
+          if (
+            requestedSet.has('process_commands')
+            && typeof reference === 'string'
+            && !processes.has(reference)
+          ) errors.push(`${question}: broken ${key}`);
         }
       }
-      if (typeof record.listener_id === 'string' && !listeners.has(record.listener_id)) errors.push(`${question}: broken listener_id`);
+      if (
+        requestedSet.has('network_listeners')
+        && typeof record.listener_id === 'string'
+        && !listeners.has(record.listener_id)
+      ) errors.push(`${question}: broken listener_id`);
       if (typeof record.callee_application_id === 'string' && !estateApps.has(record.callee_application_id)) {
         errors.push(`${question}: broken callee_application_id`);
       }
       if (typeof record.inventory_addon_id === 'string' && !addons.has(record.inventory_addon_id)) {
         errors.push(`${question}: broken inventory_addon_id`);
       }
-      if (record.reference_kind === 'DEPENDENCY' && !dependencies.has(record.reference_id as string)) {
+      if (
+        requestedSet.has('external_services')
+        && record.reference_kind === 'DEPENDENCY'
+        && !dependencies.has(record.reference_id as string)
+      ) {
         errors.push(`${question}: broken dependency reference_id`);
       }
       if (record.reference_kind === 'APPLICATION' && !estateApps.has(record.reference_id as string)) {
@@ -476,6 +493,7 @@ describe('application-source contract', () => {
     assertJsonEqual(validate(schema, answer), []);
     assertJsonEqual(validateSemantics(reviewRequest, answer), []);
     (object((answer.findings as Json[])[1]).limitations as Json[]) = [];
+    assert.ok(validate(schema, answer).length > 0);
     assert.match(validateSemantics(reviewRequest, answer).join('\n'), /UNKNOWN needs a limitation/);
   });
 
@@ -522,12 +540,23 @@ describe('application-source contract', () => {
         'src/../secret',
         'src//secret',
         String.raw`src\secret`,
+        ' /etc/passwd',
+        '\t/etc/passwd',
+        ' ..',
+        ' ./secret',
+        ' C:/secret',
+        'src/ ../secret',
+        '~/.ssh/id_rsa',
+        'src/file.js ',
       ]
     ) {
       const sample = finding();
       sample.sources = [{ path }];
       assert.ok(validate(schema, { findings: [sample] }).length > 0, path);
     }
+    const pathWithInternalSpace = finding();
+    pathWithInternalSpace.sources = [{ path: 'src/My File.js' }];
+    assertJsonEqual(validate(schema, { findings: [pathWithInternalSpace] }), []);
   });
 
   it('rejects duplicate, missing, and unrequested findings', () => {
@@ -544,6 +573,40 @@ describe('application-source contract', () => {
     const runtimeValue = object((duplicateId.findings as Json[])[0]).value as Json[];
     runtimeValue.push(clone(runtimeValue[0]));
     assert.match(validateSemantics(request(), duplicateId).join('\n'), /duplicate component id/);
+  });
+
+  it('accepts partial requests when the defining question was not requested', () => {
+    for (const question of [
+      'process_commands',
+      'network_listeners',
+      'health_routes',
+      'potential_private_endpoints',
+    ] as const) {
+      const reviewRequest = request([question]);
+      const answer = presentFindings([question]);
+      assertJsonEqual(validate(schema, answer), []);
+      assertJsonEqual(validateSemantics(reviewRequest, answer), []);
+    }
+  });
+
+  it('retains source names that are absent from Heroku inventory context', () => {
+    const selected = [
+      'process_commands',
+      'port_host_binding',
+      'logs_telemetry',
+      'local_file_writes',
+      'application_connections',
+    ] as const;
+    const reviewRequest = request(selected);
+    const answer = presentFindings(selected);
+    const processFinding = (answer.findings as Json[]).map(object).find((item) =>
+      item.question === 'process_commands'
+    );
+    if (!processFinding || !Array.isArray(processFinding.value)) throw new Error('missing process_commands');
+    object(processFinding.value[0]).type = 'worker';
+
+    assertJsonEqual(validate(schema, answer), []);
+    assertJsonEqual(validateSemantics(reviewRequest, answer), []);
   });
 
   it('rejects qualified absence and reversed line bounds', () => {

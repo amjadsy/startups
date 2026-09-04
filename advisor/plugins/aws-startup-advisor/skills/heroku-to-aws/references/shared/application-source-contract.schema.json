@@ -39,7 +39,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 500,
-      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.\\.?(/|$)).+$"
+      "pattern": "^(?![~/])(?![A-Za-z]:)(?!\\s)(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*[/]\\s)(?!.*\\s(?:/|$)).+$"
     },
     "stringList": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/definitions/name" } },
     "identifierList": {
@@ -133,6 +133,10 @@
           "if": { "properties": { "status": { "const": "PRESENT" } } },
           "then": { "properties": { "value": { "not": { "type": "null" } } } },
           "else": { "properties": { "value": { "type": "null" } } }
+        },
+        {
+          "if": { "required": ["status"], "properties": { "status": { "const": "UNKNOWN" } } },
+          "then": { "properties": { "limitations": { "minItems": 1 } } }
         }
       ]
     },
@@ -275,7 +279,7 @@
     },
     "recurringJobRecord": {
       "type": "object",
-      "required": ["job_id", "component_id", "process_ids", "name", "mechanism", "entrypoint", "coordination"],
+      "required": ["job_id", "component_id", "process_ids", "name", "mechanism", "command", "coordination"],
       "additionalProperties": false,
       "properties": {
         "job_id": { "$ref": "#/definitions/identifier" },
@@ -283,7 +287,7 @@
         "process_ids": { "$ref": "#/definitions/identifierList" },
         "name": { "$ref": "#/definitions/name" },
         "mechanism": { "$ref": "#/definitions/name" },
-        "entrypoint": { "$ref": "#/definitions/text" },
+        "command": { "$ref": "#/definitions/text" },
         "schedule": { "$ref": "#/definitions/name" },
         "coordination": { "$ref": "#/definitions/text" }
       }
