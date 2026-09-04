@@ -40,9 +40,17 @@ import {
 const repoRoot = resolve(dirname(resolve(process.argv[1])), '../../../../..');
 const migrate = resolve(repoRoot, 'migrate/plugins/migration-to-aws');
 const advisor = resolve(repoRoot, 'advisor/plugins/aws-startup-advisor');
+const migrateReviewer = resolve(migrate, 'tools/application-source-review.ts');
+const advisorReviewer = resolve(advisor, 'tools/application-source-review.ts');
 const schema = JSON.parse(
   readFileSync(resolve(migrate, 'skills/heroku-to-aws/references/shared/application-source-contract.schema.json'), 'utf8'),
 ) as JsonObject;
+
+describe('cross-plugin source reviewer', () => {
+  it('keeps the advisor and migrate implementations identical', () => {
+    assert.equal(readFileSync(advisorReviewer, 'utf8'), readFileSync(migrateReviewer, 'utf8'));
+  });
+});
 
 // --- fixtures -----------------------------------------------------------------
 
