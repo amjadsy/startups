@@ -176,7 +176,7 @@ Migration state lives in `$MIGRATION_DIR` (`.migration/[MMDD-HHMM]/`), created b
 ```json
 {
   "migration_id": "0226-1430",
-  "run_id": "3f9c2a7e-5b1d-4e8a-9c6f-2d7b8e1a4c53",
+  "run_id": "[random UUID, written once at creation]",
   "owning_skill": "GCP_TO_AWS",
   "last_updated": "2026-02-26T15:35:22Z",
   "current_phase": "design",
@@ -215,7 +215,7 @@ Example — after completing the Clarify phase, write `$MIGRATION_DIR/.phase-sta
 ```json
 {
   "migration_id": "MMDD-HHMM",
-  "run_id": "3f9c2a7e-5b1d-4e8a-9c6f-2d7b8e1a4c53",
+  "run_id": "[unchanged: the UUID written at creation]",
   "owning_skill": "GCP_TO_AWS",
   "last_updated": "2026-02-26T15:35:22Z",
   "current_phase": "design",
