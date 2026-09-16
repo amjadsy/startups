@@ -74,9 +74,9 @@ _Note: If Q5=Yes (multi-cloud), this question is skipped — `compute: "eks"` is
 
 ## Q8 — How do you want to run your Kubernetes workloads on AWS?
 
-_Fire when:_ GKE cluster present AND Q5 != 1 (multi-cloud). Skip when: Q5 = 1 (already resolved to EKS Standard Cluster) or no GKE in inventory.
+_Fire when:_ GKE cluster present AND Q5 != 1 (multi-cloud). Skip when: Q5 = 1 (already resolved to a Standard EKS Cluster) or no GKE in inventory.
 
-**Rationale:** You are already on GKE, so the starting assumption is that you keep Kubernetes — the default AWS target is **EKS Auto Mode**, where AWS provisions, scales, patches, and operates the nodes for you (the same hands-off model as GKE Autopilot, and the approach AWS recommends going forward). Q8 confirms that default and offers two explicit off-ramps: manage the nodes yourself (standard EKS), or drop Kubernetes entirely (ECS Fargate). This is subjective and cannot be inferred from IaC.
+**Rationale:** You are already on GKE, so the starting assumption is that you keep Kubernetes — the default AWS target is **EKS Auto Mode**, where AWS provisions, scales, patches, and operates the nodes for you (the same hands-off model as GKE Autopilot, and the approach AWS recommends going forward). Q8 confirms that default and offers two explicit off-ramps: manage the nodes yourself (Standard EKS Cluster), or drop Kubernetes entirely (ECS Fargate). This is subjective and cannot be inferred from IaC.
 
 **Autopilot context (read `config.autopilot_enabled` on the `google_container_cluster` from `gcp-resource-inventory.json`):**
 
@@ -87,31 +87,31 @@ _Fire when:_ GKE cluster present AND Q5 != 1 (multi-cloud). Skip when: Q5 = 1 (a
 **Context for user:** Frame the question practically and **neutrally — present all options (1/2/3) before stating the default, so an unsure user makes an actual choice rather than passively confirming a lead-in recommendation.** The default is noted last, after the options:
 
 - **Fully-managed Kubernetes** — keep Kubernetes and your manifests/Helm charts, but let AWS run the nodes (autoscaling, patching, right-sizing). Closest match to GKE Autopilot.
-- **Self-managed nodes** — keep Kubernetes and take direct control of the node groups (instance types, node pools, upgrades). A standard EKS cluster.
+- **Self-managed nodes** — keep Kubernetes and take direct control of the node groups (instance types, node pools, upgrades). A Standard EKS Cluster.
 - **Drop Kubernetes** — move to ECS Fargate: simpler managed containers, no Kubernetes control plane or manifests to operate.
 
 > Your workloads run on Kubernetes today (GKE). How would you like to run them on AWS?
 >
 > 1. Keep Kubernetes, fully managed — EKS Auto Mode (AWS runs the nodes, like GKE Autopilot)
-> 2. Keep Kubernetes, manage the nodes yourself — EKS with managed node groups (standard cluster)
+> 2. Keep Kubernetes, manage the nodes yourself — Standard EKS Cluster with managed node groups
 > 3. Move off Kubernetes — simpler managed containers (ECS Fargate)
 > 4. I don't know
 >
 > _If you're unsure, we default to 1 — the closest match to how you run today and the lowest-ops way to keep Kubernetes._
 
-| Answer                        | Recommendation Impact                                                                                               |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Fully managed (Auto Mode)     | **EKS Auto Mode** — AWS provisions/scales/patches nodes; lowest-ops way to keep Kubernetes; AWS-recommended default |
-| Self-managed nodes (standard) | **EKS with managed node groups** — preserves direct node control; you own instance types, node pools, and upgrades  |
-| Drop Kubernetes               | **ECS Fargate** — eliminates the Kubernetes control plane and manifests entirely; simplest operational model        |
+| Answer                        | Recommendation Impact                                                                                                               |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Fully managed (Auto Mode)     | **EKS Auto Mode** — AWS provisions/scales/patches nodes; lowest-ops way to keep Kubernetes; AWS-recommended default                 |
+| Self-managed nodes (standard) | **Standard EKS Cluster with managed node groups** — preserves direct node control; you own instance types, node pools, and upgrades |
+| Drop Kubernetes               | **ECS Fargate** — eliminates the Kubernetes control plane and manifests entirely; simplest operational model                        |
 
-_Note: If Q5=Yes (multi-cloud), this question is skipped and EKS Standard Cluster is already decided._
+_Note: If Q5=Yes (multi-cloud), this question is skipped and a Standard EKS Cluster is already decided._
 
 Interpret:
 
 ```
 1 -> kubernetes: "eks-auto" — EKS Auto Mode (default managed Kubernetes; AWS operates the nodes)
-2 -> kubernetes: "eks-standard" — EKS with managed node groups (explicit standard-cluster opt-out)
+2 -> kubernetes: "eks-standard" — Standard EKS Cluster with managed node groups (explicit opt-out from Auto Mode)
 3 -> kubernetes: "ecs-fargate" — ECS Fargate, drop Kubernetes
 4 -> same as default (1)
 ```

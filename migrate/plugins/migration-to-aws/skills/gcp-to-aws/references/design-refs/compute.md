@@ -11,14 +11,14 @@
 
 ## Eliminators (Hard Blockers)
 
-| GCP Service     | AWS               | Blocker                                                                                                                                                                                                                                                                                                                           |
-| --------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cloud Run       | Lambda            | Execution time >15 min → use Fargate                                                                                                                                                                                                                                                                                              |
-| Cloud Run       | Fargate           | GPU workload or >16 vCPU or >120 GB memory → use EC2                                                                                                                                                                                                                                                                              |
-| Cloud Functions | Lambda            | Python version not supported (e.g., Python 2.7) → use custom runtime on Fargate                                                                                                                                                                                                                                                   |
-| GKE             | EKS               | Custom CRI incompatible → manual workaround or ECS. **Auto Mode caveat:** node-level needs Auto Mode disallows (custom AMIs/OS, node-managing privileged DaemonSets, SSH/host access, custom CRI or kubelet flags) → use standard EKS managed node groups (`kubernetes: "eks-standard"`), not Auto Mode.                          |
-| Any             | App Runner        | **Closed to new customers (April 30 2026).** Do not target App Runner for new migrations. Use Fargate (default for non-K8s containers), Lambda (event-driven), or EKS Auto Mode (K8s workloads).                                                                                                                                  |
-| App Engine      | Elastic Beanstalk | `compute_model: "container_orchestration"` or `"serverless"` in preferences → do not use EB, fall through to Fargate or Lambda _(preference override, not a technical blocker)_. Also `compute: "eks"` (Q5 = multi-cloud) → do not use EB, route to **standard EKS** (portable; not Auto Mode) _(top-level portability override)_ |
+| GCP Service     | AWS               | Blocker                                                                                                                                                                                                                                                                                                                                     |
+| --------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cloud Run       | Lambda            | Execution time >15 min → use Fargate                                                                                                                                                                                                                                                                                                        |
+| Cloud Run       | Fargate           | GPU workload or >16 vCPU or >120 GB memory → use EC2                                                                                                                                                                                                                                                                                        |
+| Cloud Functions | Lambda            | Python version not supported (e.g., Python 2.7) → use custom runtime on Fargate                                                                                                                                                                                                                                                             |
+| GKE             | EKS               | Custom CRI incompatible → manual workaround or ECS. **Auto Mode caveat:** node-level needs Auto Mode disallows (custom AMIs/OS, node-managing privileged DaemonSets, SSH/host access, custom CRI or kubelet flags) → use a Standard EKS Cluster (`kubernetes: "eks-standard"`), not Auto Mode.                                              |
+| Any             | App Runner        | **Closed to new customers (April 30 2026).** Do not target App Runner for new migrations. Use Fargate (default for non-K8s containers), Lambda (event-driven), or EKS Auto Mode (K8s workloads).                                                                                                                                            |
+| App Engine      | Elastic Beanstalk | `compute_model: "container_orchestration"` or `"serverless"` in preferences → do not use EB, fall through to Fargate or Lambda _(preference override, not a technical blocker)_. Also `compute: "eks"` (Q5 = multi-cloud) → do not use EB, route to a **Standard EKS Cluster** (portable; not Auto Mode) _(top-level portability override)_ |
 
 ## Signals (Decision Criteria)
 
@@ -46,7 +46,7 @@ Note: Cloud Run maps to Fargate via deterministic fast-path ("Always"). The `com
 GKE usage signals Kubernetes adoption, so the **default is to keep Kubernetes on EKS Auto Mode** — AWS operates the nodes (the GKE Autopilot equivalent, and AWS's recommended approach going forward). Branch on `preferences.json` → `design_constraints.kubernetes` (set by Q8):
 
 - **`kubernetes = "eks-auto"` or absent** → **EKS Auto Mode** (default). An absent preference resolves to Auto Mode, not Fargate — teams that want to manage nodes or leave Kubernetes say so in Clarify (Q8 B/C).
-- **`kubernetes = "eks-standard"`** → **EKS with managed node groups** (standard cluster; user explicitly wants node control).
+- **`kubernetes = "eks-standard"`** → **Standard EKS Cluster with managed node groups** (user explicitly wants node control).
 - **`kubernetes = "ecs-fargate"`** → **Fargate** (user chose to drop Kubernetes).
 - **Autopilot signal:** when the source `google_container_cluster` has `config.autopilot_enabled: true`, Auto Mode is the direct 1:1 mapping — record it in the rationale (`"GKE Autopilot → EKS Auto Mode (managed-node equivalent)"`). A Standard cluster (`autopilot_enabled: false`) still defaults to Auto Mode but `eks-standard` is the natural opt-out if the user wants to preserve node pools.
 - **Auto Mode eliminator:** if the workload needs node-level customization Auto Mode disallows (see Eliminators), fall back to `eks-standard`, not Fargate.
@@ -54,12 +54,12 @@ GKE usage signals Kubernetes adoption, so the **default is to keep Kubernetes on
 
 ### App Engine
 
-- **Multi-cloud portability required** (`compute: "eks"` from Q5) → **EKS standard node groups** (`kubernetes: "eks-standard"`) — top-level portability override; takes precedence over the EB default and any `compute_model` preference (Q7b does not fire under multi-cloud). Same override that forces GKE → standard EKS. **Auto Mode is NOT used for multi-cloud** — its node management is AWS-specific and defeats the portability that Q5 requires; a standard EKS cluster is the portable target.
+- **Multi-cloud portability required** (`compute: "eks"` from Q5) → **Standard EKS Cluster** (`kubernetes: "eks-standard"`) — top-level portability override; takes precedence over the EB default and any `compute_model` preference (Q7b does not fire under multi-cloud). Same override that forces GKE → Standard EKS Cluster. **Auto Mode is NOT used for multi-cloud** — its node management is AWS-specific and defeats the portability that Q5 requires; a Standard EKS Cluster is the portable target.
 - **Default** → Elastic Beanstalk (PaaS-to-PaaS, preserves managed platform model)
 - **User prefers container control** (`compute_model: "container_orchestration"`) → Fargate
 - **Event-driven / scale-to-zero required** → Lambda
 
-After selecting Elastic Beanstalk, load `elastic-beanstalk.md` to populate `aws_config` (platform, deployment policy, IAM, VPC, sizing). When `compute: "eks"` routes App Engine to EKS (standard node groups under multi-cloud), do **not** run the EB fan-out or load `elastic-beanstalk.md` — the app_version resources are skipped like any other non-EB path.
+After selecting Elastic Beanstalk, load `elastic-beanstalk.md` to populate `aws_config` (platform, deployment policy, IAM, VPC, sizing). When `compute: "eks"` routes App Engine to a Standard EKS Cluster under multi-cloud, do **not** run the EB fan-out or load `elastic-beanstalk.md` — the app_version resources are skipped like any other non-EB path.
 
 ## CPU Architecture (Graviton vs x86)
 
@@ -78,14 +78,14 @@ Add a `graviton` block (see `schema-graviton.md`) to the service's output. GPU/C
 
 Apply in order; first match wins:
 
-1. **Eliminators**: Does GCP config violate AWS constraints, or does a top-level preference override apply? If yes: switch to alternative. **`compute: "eks"` (Q5 = multi-cloud) is a hard override — App Engine (and all compute) → EKS standard node groups (portable Kubernetes; Auto Mode is NOT used for multi-cloud); stop here, do not evaluate the managed-platform/EB branch below.** For GKE (AWS-only, Auto Mode default), the Auto Mode eliminator applies: node-level customization Auto Mode disallows → `eks-standard`, not Fargate.
-2. **Operational Model**: Managed (Lambda, Fargate, **EKS Auto Mode** — AWS operates the nodes) vs Self-Hosted (EC2, **standard EKS managed node groups**)?
+1. **Eliminators**: Does GCP config violate AWS constraints, or does a top-level preference override apply? If yes: switch to alternative. **`compute: "eks"` (Q5 = multi-cloud) is a hard override — App Engine (and all compute) → Standard EKS Cluster (portable Kubernetes; Auto Mode is NOT used for multi-cloud); stop here, do not evaluate the managed-platform/EB branch below.** For GKE (AWS-only, Auto Mode default), the Auto Mode eliminator applies: node-level customization Auto Mode disallows → `eks-standard`, not Fargate.
+2. **Operational Model**: Managed (Lambda, Fargate, **EKS Auto Mode** — AWS operates the nodes) vs Self-Hosted (EC2, **Standard EKS Cluster**)?
    - Prefer managed unless: Always-on + high baseline cost → EC2, or the user explicitly wants node control → `eks-standard`
-   - For App Engine sources: Elastic Beanstalk (PaaS-to-PaaS) when `compute_model` is absent or `"managed_platform"` **and `compute` ≠ `"eks"`** (when `compute: "eks"`, the criterion-1 override already selected EKS with standard node groups)
+   - For App Engine sources: Elastic Beanstalk (PaaS-to-PaaS) when `compute_model` is absent or `"managed_platform"` **and `compute` ≠ `"eks"`** (when `compute: "eks"`, the criterion-1 override already selected a Standard EKS Cluster)
 3. **User Preference**: From `preferences.json`: `design_constraints.compute`, `design_constraints.kubernetes`, `design_constraints.cost_sensitivity`?
-   - If `compute = "eks"` (Q5 = multi-cloud) → **EKS standard node groups** for all compute, including App Engine (top-level portability override; overrides EB default and `compute_model`). Auto Mode is excluded here — it is AWS-specific and defeats multi-cloud portability.
+   - If `compute = "eks"` (Q5 = multi-cloud) → **Standard EKS Cluster** for all compute, including App Engine (top-level portability override; overrides EB default and `compute_model`). Auto Mode is excluded here — it is AWS-specific and defeats multi-cloud portability.
    - If `kubernetes = "eks-auto"` → **EKS Auto Mode** (keep Kubernetes, AWS runs the nodes)
-   - If `kubernetes = "eks-standard"` → **EKS with managed node groups** (user explicitly wants node control)
+   - If `kubernetes = "eks-standard"` → **Standard EKS Cluster with managed node groups** (user explicitly wants node control)
    - If `kubernetes = "ecs-fargate"` → Fargate (user chose to drop Kubernetes)
    - If `kubernetes` is **absent** → **EKS Auto Mode** for GKE sources (do not default to Fargate; GKE signals Kubernetes adoption). Non-GKE containers (Cloud Run) map to Fargate via their own fast-path.
    - If `cost_sensitivity` present and high → still keep Auto Mode for GKE (lowest-ops K8s); a stated Kubernetes preference outranks the cost signal — do not silently drop to Fargate against it. The estimate surfaces the EKS control-plane fee and the Auto Mode management fee as explicit line items (`estimate-infra.md` → Compute (EKS Auto Mode)), so the user can weigh that cost trade rather than having its magnitude assumed here.
@@ -157,8 +157,8 @@ Apply in order; first match wins:
 - Signals: PaaS deployment, but `compute: "eks"` in preferences (Q5 = multi-cloud); Q7b did not fire, so `compute_model` is absent
 - Fast-path condition NOT met: `compute` = `"eks"`, so the Direct Mapping row does not match — falls through to rubric
 - Criterion 1 (Eliminators): EB blocked (`compute: "eks"` multi-cloud override)
-- Criterion 3 (User Preference): `compute = "eks"` → EKS standard node groups (multi-cloud portability override; Auto Mode excluded — AWS-specific, not portable)
-- → **AWS: EKS standard node groups** (no EB fan-out; app_version resources skipped like any other non-EB path)
+- Criterion 3 (User Preference): `compute = "eks"` → Standard EKS Cluster (multi-cloud portability override; Auto Mode excluded — AWS-specific, not portable)
+- → **AWS: Standard EKS Cluster** (no EB fan-out; app_version resources skipped like any other non-EB path)
 - Confidence: `inferred` (rubric-based override of default PaaS mapping)
 
 ### Example 5a: GKE Autopilot cluster (default)
@@ -175,8 +175,8 @@ Apply in order; first match wins:
 
 - GCP: `google_container_cluster` with `config.autopilot_enabled: false`, node pool `machine_type=n2-standard-4`
 - Signals: self-managed node pools; Q8 = B (`kubernetes: "eks-standard"`)
-- Criterion 3 (User Preference): `kubernetes = "eks-standard"` → EKS with managed node groups
-- → **AWS: EKS with managed node groups (m7g.xlarge, Graviton default)** — preserves direct node control
+- Criterion 3 (User Preference): `kubernetes = "eks-standard"` → Standard EKS Cluster with managed node groups
+- → **AWS: Standard EKS Cluster with managed node groups (m7g.xlarge, Graviton default)** — preserves direct node control
 - Confidence: `inferred`
 
 ### Example 5c: GKE cluster, team wants off Kubernetes
@@ -191,10 +191,10 @@ Apply in order; first match wins:
 
 - GCP: `google_container_cluster` running privileged DaemonSets that manage the node and a custom node OS
 - Signals: `kubernetes = "eks-auto"` (or default), but workload needs node-level access Auto Mode disallows
-- Criterion 1 (Eliminators): Auto Mode caveat fires → fall back to standard node groups (not Fargate)
-- → **AWS: EKS with managed node groups** — Kubernetes preserved with the node control the workload requires
+- Criterion 1 (Eliminators): Auto Mode caveat fires → fall back to a Standard EKS Cluster with managed node groups (not Fargate)
+- → **AWS: Standard EKS Cluster with managed node groups** — Kubernetes preserved with the node control the workload requires
 - Confidence: `inferred`
-- Rationale: `"GKE → EKS standard node groups (Auto Mode incompatible: node-level customization required)"`
+- Rationale: `"GKE → Standard EKS Cluster (Auto Mode incompatible: node-level customization required)"`
 
 ## Output Schema
 
