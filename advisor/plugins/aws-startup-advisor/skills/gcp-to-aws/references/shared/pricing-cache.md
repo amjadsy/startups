@@ -6,7 +6,7 @@
 **Accuracy:** ±5-10% for infrastructure services (sourced from AWS Price List API), ±15-25% for AI models (sourced from public pricing pages)
 
 > Prices may vary by region and change over time. Use for estimation only. For real-time pricing, fall back to the AWS Pricing MCP server. **Amazon Nova** figures in the Bedrock subsection often reference **US East (Ohio)** and **inference mode** (global vs geo); other services in this file default to **us-east-1** unless noted.
-> **Staleness warning:** If today's date is more than 30 days after the **Last updated** date above, treat AI model prices as potentially stale (±15-25% accuracy may widen). Infrastructure prices (Fargate, RDS, S3, etc.) change rarely and remain reliable longer. When staleness is detected, set `pricing_source: "cached_stale"` in the estimate output and note: "Pricing cache is more than 30 days old — AI model prices may have changed. Verify via the AWS Pricing MCP server or [aws.amazon.com/bedrock/pricing](https://aws.amazon.com/bedrock/pricing/)."
+> **Staleness warning:** If today's date is more than 30 days after the **Last updated** date above, treat AI model prices as potentially stale (±15-25% accuracy may widen). Infrastructure prices (Fargate, RDS, S3, etc.) change rarely and remain reliable longer. When staleness is detected, keep `pricing_source.status: "cached"` (the schema enum is `cached | live | cached_fallback | unavailable` — there is no `cached_stale` status) and record the staleness in the dedicated `pricing_source.fallback_staleness` object: set `is_stale: true` and `staleness_warning: "Pricing cache is more than 30 days old — AI model prices may have changed. Verify via the AWS Pricing MCP server or [aws.amazon.com/bedrock/pricing](https://aws.amazon.com/bedrock/pricing/)."` Surface that same warning to the user in the estimate output.
 
 ---
 
@@ -459,12 +459,28 @@ Image editing services (inpaint, erase, upscale, etc.) are priced at $0.03–$0.
 
 Per 1M tokens unless noted. See [Bedrock pricing](https://aws.amazon.com/bedrock/pricing/) for full regional and tier tables.
 
+> **Batch support verified 2026-09-02** against the
+> [supported Regions and models for batch inference](https://docs.aws.amazon.com/bedrock/latest/userguide/batch-inference-supported.html)
+> table: **Opus 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5, Sonnet 4.5 — LC, and Haiku 4.5 are listed** (via cross-region
+> inference profiles; batch is 50% of on-demand per the pricing page, matching the rows below). **Fable 5, Sonnet 5,
+> and Opus 4.8 are NOT on that table** — Sonnet 5 and Opus 4.8's batch cells below are **unverified (‡)**: do not build a batch-discount
+> TCO on them; price on-demand and note batch as a possible future saving pending the docs table listing them.
+> Fable 5 / 5.1 instead carry **N/A** per the separate pricing-page verification below.
+> Prompt-cache columns are unaffected (caching support is independent of batch).
+> **Batch rate vs. cross-region inference (CRIS):** the confirmed rows show 50% of the **N. Virginia** on-demand
+> price. Where batch is only reachable through a CRIS profile that lists above N. Virginia (e.g. Sonnet 4.6 in US East
+> (Ohio) at ≈10% higher — see the on-demand section), the effective batch rate is 50% of that CRIS price, i.e. ≈10%
+> above the cells here. Re-derive from the profile's on-demand rate for a region-specific quote.
+> **Do not cross-check these rows against the AWS Pricing Calculator** — as of Sep 2026 the calculator carries no
+> batch metered IDs for Opus 4.6 / Sonnet 4.6 and collapses other batch/cache SKUs (known calculator defect, not a
+> pricing-page signal). The pricing page and the docs table above are the sources of truth.
+
 | Model                    | Batch in | Batch out | 5m cache write | 1h cache write | Cache read |
 | ------------------------ | -------- | --------- | -------------- | -------------- | ---------- |
 | Claude Fable 5           | N/A      | N/A       | 12.50          | 20.00          | 1.00       |
 | Claude Fable 5.1         | N/A      | N/A       | 12.50          | 20.00          | 0.25       |
-| Claude Sonnet 5          | 1.00     | 5.00      | 2.50           | 4.00           | 0.20       |
-| Claude Opus 4.8          | 2.50     | 12.50     | 6.25           | 10.00          | 0.50       |
+| Claude Sonnet 5          | 1.00 ‡   | 5.00 ‡    | 2.50           | 4.00           | 0.20       |
+| Claude Opus 4.8          | 2.50 ‡   | 12.50 ‡   | 6.25           | 10.00          | 0.50       |
 | Claude Sonnet 4.6 (+ LC) | 1.50     | 7.50      | 3.75           | 6.00           | 0.30       |
 | Claude Opus 4.6 (+ LC)   | 2.50     | 12.50     | 6.25           | 10.00          | 0.50       |
 | Claude Opus 4.5          | 2.50     | 12.50     | 6.25           | 10.00          | 0.50       |
@@ -473,6 +489,11 @@ Per 1M tokens unless noted. See [Bedrock pricing](https://aws.amazon.com/bedrock
 | Claude Sonnet 4.5 — LC   | 3.00     | 11.25     | 7.50           | 12.00          | 0.60       |
 
 _Batch: the Bedrock pricing page lists **N/A** for Claude Fable 5 and Fable 5.1 in both the Global and the Geo / In-region Anthropic tables (read 2026-09-03). Anthropic's first-party API offers a 50% batch discount on these models; Bedrock does not list one — do not assume a batch rate for Fable-class models._
+
+‡ Not listed on the batch-supported models table as of 2026-09-02 — rate is the standard 50%-of-on-demand
+projection, not a confirmed SKU. Mark these batch cells `_unverified_` in estimate output; the `unverified` gate in
+`estimate-ai.md` (§ Pricing source caveat) treats any `_unverified_` row as blocking for a quoted figure — resolve
+from the Bedrock pricing page first.
 
 ### AI21 Labs
 

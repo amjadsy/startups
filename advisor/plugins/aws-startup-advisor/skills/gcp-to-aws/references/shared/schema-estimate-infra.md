@@ -386,7 +386,8 @@ Present in `estimation-infra.json` only when `preferences.json` → `design_cons
 ## Output Validation Checklist
 
 - `design_source` is `"infrastructure"`
-- `pricing_source.status` is `"cached"`, `"live"`, `"cached_fallback"`, or `"unavailable"`
+- `pricing_source.status` is `"cached"`, `"live"`, `"cached_fallback"`, or `"unavailable"` (there is no `"cached_stale"` status — a stale cache is `status: "cached"` with `fallback_staleness.is_stale: true`)
+- `pricing_source.fallback_staleness.is_stale` is `true` when the cache is older than its staleness threshold, with a non-null `staleness_warning`; `false` otherwise
 - `accuracy_confidence` matches the pricing mode (±5-10% for cached/live, ±15-25% for fallback)
 - `current_costs.source` is `"billing_data"` if `billing-profile.json` was used, `"inventory_estimate"`, `"preferences"`, `"user_provided"` (asked during estimate), or `"unavailable"` (user declined) otherwise
 - `current_costs.gcp_monthly` matches billing-profile.json total (if used) or is a reasonable estimate
@@ -402,11 +403,12 @@ Present in `estimation-infra.json` only when `preferences.json` → `design_cons
 - If `billing_data_available` is `false`: `migration_cost_considerations.categories` is empty; `note` explains that billing data is required for GCP egress fee estimates
 - `roi_analysis` presents recurring monthly/annual savings (or increase) per tier
 - `roi_analysis` is honest — if migration increases cost, say so and justify with non-cost benefits
-- `optimization_opportunities` only includes strategies relevant to the designed architecture
+- `optimization_opportunities` only includes strategies relevant to the designed architecture, per the eligibility matrix in `references/shared/ri-sp-eligibility.md` — never claim Database Savings Plan coverage for an ElastiCache target that isn't Valkey, and never claim DynamoDB Reserved Capacity eligibility for on-demand or Standard-IA tables
 - Each `optimization_opportunities[]` entry includes required fields: `opportunity`, `target_services`, `savings_percent`, `implementation_effort`, `description`. Optional fields: `type`, `savings_monthly` (null when post-migration sizing unavailable), `commitment`, `timing`, `prerequisite`, `references`, `alternative`
 - Compute Savings Plans entries for Cloud Run migrations MUST NOT include `savings_monthly` sized from GCP billing — use `savings_monthly: null` and `timing: post-migration`
 - Database Savings Plans entries MAY include `savings_monthly` only when projected DB on-demand exceeds $50/month
 - `optimization_opportunities` savings are incremental to **Balanced** on-demand totals — not additive on **Optimized** tier (which already embeds reservation/Spot assumptions)
+- The Cost Optimization Opportunities section renders even when the design has no RI/SP-eligible service — per `ri-sp-eligibility.md`'s three-state model, state explicitly which state the design landed in rather than omitting the section
 - `financial_summary` provides a clear executive-level view
 - `recommendation` block exists with `path`, `path_label`, `migrate_if`, `stay_if`, and `next_steps` all populated
 - `recommendation.path` is one of: `"migrate_optimized"`, `"migrate_phased"`, `"stay"`
