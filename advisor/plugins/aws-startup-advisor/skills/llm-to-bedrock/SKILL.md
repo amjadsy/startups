@@ -136,6 +136,8 @@ phases through to the decision pack. The source code to scan is at `$REPO`. You 
 `gcp-to-aws` to run its **Generate** (infra Terraform) phase — that is opt-in and produces nothing
 this SDK rewrite reads; stopping at the decision pack is enough (A2 confirms readiness).
 
+When Discover creates the run's `.phase-status.json`, it must record `"initiated_by": "LLM_TO_BEDROCK"` beside `owning_skill` (which stays `GCP_TO_AWS`): this run was started by llm-to-bedrock, and that is how telemetry attributes it.
+
 **Important context for the gcp-to-aws skill execution:**
 
 - Source code is at `$REPO` — when the skill asks for GCP sources or scans for files, point it there
