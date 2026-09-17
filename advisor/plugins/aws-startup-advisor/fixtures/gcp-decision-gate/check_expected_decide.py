@@ -16,6 +16,7 @@ from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR = PLUGIN_ROOT / "scripts" / "validate-migration-report.py"
+ESTIMATION_INFRA = Path(__file__).resolve().parent / "after-decide-complete" / "estimation-infra.json"
 FAILS: list[str] = []
 
 
@@ -55,11 +56,14 @@ def main() -> int:
         "generation-*.json must not exist on a decide run",
     )
 
-    # The decision report passes the validator in decision mode.
+    # The decision report passes the validator in decision mode, WITH the
+    # estimation artifact supplied — otherwise the cost-figure anchor gate
+    # (P1-C) is silently skipped (fail-open on absence) and this asserter
+    # would not catch a decision-mode report missing its required anchors.
     if report.exists():
         result = subprocess.run(  # nosec B603 — list args, no shell, committed script path only
             [sys.executable, str(VALIDATOR), str(report), "--mode", "decision",
-             "--no-require-toc"],
+             "--no-require-toc", "--estimation-infra", str(ESTIMATION_INFRA)],
             capture_output=True,
             text=True,
         )

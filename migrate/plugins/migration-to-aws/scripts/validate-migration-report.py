@@ -24,6 +24,7 @@ import json
 import re
 import sys
 from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
 
 # Plugin root: migrate/plugins/migration-to-aws/
@@ -901,13 +902,67 @@ _COST_ANCHORS = {
 # to catch). Premium/optimized are optional (skip when absent).
 _REQUIRED_COST_KEYS = ("aws_monthly_balanced", "current_monthly")
 
-# Capture the anchor key and the inner HTML up to the element's close tag, so a figure
-# wrapped in nested markup (<span data-cost-key=...><strong>$112</strong></span>) is
-# read, not just a bare text node.
-_ANCHOR_RE = re.compile(
-    r'data-cost-key=["\']([a-z_]+)["\'][^>]*>(.*?)</',
-    re.IGNORECASE | re.DOTALL,
-)
+class _CostAnchorParser(HTMLParser):
+    """Collect the rendered text of every `data-cost-key="..."` element.
+
+    Uses the stdlib HTML parser rather than a regex so that (a) markup inside an
+    HTML comment is never mistaken for a real anchor — comments are a distinct
+    token the parser never re-tokenizes as tags — and (b) nested child markup
+    (`<span data-cost-key="x"><strong>$112</strong></span>`) is read through the
+    anchored element's OWN matching close tag, not the first `</` encountered,
+    by counting nested opens/closes of the same tag name. Character references
+    are decoded automatically (`convert_charrefs=True`, the default).
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.results: list[tuple[str, str]] = []  # (key, inner text)
+        self._tag_name: str | None = None
+        self._depth = 0
+        self._pending_key = ""
+        self._parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self._tag_name is not None:
+            if tag == self._tag_name:
+                self._depth += 1
+            return
+        key = dict(attrs).get("data-cost-key")
+        if key:
+            self._tag_name = tag
+            self._depth = 1
+            self._pending_key = key.lower()
+            self._parts = []
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        # A self-closed anchor (<span data-cost-key="x" />) has no text content;
+        # treat it as an anchor with empty rendered text rather than ignoring it.
+        if self._tag_name is None:
+            key = dict(attrs).get("data-cost-key")
+            if key:
+                self.results.append((key.lower(), ""))
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._tag_name is None or tag != self._tag_name:
+            return
+        self._depth -= 1
+        if self._depth == 0:
+            self.results.append((self._pending_key, "".join(self._parts)))
+            self._tag_name = None
+            self._parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._tag_name is not None:
+            self._parts.append(data)
+
+
+def _cost_anchor_matches(html: str) -> list[tuple[str, str]]:
+    """Parse `html` and return every (data-cost-key, rendered text) pair found
+    outside of comments and other non-rendered markup."""
+    parser = _CostAnchorParser()
+    parser.feed(html)
+    parser.close()
+    return parser.results
 
 
 def _dig(d: dict, path: tuple[str, ...]):
@@ -937,14 +992,12 @@ def _validate_cost_figures(
     if not isinstance(estimation_infra, dict):
         return []
     errors: list[str] = []
-    seen_keys: set[str] = set()
 
-    for match in _ANCHOR_RE.finditer(html):
-        key = match.group(1).lower()
+    for key, text in _cost_anchor_matches(html):
+        key = key.lower()
         path = _COST_ANCHORS.get(key)
         if path is None:
             continue  # unknown anchor key -> not ours to assert
-        seen_keys.add(key)
         expected = _dig(estimation_infra, path)
         if expected is None:
             continue  # the JSON does not carry this figure -> nothing to assert
@@ -956,7 +1009,7 @@ def _validate_cost_figures(
                 f"number: {expected!r}"
             )
             continue
-        rendered = _normalize_money(re.sub(r"<[^>]+>", "", match.group(2)))
+        rendered = _normalize_money(text)
         if rendered is None:
             errors.append(
                 f'data-cost-key="{key}" element renders no dollar amount '
@@ -970,23 +1023,31 @@ def _validate_cost_figures(
                 f"${expected_dollars}"
             )
 
-    # Required figures must be anchored when their JSON value exists and the report
-    # has an exec-costs section to carry them. Gated on require_anchors so deliberately
-    # minimal unit fixtures (run with --no-require-toc) are not forced to anchor; the
-    # mismatch / no-$ / non-numeric checks above always run.
-    if require_anchors and _section_id_counts(html).get("exec-costs", 0) >= 1:
-        for key in _REQUIRED_COST_KEYS:
-            if key in seen_keys:
-                continue
-            path = _COST_ANCHORS[key]
-            if _dig(estimation_infra, path) is None:
-                continue  # JSON does not carry it -> nothing to require
-            errors.append(
-                f'missing data-cost-key="{key}" anchor in the report; cannot '
-                f"confirm the rendered figure matches estimation-infra.json "
-                f'{".".join(path)} (wrap that figure in '
-                f'<span data-cost-key="{key}">...</span>)'
-            )
+    # Required figures must be anchored INSIDE <section id="exec-costs"> when their
+    # JSON value exists and that section is rendered — per generate-artifacts-report.md
+    # rule 21 ("Wrap ... in exec-costs with a data-cost-key attribute"). A redundant
+    # anchor elsewhere (e.g. a decision-summary hero metric) is still cross-checked by
+    # the mismatch loop above, but does not satisfy this requirement: exec-costs is the
+    # section customers read as the authoritative cost comparison, and its own dollar
+    # cells must be the ones a validator can hold to the estimate. Gated on
+    # require_anchors so deliberately minimal unit fixtures (run with --no-require-toc)
+    # are not forced to anchor; the mismatch / no-$ / non-numeric checks above always run.
+    if require_anchors:
+        exec_costs_html = _section_html(html, "exec-costs")
+        if exec_costs_html is not None:
+            exec_costs_keys = {k.lower() for k, _ in _cost_anchor_matches(exec_costs_html)}
+            for key in _REQUIRED_COST_KEYS:
+                path = _COST_ANCHORS[key]
+                if _dig(estimation_infra, path) is None:
+                    continue  # JSON does not carry it -> nothing to require
+                if key not in exec_costs_keys:
+                    errors.append(
+                        f'missing data-cost-key="{key}" anchor inside '
+                        f'<section id="exec-costs">; cannot confirm the rendered figure '
+                        f"matches estimation-infra.json {'.'.join(path)} (wrap that "
+                        f'figure in <span data-cost-key="{key}">...</span> inside '
+                        f"exec-costs)"
+                    )
     return errors
 
 

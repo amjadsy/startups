@@ -697,6 +697,10 @@ After generating the HTML file, verify:
     Example: `<span data-cost-key="aws_monthly_balanced">$112/mo</span>`. The attribute
     is not reader-visible text, so it does not violate rule 7 (reader vocabulary). The
     validator asserts the rendered dollars equal the JSON for every anchor present.
+    **The anchor must sit inside `<section id="exec-costs">` on a rendered element —
+    not inside an HTML comment, and not merely present anywhere else in the document
+    (e.g. a decision-summary hero metric does not satisfy this rule even if its own
+    figure is correct — `exec-costs` is the section a validator holds to the estimate).**
     **The two required anchors above (`aws_monthly_balanced` and `current_monthly`) are
     mandatory whenever their JSON value exists and `exec-costs` is rendered — a missing
     required anchor is a validator FAIL, not a skip.** Only _untagged illustrative_
