@@ -171,6 +171,17 @@ when **any** of these hold (in this order):
    `phases.generate == "pending"` AND `DECISION.md` on disk (the normal AI-path end state).
 3. **Generate-complete** — `phases.generate == "completed"` (the user also chose to generate infra).
 
+**Workshop guard (all three conditions above):** none of them are trustworthy while
+`phases.workshop == "in_progress"`. For a mixed IaC/AI run, `design.md`'s inner-workshop path
+explicitly preserves `phases.design == "completed"` while `workshop-refresh.md` is actively
+patching preferences and rewriting the design artifacts mid-reprice — so condition 1 (and,
+transitively, 2 and 3, since they never regress `phases.design`) can read `assess-ready` while
+`aws-design-ai.json` is between an old and a new region/model mapping. `phases.workshop` only
+holds `"in_progress"` for the duration of that loop (`workshop.md` § Entry step 3; resolved back
+to `"completed"` on exit/decline), so this is a narrow, real interruption window, not a permanent
+state. Treat `phases.workshop == "in_progress"` as `not-ready` regardless of what the three
+conditions above say, and re-poll after the cap below.
+
 Check progress against the LATEST run directory only (older `.migration/` runs may contain a
 stale status):
 
@@ -192,6 +203,12 @@ except Exception:
     # without the status we cannot confirm Design's gate passed.
     print("no-status-file" if not has("aws-design-ai.json") else "not-ready"); sys.exit()
 ph = s.get("phases", {})
+# An active workshop reprice is actively rewriting aws-design-ai.json/aws-design.json between an
+# old and a new mapping (workshop-refresh.md), while design.md's inner-workshop path leaves
+# phases.design == "completed" throughout — so none of the three readiness conditions below are
+# trustworthy while this holds. Checked first and short-circuits to not-ready.
+if ph.get("workshop") == "in_progress":
+    print("not-ready"); sys.exit()
 # phases.design == completed means Design's completion gate passed, so aws-design-ai.json is
 # final (not mid-authoring). This also covers the legacy-generate state, which is only reachable
 # after Design. Do NOT accept a bare "all three files exist" — Discover/Clarify write their two
