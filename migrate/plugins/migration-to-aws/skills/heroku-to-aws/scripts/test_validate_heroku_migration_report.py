@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-import subprocess
+import subprocess  # nosec B404 — test-only, list args, no shell, committed script path
 import sys
 import tempfile
 from pathlib import Path
 
-PLUGIN_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = PLUGIN_ROOT / "scripts" / "validate-heroku-migration-report.py"
+SCRIPT = Path(__file__).resolve().parent / "validate-heroku-migration-report.py"
 
 
 def run(html: str, migration_dir: Path | None = None) -> tuple[int, str]:
@@ -149,6 +148,86 @@ def test_empty_cost_optimization_fails() -> None:
     assert "cost-optimization" in out and "empty" in out.lower()
 
 
+def test_heading_only_cost_optimization_fails() -> None:
+    # A heading alone (no opportunity table, no no-eligible-commitment sentence)
+    # must not satisfy the content requirement.
+    html = GOOD.replace(
+        '<section id="cost-optimization"><p>No 1-year/3-year commitment product applies to this architecture.</p></section>',
+        '<section id="cost-optimization"><h2>Cost Optimization Opportunities</h2></section>',
+    )
+    code, out = run(html)
+    assert code == 1, out
+    assert "cost-optimization" in out
+
+
+def test_table_headers_only_cost_optimization_fails() -> None:
+    # A table with column headers but an empty <tbody> — no actual opportunity
+    # rows — must not satisfy the content requirement either.
+    html = GOOD.replace(
+        '<section id="cost-optimization"><p>No 1-year/3-year commitment product applies to this architecture.</p></section>',
+        '<section id="cost-optimization"><table><thead><tr>'
+        '<th scope="col">Opportunity</th><th scope="col">Savings</th>'
+        "</tr></thead><tbody></tbody></table></section>",
+    )
+    code, out = run(html)
+    assert code == 1, out
+    assert "cost-optimization" in out
+
+
+def test_cost_optimization_with_real_opportunity_row_passes() -> None:
+    # Control: an actual populated row in the tbody is real content and passes.
+    html = GOOD.replace(
+        '<section id="cost-optimization"><p>No 1-year/3-year commitment product applies to this architecture.</p></section>',
+        '<section id="cost-optimization"><table><thead><tr>'
+        '<th scope="col">Opportunity</th></tr></thead><tbody><tr>'
+        "<td>1yr Compute Savings Plan: ~25%</td></tr></tbody></table></section>",
+    )
+    code, out = run(html)
+    assert code == 0, out
+    assert "REPORT_OK" in out
+
+
+def test_th_scope_with_spaces_around_equals_passes() -> None:
+    # scope = "col" (spaces around =) is valid HTML and must be accepted —
+    # a literal `scope="col"` regex would wrongly reject it.
+    html = GOOD.replace('<th scope="col">Tier</th>', '<th scope = "col">Tier</th>')
+    code, out = run(html)
+    assert code == 0, out
+    assert "REPORT_OK" in out
+
+
+def test_th_scope_unquoted_passes() -> None:
+    # scope=col (unquoted attribute value) is valid HTML and must be accepted.
+    html = GOOD.replace('<th scope="col">Tier</th>', "<th scope=col>Tier</th>")
+    code, out = run(html)
+    assert code == 0, out
+    assert "REPORT_OK" in out
+
+
+def test_th_scope_single_quoted_passes() -> None:
+    html = GOOD.replace('<th scope="col">Tier</th>', "<th scope='col'>Tier</th>")
+    code, out = run(html)
+    assert code == 0, out
+    assert "REPORT_OK" in out
+
+
+def test_html_lang_with_spaces_around_equals_passes() -> None:
+    html = GOOD.replace('<html lang="en">', '<html lang = "en">')
+    code, out = run(html)
+    assert code == 0, out
+    assert "REPORT_OK" in out
+
+
+def test_figure_aria_label_unquoted_passes() -> None:
+    html = GOOD.replace(
+        "</div>",
+        "<figure aria-label=Costs><figcaption>Costs</figcaption></figure></div>",
+    )
+    code, out = run(html)
+    assert code == 0, out
+    assert "REPORT_OK" in out
+
+
 def test_figure_without_aria_label_fails() -> None:
     html = GOOD.replace("</div>", "<figure><figcaption>Costs</figcaption></figure></div>")
     code, out = run(html)
@@ -172,3 +251,16 @@ def test_figure_without_figcaption_fails() -> None:
     code, out = run(html)
     assert code == 1, out
     assert "figcaption" in out.lower()
+
+
+def test_validator_is_packaged_inside_the_skill_directory() -> None:
+    """The validator must live under skills/heroku-to-aws/ so a standalone
+    `npx skills add --skill heroku-to-aws` install (which copies only this
+    skill's own directory tree, not the plugin's top-level scripts/) still
+    carries it. Regression for the packaging gap where the validator lived at
+    the plugin root and Generate's `$PLUGIN_ROOT/scripts/...` invocation had
+    nothing to resolve against in a skill-only install."""
+    assert SCRIPT.is_file()
+    assert SCRIPT.parent.name == "scripts"
+    assert SCRIPT.parent.parent.name == "heroku-to-aws"
+    assert SCRIPT.parent.parent.parent.name == "skills"

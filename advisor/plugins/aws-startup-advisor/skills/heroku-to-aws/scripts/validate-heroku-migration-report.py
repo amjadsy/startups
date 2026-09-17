@@ -33,6 +33,7 @@ import argparse
 import json
 import re
 import sys
+from html.parser import HTMLParser
 from pathlib import Path
 
 REQUIRED_SECTION_IDS = [
@@ -82,6 +83,62 @@ def _section_html(html: str, section_id: str) -> str | None:
     return html[m.end():]
 
 
+class _TagAttrCollector(HTMLParser):
+    """Collect (tag, attrs-dict, is_self_closed) for every start tag, using the
+    stdlib parser rather than a literal-syntax regex. This accepts any legal
+    HTML attribute spelling — quoted or unquoted values, spaces around `=`,
+    single or double quotes — instead of only the exact `name="value"` form a
+    hand-rolled regex happens to match."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.tags: list[tuple[str, dict[str, str | None], bool]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.tags.append((tag, dict(attrs), False))
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.tags.append((tag, dict(attrs), True))
+
+
+def _collect_tags(html: str) -> list[tuple[str, dict[str, str | None], bool]]:
+    parser = _TagAttrCollector()
+    parser.feed(html)
+    parser.close()
+    return parser.tags
+
+
+def _html_lang_declared(html: str) -> bool:
+    for tag, attrs, _ in _collect_tags(html):
+        if tag != "html":
+            continue
+        lang = attrs.get("lang")
+        return bool(lang) and bool(re.fullmatch(r"[a-z]{2}(?:-[A-Za-z0-9]+)?", lang, re.IGNORECASE))
+    return False
+
+
+def _validate_optimization_content(body: str) -> list[str]:
+    """The cost-optimization section must render either a populated opportunities
+    table or the explicit no-eligible-commitment sentence — a heading or table
+    column headers alone are not content. Strip headings and <th> cells before
+    checking for remaining text, so "Cost Optimization Opportunities" (a heading)
+    or "Opportunity" / "Savings" (column headers) cannot satisfy the non-empty
+    check by themselves; an empty <tbody> then has no way to pass."""
+    stripped = re.sub(
+        r"<h[1-6]\b[^>]*>.*?</h[1-6]>", "", body, flags=re.IGNORECASE | re.DOTALL
+    )
+    stripped = re.sub(r"<th\b[^>]*>.*?</th>", "", stripped, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<[^>]+>", "", stripped).strip()
+    if not text:
+        return [
+            '<section id="cost-optimization"> is empty of substantive content — '
+            "render populated opportunity rows (not just column headers) or the "
+            "explicit no-eligible-commitment sentence, never a blank, heading-only, "
+            "or table-header-only section"
+        ]
+    return []
+
+
 def _validate_verdict(html: str, migration_dir: Path | None) -> list[str]:
     """Typography-first verdict rules (skill: verdict is the section thesis and
     must never be a colored-pill row)."""
@@ -121,38 +178,104 @@ def _validate_verdict(html: str, migration_dir: Path | None) -> list[str]:
     return errors
 
 
+class _AccessibilityParser(HTMLParser):
+    """Stdlib-parser accessibility scan: <th scope> and <figure aria-label> +
+    <figcaption>. Using the parser (rather than a literal `name="value"` regex)
+    accepts any legal HTML attribute syntax — `scope=col`, `scope = "col"`,
+    single quotes, etc. — the same attribute in different valid spellings must
+    not flip a validator result. VOID_ELEMENTS avoids mis-tracking self-closing
+    tags (e.g. <br>) as unclosed ancestors."""
+
+    VOID_ELEMENTS = {
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr",
+    }
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.stack: list[str] = []
+        self.table_issues: list[int] = []  # 1-based table index with a scope-less <th>
+        self.figure_issues: list[tuple[int, bool, bool]] = []  # (index, has_aria_label, has_figcaption)
+        self._table_index = 0
+        self._figure_index = 0
+        self._table_depth = 0  # >0 while inside a <table> (nesting-tolerant)
+        self._table_bad_at: dict[int, bool] = {}
+        self._figure_stack: list[dict[str, bool | None]] = []
+
+    def _in_table(self) -> bool:
+        return self._table_depth > 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_map = dict(attrs)
+        if tag == "table":
+            self._table_depth += 1
+            if self._table_depth == 1:
+                self._table_index += 1
+                self._table_bad_at[self._table_index] = False
+        elif tag == "th" and self._in_table():
+            scope = attr_map.get("scope")
+            if not (scope and scope.lower() in ("col", "row")):
+                self._table_bad_at[self._table_index] = True
+        elif tag == "figure":
+            self._figure_index += 1
+            aria_label = attr_map.get("aria-label")
+            self._figure_stack.append(
+                {
+                    "index": self._figure_index,
+                    "has_aria_label": bool(aria_label and aria_label.strip()),
+                    "has_figcaption": False,
+                }
+            )
+        elif tag == "figcaption" and self._figure_stack:
+            self._figure_stack[-1]["has_figcaption"] = True
+        if tag not in self.VOID_ELEMENTS:
+            self.stack.append(tag)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        # Self-closed tags never open a scope for descendants (e.g. a self-closed
+        # <figure /> can never contain a <figcaption>) — handled naturally since
+        # we don't push onto self.stack or self._figure_stack for these.
+        pass
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "table" and self._table_depth > 0:
+            self._table_depth -= 1
+            if self._table_depth == 0:
+                if self._table_bad_at.get(self._table_index):
+                    self.table_issues.append(self._table_index)
+        elif tag == "figure" and self._figure_stack:
+            fig = self._figure_stack.pop()
+            self.figure_issues.append(
+                (fig["index"], fig["has_aria_label"], fig["has_figcaption"])
+            )
+        while self.stack and tag in self.stack:
+            popped = self.stack.pop()
+            if popped == tag:
+                break
+
+
 def _validate_accessibility(html: str) -> list[str]:
     """Dependency-free WCAG-oriented semantics — the safe subset the Heroku
     one-pager emits (no single-<h1> / per-table-<caption> requirement)."""
     errors: list[str] = []
-    if not re.search(
-        r"<html\b[^>]*\blang=[\"'][a-z]{2}(?:-[A-Za-z0-9]+)?[\"']", html, re.IGNORECASE
-    ):
+    if not _html_lang_declared(html):
         errors.append("accessibility: <html> must declare a valid lang attribute")
 
     body = re.sub(r"<style\b.*?</style>", "", html, flags=re.IGNORECASE | re.DOTALL)
+    parser = _AccessibilityParser()
+    parser.feed(body)
+    parser.close()
 
-    for index, table_match in enumerate(
-        re.finditer(r"<table\b[^>]*>.*?</table>", body, re.IGNORECASE | re.DOTALL), 1
-    ):
-        table = table_match.group(0)
-        for th in re.findall(r"<th\b[^>]*>", table, re.IGNORECASE):
-            if not re.search(r"\bscope=[\"'](?:col|row)[\"']", th, re.IGNORECASE):
-                errors.append(
-                    f'accessibility: table {index} header cells must declare '
-                    'scope="col" or scope="row"'
-                )
-                break
+    for index in parser.table_issues:
+        errors.append(
+            f'accessibility: table {index} header cells must declare '
+            'scope="col" or scope="row"'
+        )
 
-    for index, figure_match in enumerate(
-        re.finditer(r"<figure\b[^>]*>.*?</figure>", body, re.IGNORECASE | re.DOTALL), 1
-    ):
-        figure = figure_match.group(0)
-        opening = re.match(r"<figure\b[^>]*>", figure, re.IGNORECASE)
-        opening_tag = opening.group(0) if opening else ""
-        if not re.search(r'\baria-label=["\'][^"\']+["\']', opening_tag, re.IGNORECASE):
+    for index, has_aria_label, has_figcaption in parser.figure_issues:
+        if not has_aria_label:
             errors.append(f"accessibility: figure {index} must have an aria-label")
-        if not re.search(r"<figcaption\b", figure, re.IGNORECASE):
+        if not has_figcaption:
             errors.append(f"accessibility: figure {index} must include a <figcaption>")
     return errors
 
@@ -171,15 +294,14 @@ def validate(html: str, migration_dir: Path | None) -> list[str]:
     if "draft for review" not in html.lower():
         errors.append('footer must contain "draft for review" disclaimer')
 
-    # cost-optimization must not be a blank section (generate-report.md Step 3 item 6:
-    # a table, or the explicit no-eligible-commitment sentence — never empty).
+    # cost-optimization must carry substantive content (generate-report.md Step 3
+    # item 6: a table of real opportunity rows, or the explicit no-eligible-commitment
+    # sentence — never empty, and never satisfied by a heading or table-header text
+    # alone). A heading like "Cost Optimization Opportunities" or a table with only
+    # column headers and an empty <tbody> must not pass as content.
     if counts.get("cost-optimization", 0) >= 1:
         body = _section_html(html, "cost-optimization") or ""
-        if not re.sub(r"<[^>]+>", "", body).strip():
-            errors.append(
-                '<section id="cost-optimization"> is empty — render the opportunities '
-                "table or the explicit no-eligible-commitment sentence, never a blank section"
-            )
+        errors.extend(_validate_optimization_content(body))
 
     errors.extend(_validate_verdict(html, migration_dir))
     errors.extend(_validate_accessibility(html))

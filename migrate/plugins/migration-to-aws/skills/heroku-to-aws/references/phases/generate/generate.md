@@ -137,7 +137,7 @@ so it could not run the report validator. The interpreter finishes that work in 
 1. Run the report validator (**required, blocking**):
 
    ```
-   python3 "$PLUGIN_ROOT/scripts/validate-heroku-migration-report.py" \
+   python3 "<SKILL_BASE>/scripts/validate-heroku-migration-report.py" \
      "$MIGRATION_DIR/migration-report.html" --migration-dir "$MIGRATION_DIR"
    ```
 
