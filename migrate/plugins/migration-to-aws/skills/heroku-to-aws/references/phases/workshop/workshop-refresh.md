@@ -56,6 +56,30 @@ If `.phase-status.json` has `phases.generate` (or later) `completed`, require
 Estimate `_re_entry_guard` confirm and reset those phases to `pending` before
 continuing.
 
+**Delete the stale execution pack, not just the phase status (mandatory).**
+Resetting `phases.generate` to `pending` without removing what Generate wrote
+leaves a decision-mode re-entry permanently blocked: `terraform/` and
+`generation-*.json` from the PREVIOUS design still sit on disk, and
+`validate-heroku-migration-report.py --mode decision` requires both absent
+(`report-decision-core.md` — decision mode is pre-execution). Design/Estimate
+are about to be overwritten by this reprice, so that stale execution pack no
+longer matches either artifact regardless of what the user chooses next. On
+user confirm of the guard above, also delete (do not archive into
+`scenarios/`, which stores JSON snapshots only, never Terraform):
+
+- `terraform/` (recursive)
+- `generation-*.json` (e.g. `generation-warnings.json`)
+- `MIGRATION_GUIDE.md`, `README.md` (Generate-only docs; re-derived from the
+  eventual re-run)
+- `migration-report.html`, `report-validation-status.json` (the FULL-mode
+  report and its stamp — stale the moment Design/Estimate change; a fresh
+  decision or full report is rendered from the new artifacts on the next
+  Decision-gate choice)
+
+If the user does NOT confirm the guard (declines the re-entry), **stop** here
+— do not patch preferences or re-run Design/Estimate; the existing execution
+pack and decide/execute state are left untouched.
+
 ### 3. Patch preferences
 
 Apply sheet edits to `$MIGRATION_DIR/preferences.json`:

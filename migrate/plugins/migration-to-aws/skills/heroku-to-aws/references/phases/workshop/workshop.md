@@ -60,10 +60,21 @@ _postconditions:
 1. Preconditions above must pass. Do **not** re-run Discover / live CLI / Terraform parse.
 2. If `phases.generate` (or later) is `completed`, apply Estimate `_re_entry_guard`
    confirm → `reset_downstream_to_pending` before refreshing.
-3. Set `phases.workshop` to `"in_progress"` (do not change `current_phase` —
-   sidebars never own it). Prefer leaving `current_phase` at `estimate` until
-   the user exits workshop to Generate (see `estimate-assemble.md` deferred
-   advance).
+3. **Re-entry from decide-complete (mandatory).** If `current_phase == "complete"`
+   AND `run_mode` is `"decide"` or `"decide_and_execute"` (a warm "what if" /
+   "reprice" ask reopening a resolved gate — SKILL.md § Warm start), reset
+   `current_phase` to `"estimate"` and clear `run_mode` (read-merge-write,
+   remove the key rather than setting it to null) **before** step 4. This
+   returns the run to the pre-gate state the workshop expects; without it, a
+   stale `run_mode` survives workshop exit and the Decision gate never
+   re-fires (`SKILL.md` § "Gate-presented resume" requires `run_mode` absent
+   to detect an unresolved gate) — the next warm start would fall through to
+   re-running Estimate instead of presenting the gate.
+4. Set `phases.workshop` to `"in_progress"` (do not change `current_phase`
+   further — sidebars never own it). Prefer leaving `current_phase` at
+   `estimate` until the user exits workshop back to the Decision gate (see
+   `estimate-assemble.md` § "Post-Estimate: Decision Gate" and
+   `workshop-assemble.md`).
 
 ## Loop
 
@@ -73,7 +84,9 @@ _postconditions:
    - **Apply & reprice** → `workshop-refresh.md` (inner Design/Estimate) →
      `workshop-compare.md`
    - **Compare scenarios** → `workshop-compare.md`
-   - **Exit to Generate** → `workshop-assemble.md` (resolve sidebar) → return
+   - **Exit workshop** → `workshop-assemble.md` (resolve sidebar) → returns to
+     the **Decision gate** in `estimate-assemble.md` (never directly to
+     Generate — see `workshop-assemble.md`)
    - **Exit to full Clarify** → danger; Clarify re-entry only on explicit confirm
 
 ## Hard rules
@@ -94,7 +107,9 @@ file wins — fix this table.
 
 ## Decline without entering
 
-When Estimate offer **[B] Proceed toward Generate** is chosen, do not enter this
-phase's fragments — mark `phases.workshop` `"completed"` (resolved/declined) per
-sidebar semantics in `INTERPRETER.md`, then advance `current_phase` to
-`generate`.
+When Estimate offer **[B] Proceed to the decision** is chosen, do not enter
+this phase's fragments — mark `phases.workshop` `"completed"` (resolved/
+declined) per sidebar semantics in `INTERPRETER.md`, then present the
+**Decision gate** (`estimate-assemble.md` § "Post-Estimate: Decision Gate").
+`current_phase` stays `"estimate"` — the gate, not this decline path, sets the
+next state from the user's A/C choice.

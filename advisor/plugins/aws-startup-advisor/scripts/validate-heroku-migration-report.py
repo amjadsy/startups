@@ -97,6 +97,27 @@ def validate(html: str, migration_dir: Path | None, mode: str = "full") -> list[
                     '<section id="what-if-scenarios">'
                 )
 
+        # generate-report.md / report-decision-core.md § decision-basis: when
+        # Estimate declared decision_basis (evidence/assumptions behind the
+        # verdict), the report MUST render it — in both modes, since decision
+        # mode reuses these exact content rules rather than restating them.
+        # Read the same estimation-infra.json the report itself was built
+        # from, so a report that silently drops decision_basis (e.g. a
+        # refactor that forgets the section) cannot still say REPORT_OK.
+        est_path = migration_dir / "estimation-infra.json"
+        if est_path.is_file():
+            try:
+                est = json.loads(est_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                est = None
+            decision_basis = ((est or {}).get("recommendation") or {}).get("decision_basis")
+            if decision_basis and counts.get("decision-basis", 0) < 1:
+                errors.append(
+                    "estimation-infra.json declares recommendation.decision_basis "
+                    'but the report has no <section id="decision-basis"> '
+                    '("What This Assessment Rests On")'
+                )
+
     if mode == "decision":
         # Decision mode is pre-execution: these must not exist yet on disk (the
         # report-decision-core.md contract). Only checked when a migration dir

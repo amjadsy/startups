@@ -214,6 +214,52 @@ def test_decision_mode_with_decision_basis_reports_optional(tmp_path: Path) -> N
     assert "decision-basis" in out
 
 
+def test_decision_basis_required_when_estimate_declares_it(tmp_path: Path) -> None:
+    """Regression: estimation-infra.json declares recommendation.decision_basis
+    but the report omits <section id="decision-basis"> — must fail, not
+    silently REPORT_OK. Only checked when --migration-dir is supplied (the
+    validator reads estimation-infra.json from there)."""
+    (tmp_path / "estimation-infra.json").write_text(
+        '{"recommendation": {"decision_basis": {"measured": ["x"], "assumed": [], "unknown": []}}}',
+        encoding="utf-8",
+    )
+    path = tmp_path / "decision-report.html"
+    path.write_text(DECISION_MINIMAL_PASS, encoding="utf-8")  # no decision-basis section
+    code, out = run_validator(path, mode="decision", migration_dir=tmp_path)
+    assert code == 1, out
+    assert "decision-basis" in out
+    assert "decision_basis" in out
+
+
+def test_decision_basis_not_required_when_estimate_omits_it(tmp_path: Path) -> None:
+    """Control: no decision_basis in estimation-infra.json → the report's
+    absence of <section id="decision-basis"> is fine (pre-extension artifacts)."""
+    (tmp_path / "estimation-infra.json").write_text(
+        '{"recommendation": {"outcome": "go"}}', encoding="utf-8"
+    )
+    path = tmp_path / "decision-report.html"
+    path.write_text(DECISION_MINIMAL_PASS, encoding="utf-8")
+    code, out = run_validator(path, mode="decision", migration_dir=tmp_path)
+    assert code == 0, out
+
+
+def test_decision_basis_present_and_required_passes(tmp_path: Path) -> None:
+    """Control: decision_basis declared AND the section is rendered → passes."""
+    (tmp_path / "estimation-infra.json").write_text(
+        '{"recommendation": {"decision_basis": {"measured": ["x"], "assumed": [], "unknown": []}}}',
+        encoding="utf-8",
+    )
+    html = DECISION_MINIMAL_PASS.replace(
+        '<section id="decision-summary"><h2>Decision</h2></section>',
+        '<section id="decision-summary"><h2>Decision</h2></section>'
+        '<section id="decision-basis"><h2>What This Assessment Rests On</h2></section>',
+    )
+    path = tmp_path / "decision-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, mode="decision", migration_dir=tmp_path)
+    assert code == 0, out
+
+
 def test_missing_file_fails_cleanly() -> None:
     code, out = run_validator(Path("/nonexistent/decision-report.html"), mode="decision")
     assert code == 1, out

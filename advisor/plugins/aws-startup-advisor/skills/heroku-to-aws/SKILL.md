@@ -291,9 +291,14 @@ contract). Both are `_kind: sidebar` — off-backbone, trigger-entered, never
 - **Warm start / explicit what-if**: If the user says "what if", "reprice",
   "workshop mode", or "compare scenarios" and Estimate artifacts already exist,
   load `references/phases/workshop/workshop.md` directly (respect Generate
-  `_re_entry_guard` when Terraform was already produced). Knobs on the pilot
-  sheet: region, HA, compute target, cost optimization, CPU architecture
-  (x86 vs Graviton). There is no traffic-multiplier knob in v1.
+  `_re_entry_guard` when Terraform was already produced). If this reopens a
+  resolved Decision gate (`current_phase == "complete"` with `run_mode`
+  `"decide"` or `"decide_and_execute"`), `workshop.md` § Entry resets
+  `current_phase` to `"estimate"` and clears `run_mode` first — this is what
+  lets the gate re-fire on exit instead of the run falling through to a
+  re-run of Estimate. Knobs on the pilot sheet: region, HA, compute target,
+  cost optimization, CPU architecture (x86 vs Graviton). There is no
+  traffic-multiplier knob in v1.
 
 - **After Generate**: No prompt. If `phases.feedback` is still `"pending"`, set it to `"completed"` and mark the migration complete.
 
