@@ -701,6 +701,80 @@ describe('path containment', () => {
     assert.ok(measured.totalBytes <= LIMITS.maxTotalBytes);
   });
 
+  it('counts and accepts source files whose names match excluded directories', () => {
+    const ws = makeWorkspace({
+      'package.json': '{}\n',
+      'bin/build': '#!/bin/sh\nnpm run build\n',
+      'build/generated.js': 'ignored\n',
+    });
+    const measured = measureSourceRoot(ws);
+    assert.equal(measured.files, 2);
+
+    const reviewRequest = request(['build_method']);
+    const submission = findings([{
+      question: 'build_method',
+      status: 'PRESENT',
+      value: [{
+        component_id: 'component-api',
+        method: 'script',
+        authority_path: 'bin/build',
+      }],
+      sources: [{ path: 'bin/build' }],
+      limitations: [],
+    }]);
+    const result = evaluateSubmission({
+      schema,
+      request: reviewRequest,
+      submission,
+      roots: [ws],
+      workspaceRoot: ws,
+    });
+    assert.equal(result.retained, true);
+
+    const artifact = {
+      reviews: [{
+        source_root: '.',
+        request: reviewRequest,
+        status: 'RETAINED',
+        findings: submission,
+        limitations: [],
+      }],
+    };
+    assert.deepEqual(validateReviewArtifact(schema, artifact, ws, [reviewRequest]), []);
+  });
+
+  it('rejects source roots nested inside excluded directories', () => {
+    for (const sourceRoot of ['.migration/previous-run', '.git/cache', 'node_modules/dependency']) {
+      const sourcePath = `${sourceRoot}/package.json`;
+      const ws = makeWorkspace({ [sourcePath]: '{}\n' });
+      const reviewRequest = request(['runtime_framework']);
+      const submission = findings([runtimeFramework('nodejs', [{ path: sourcePath }])]);
+      const result = evaluateSubmission({
+        schema,
+        request: reviewRequest,
+        submission,
+        roots: [resolve(ws, sourceRoot)],
+        workspaceRoot: ws,
+      });
+      assert.equal(result.retained, false);
+      assert.match(result.reasons.join('\n'), /source root uses an excluded directory/);
+
+      const artifact = {
+        reviews: [{
+          source_root: sourceRoot,
+          request: reviewRequest,
+          status: 'RETAINED',
+          findings: submission,
+          limitations: [],
+        }],
+      };
+      assert.match(
+        validateReviewArtifact(schema, artifact, ws, [reviewRequest]).join('\n'),
+        /source root uses an excluded directory/,
+      );
+    }
+  });
+
   it('fails closed for unreadable citations with and without line bounds', () => {
     const ws = makeWorkspace({ 'app.js': 'console.log("hello");\n' });
     const citedFile = resolve(ws, 'app.js');

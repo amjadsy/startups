@@ -495,10 +495,13 @@ const EXCLUDED_SOURCE_DIRECTORIES = new Set([
   "tmp",
 ]);
 
-function pathUsesExcludedSourceDirectory(path: string): boolean {
+function pathUsesExcludedSourceDirectory(path: string, leafIsDirectory: boolean): boolean {
   const segments = path.split(/[\\/]/u).filter((segment) => segment.length > 0);
-  return segments.some((segment) => EXCLUDED_SOURCE_DIRECTORIES.has(segment))
-    || segments.some((segment, index) => segment === "vendor" && segments[index + 1] === "bundle");
+  const directories = leafIsDirectory ? segments : segments.slice(0, -1);
+  return directories.some((segment) => EXCLUDED_SOURCE_DIRECTORIES.has(segment))
+    || directories.some(
+      (segment, index) => segment === "vendor" && directories[index + 1] === "bundle",
+    );
 }
 
 /** Walk a source root counting regular files and bytes; never follows symlinked dirs. */
@@ -519,7 +522,6 @@ export function measureSourceRoot(rootAbs: string): RootMeasurement {
     }
     for (const entry of entries) {
       const child = resolve(dir, entry);
-      if (pathUsesExcludedSourceDirectory(relative(rootAbs, child))) continue;
       let info;
       try {
         info = lstatSync(child);
@@ -531,6 +533,7 @@ export function measureSourceRoot(rootAbs: string): RootMeasurement {
         continue; // never follow or count symlinked source entries
       }
       if (info.isDirectory()) {
+        if (pathUsesExcludedSourceDirectory(relative(rootAbs, child), true)) continue;
         stack.push(child);
       } else if (info.isFile()) {
         files += 1;
@@ -559,7 +562,7 @@ function citationResolves(roots: string[], workspaceAbs: string, source: JsonObj
   if (!isContainedPath(workspaceAbs, candidate)) return false;
   const containingRoot = roots.find((root) => isContainedPath(root, candidate));
   if (!containingRoot) return false;
-  if (pathUsesExcludedSourceDirectory(relative(containingRoot, candidate))) return false;
+  if (pathUsesExcludedSourceDirectory(relative(containingRoot, candidate), false)) return false;
   if (pathTraversesSymlink(workspaceAbs, candidate)) return false;
   let info;
   try {
@@ -598,6 +601,10 @@ export function validateSourceRoots(workspaceAbs: string, roots: string[]): stri
     }
     if (lstatSync(root).isSymbolicLink()) {
       reasons.push(`source root is a symlink: ${root}`);
+      continue;
+    }
+    if (pathUsesExcludedSourceDirectory(relative(workspaceAbs, root), true)) {
+      reasons.push(`source root uses an excluded directory: ${root}`);
       continue;
     }
     const measurement = measureSourceRoot(root);
