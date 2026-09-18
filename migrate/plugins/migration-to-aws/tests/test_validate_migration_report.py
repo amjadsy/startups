@@ -1522,3 +1522,19 @@ def test_cost_figure_trailing_text_outside_inner_tag_is_included(tmp_path: Path)
     assert code == 1, out
     assert "cost figure mismatch" in out
     assert '"$1120"' in out
+
+
+def test_cost_anchor_inside_template_does_not_satisfy_requirement(tmp_path: Path) -> None:
+    # <template> subtree content is inert (never rendered by a browser) even
+    # though the HTML parser still walks its tags. An anchor placed there must
+    # not stand in for the visible (wrong) figure sitting right next to it.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        '<strong data-cost-key="aws_monthly_balanced">$112</strong>',
+        '<template><strong data-cost-key="aws_monthly_balanced">$112</strong></template>$999',
+        1,
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert 'missing data-cost-key="aws_monthly_balanced"' in out

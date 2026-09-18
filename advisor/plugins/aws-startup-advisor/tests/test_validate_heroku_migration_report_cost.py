@@ -105,3 +105,80 @@ def test_non_numeric_json_value_fails_not_crash() -> None:
         code, out = run(GOOD, migration_dir=d)
     assert code == 1, out
     assert "not a whole-dollar number" in out
+
+
+def test_cost_anchor_inside_html_comment_does_not_satisfy_requirement() -> None:
+    # A commented-out anchor is not rendered content — it must not satisfy the
+    # required-anchor check, even if the (invisible) figure would have matched.
+    html = GOOD.replace(
+        '<span data-cost-key="aws_monthly_balanced">$112/mo</span>',
+        '<!-- <span data-cost-key="aws_monthly_balanced">$112/mo</span> -->$999/mo',
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out = run(html, migration_dir=_est_dir(tmp, 112))
+    assert code == 1, out
+    assert 'missing data-cost-key="aws_monthly_balanced"' in out
+
+
+def test_cost_anchor_outside_exec_costs_does_not_satisfy_requirement() -> None:
+    # A correct anchor placed in decision-summary (not exec-costs) must not let an
+    # unanchored, wrong figure inside exec-costs itself pass silently.
+    html = GOOD.replace(
+        '<span data-cost-key="aws_monthly_balanced">$112/mo</span>',
+        "$999/mo",
+    ).replace(
+        '<p class="verdict-headline">Go</p>',
+        '<p class="verdict-headline">Go</p>'
+        '<p><span data-cost-key="aws_monthly_balanced">$112/mo</span></p>',
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out = run(html, migration_dir=_est_dir(tmp, 112))
+    assert code == 1, out
+    assert 'missing data-cost-key="aws_monthly_balanced" anchor inside' in out
+    assert "exec-costs" in out
+
+
+def test_cost_anchor_inside_template_does_not_satisfy_requirement() -> None:
+    # <template> content is inert (never rendered) even though the parser still
+    # walks its tags — an anchor placed there must not stand in for the visible
+    # (wrong) figure sitting right next to it.
+    html = GOOD.replace(
+        '<span data-cost-key="aws_monthly_balanced">$112/mo</span>',
+        '<template><span data-cost-key="aws_monthly_balanced">$112/mo</span></template>$999/mo',
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out = run(html, migration_dir=_est_dir(tmp, 112))
+    assert code == 1, out
+    assert 'missing data-cost-key="aws_monthly_balanced"' in out
+
+
+def test_split_nested_markup_reads_full_text() -> None:
+    # A figure split across nested markup within the SAME anchored element
+    # (<span data-cost-key="x"><span>$</span>112/mo</span>) must be read as one
+    # value through the anchor's own matching close tag, not truncated at the
+    # first inner </span>.
+    html = GOOD.replace(
+        '<span data-cost-key="aws_monthly_balanced">$112/mo</span>',
+        '<span data-cost-key="aws_monthly_balanced"><span>$</span>112/mo</span>',
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out = run(html, migration_dir=_est_dir(tmp, 112))
+    assert code == 0, out
+    assert "cost figure mismatch" not in out
+    assert "renders no dollar amount" not in out
+
+
+def test_trailing_text_outside_inner_tag_is_included() -> None:
+    # Text sitting after a nested child tag, but still inside the anchor's own
+    # close tag, must be included — not dropped at the child's </strong>. Here
+    # the anchor's full rendered text is "$1120", which must NOT be truncated
+    # to "$112" (that would silently accept a wrong ten-times-off figure).
+    html = GOOD.replace(
+        '<span data-cost-key="aws_monthly_balanced">$112/mo</span>',
+        '<span data-cost-key="aws_monthly_balanced"><strong>$112</strong>0/mo</span>',
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out = run(html, migration_dir=_est_dir(tmp, 112))
+    assert code == 1, out
+    assert "cost figure mismatch" in out
+    assert '"$1120"' in out

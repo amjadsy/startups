@@ -907,11 +907,15 @@ class _CostAnchorParser(HTMLParser):
 
     Uses the stdlib HTML parser rather than a regex so that (a) markup inside an
     HTML comment is never mistaken for a real anchor — comments are a distinct
-    token the parser never re-tokenizes as tags — and (b) nested child markup
+    token the parser never re-tokenizes as tags — (b) nested child markup
     (`<span data-cost-key="x"><strong>$112</strong></span>`) is read through the
     anchored element's OWN matching close tag, not the first `</` encountered,
-    by counting nested opens/closes of the same tag name. Character references
-    are decoded automatically (`convert_charrefs=True`, the default).
+    by counting nested opens/closes of the same tag name, and (c) content inside
+    a <template> subtree is skipped — <template> children are inert (never
+    rendered by the browser) even though the parser still walks their tags, so
+    an anchor placed there must not stand in for the visible figure elsewhere in
+    the document. Character references are decoded automatically
+    (`convert_charrefs=True`, the default).
     """
 
     def __init__(self) -> None:
@@ -921,8 +925,13 @@ class _CostAnchorParser(HTMLParser):
         self._depth = 0
         self._pending_key = ""
         self._parts: list[str] = []
+        self._template_depth = 0  # >0 while inside any <template> subtree
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "template":
+            self._template_depth += 1
+        if self._template_depth > 0:
+            return  # <template> content is inert — never rendered, never an anchor
         if self._tag_name is not None:
             if tag == self._tag_name:
                 self._depth += 1
@@ -935,6 +944,8 @@ class _CostAnchorParser(HTMLParser):
             self._parts = []
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self._template_depth > 0:
+            return
         # A self-closed anchor (<span data-cost-key="x" />) has no text content;
         # treat it as an anchor with empty rendered text rather than ignoring it.
         if self._tag_name is None:
@@ -943,6 +954,11 @@ class _CostAnchorParser(HTMLParser):
                 self.results.append((key.lower(), ""))
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "template" and self._template_depth > 0:
+            self._template_depth -= 1
+            return
+        if self._template_depth > 0:
+            return
         if self._tag_name is None or tag != self._tag_name:
             return
         self._depth -= 1
@@ -952,13 +968,15 @@ class _CostAnchorParser(HTMLParser):
             self._parts = []
 
     def handle_data(self, data: str) -> None:
+        if self._template_depth > 0:
+            return
         if self._tag_name is not None:
             self._parts.append(data)
 
 
 def _cost_anchor_matches(html: str) -> list[tuple[str, str]]:
     """Parse `html` and return every (data-cost-key, rendered text) pair found
-    outside of comments and other non-rendered markup."""
+    outside of comments and other non-rendered markup (e.g. <template>)."""
     parser = _CostAnchorParser()
     parser.feed(html)
     parser.close()
