@@ -20,30 +20,19 @@ declare module "node:fs" {
   export function realpathSync(path: string): string;
   export function mkdtempSync(prefix: string): string;
   export function mkdirSync(path: string, options?: { recursive: boolean }): void;
-  export function writeFileSync(
-    path: string,
-    data: string,
-    options?: { flag?: string; mode?: number },
-  ): void;
-  export function renameSync(oldPath: string, newPath: string): void;
-  export function unlinkSync(path: string): void;
+  export function writeFileSync(path: string, data: string): void;
+  export function chmodSync(path: string, mode: number): void;
   export function symlinkSync(target: string, path: string): void;
   export function rmSync(path: string, options?: { recursive: boolean; force: boolean }): void;
 }
 
 declare module "node:path" {
   export const sep: string;
-  export function basename(p: string): string;
-  export function relative(from: string, to: string): string;
   export function join(...parts: string[]): string;
   export function resolve(...parts: string[]): string;
   export function dirname(p: string): string;
   export function basename(p: string): string;
   export function relative(from: string, to: string): string;
-}
-
-declare module "node:crypto" {
-  export function randomUUID(): string;
 }
 
 declare module "node:child_process" {
@@ -79,7 +68,6 @@ declare module "node:assert/strict" {
 
 declare const process: {
   readonly argv: string[];
-  readonly pid: number;
   exit(code: number): never;
   on(event: string, listener: (...args: unknown[]) => void): void;
 };

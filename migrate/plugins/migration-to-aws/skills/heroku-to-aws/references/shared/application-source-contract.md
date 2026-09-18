@@ -1,7 +1,7 @@
 # Application-Source Contract
 
 `application-source-contract.schema.json` defines request and findings documents used by the
-production contract checker. The checker is not wired into a migration phase in this PR.
+production contract checker. The checker is not yet invoked by any migration phase.
 
 Requests expose only selected question names, application identity, process/configuration names,
 attachment and Private Space presence, add-on IDs, and selected estate application IDs.
@@ -22,6 +22,11 @@ present, and rejects reversed source line bounds.
 Heroku process and configuration names provide non-secret inventory context, not an allowlist.
 Source review may discover additional names; those differences must be retained for later drift or
 missing-configuration assessment rather than rejected.
+
+Executable validation initially supports Ruby, Java, and Node.js. Producers should use the canonical
+runtime names `ruby`, `java`, and `nodejs`, and place a version in `runtime_version`. Common labels
+such as `Ruby 3.3`, `Java 21`, and `Node.js 20` are normalized. Other runtimes fail closed to
+`UNKNOWN`.
 
 Configuration-name context and each typed record array are capped at 256 entries. Callers must
 report an exceeded bound rather than silently truncating the submitted information.
@@ -59,5 +64,5 @@ relationship IDs make references checkable; setting names never carry values.
 The contract checks lexical path safety. The production validator rejects a symlinked root, skips
 internal symlinks and non-source state/dependency directories, and checks real paths plus file and
 byte limits. Before retaining findings, it also rejects symlinked or non-source-state citations and
-checks cited files, root containment, and cited line bounds. The validator remains dormant in this
-PR.
+checks cited files, root containment, and cited line bounds. The validator is not yet invoked by any
+migration phase.

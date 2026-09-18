@@ -12,13 +12,8 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
 } from "node:fs";
-import { basename, dirname, relative, resolve, sep } from "node:path";
-import { randomUUID } from "node:crypto";
+import { relative, resolve, sep } from "node:path";
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type JsonObject = { [key: string]: Json };
@@ -52,8 +47,15 @@ export const QUESTIONS = [
 export type Question = (typeof QUESTIONS)[number];
 
 /** Runtimes with validated review behavior. Anything else stays UNKNOWN (fail closed). */
-export const SUPPORTED_RUNTIMES = ["ruby", "java", "nodejs", "node.js", "node"] as const;
-const SUPPORTED_RUNTIME_NAMES = new Set<string>(SUPPORTED_RUNTIMES);
+export const SUPPORTED_RUNTIMES = ["ruby", "java", "nodejs"] as const;
+
+function normalizeRuntime(value: string): (typeof SUPPORTED_RUNTIMES)[number] | null {
+  const runtime = value.trim().toLowerCase();
+  if (/^ruby\b/u.test(runtime)) return "ruby";
+  if (/^java\b/u.test(runtime)) return "java";
+  if (/^node(?:\.?js)?\b/u.test(runtime)) return "nodejs";
+  return null;
+}
 
 /** The 15 questions requested for every reviewed application. */
 export const ALWAYS_QUESTIONS: readonly Question[] = [
@@ -110,7 +112,6 @@ export const LIMITS = {
   maxTotalBytes: 64 * 1024 * 1024,
   maxFileBytes: 2 * 1024 * 1024,
   maxRetainedBytes: 256 * 1024,
-  maxArtifactBytes: 32 * 1024 * 1024,
 } as const;
 
 export function object(value: Json): JsonObject {
@@ -120,6 +121,20 @@ export function object(value: Json): JsonObject {
 
 function same(left: Json, right: Json): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function hasOwn(value: JsonObject, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function validateDefinition(
+  schema: JsonObject,
+  definition: "request" | "findings",
+  value: Json,
+  path: string,
+): string[] {
+  const definitions = object(schema.definitions);
+  return validate(object(definitions[definition]), value, schema, path);
 }
 
 // --- draft-07 subset validator ------------------------------------------------
@@ -193,16 +208,16 @@ export function validate(node: JsonObject, value: Json, root: JsonObject = node,
     const properties = node.properties ? object(node.properties) : {};
     if (Array.isArray(node.required)) {
       for (const key of node.required) {
-        if (typeof key === "string" && !(key in value)) errors.push(`${path}: missing ${key}`);
+        if (typeof key === "string" && !hasOwn(value, key)) errors.push(`${path}: missing ${key}`);
       }
     }
     if (node.additionalProperties === false) {
       for (const key of Object.keys(value)) {
-        if (!(key in properties)) errors.push(`${path}: undeclared ${key}`);
+        if (!hasOwn(properties, key)) errors.push(`${path}: undeclared ${key}`);
       }
     }
     for (const [key, childSchema] of Object.entries(properties)) {
-      if (key in value) errors.push(...validate(object(childSchema), value[key], root, `${path}.${key}`));
+      if (hasOwn(value, key)) errors.push(...validate(object(childSchema), value[key], root, `${path}.${key}`));
     }
   }
   return errors;
@@ -358,8 +373,8 @@ function validateRuntimeSupport(reviewRequest: JsonObject, answer: JsonObject): 
   }
 
   const unsupported = finding.value
-    .map((record) => String(object(record).runtime).trim().toLowerCase())
-    .filter((runtime) => !SUPPORTED_RUNTIME_NAMES.has(runtime));
+    .map((record) => String(object(record).runtime).trim())
+    .filter((runtime) => normalizeRuntime(runtime) === null);
   return unsupported.length === 0
     ? []
     : [`unsupported runtime: ${[...new Set(unsupported)].join(", ")}`];
@@ -378,15 +393,16 @@ const CREDENTIAL_PATTERNS: RegExp[] = [
   /\bBearer\s+[A-Za-z0-9._~+/-]{12,}=*\b/i, // bearer token
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/, // JWT
   /\b[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/i, // URI userinfo
-  /\b(?:password|passwd|secret|token|api[_-]?key|access[_-]?key)\s*[:=]\s*["']?[^\s"']{8,}/i, // literal assignment
-  /--?(?:password|passwd|secret|token|api[_-]?key|access[_-]?key)(?:=|\s+)["']?[^\s"']{8,}/i, // CLI literal
+  /\b(?:password|passwd|secret|token|api[_-]?key|access[_-]?key)\s*[:=]\s*["']?(?!<|\*{3,}|\[|\$\{?[A-Z_])[^\s"'<>*\[\]]{8,}/i, // literal assignment
+  /--?(?:password|passwd|secret|token|api[_-]?key|access[_-]?key)(?:=|\s+)["']?(?!<|\*{3,}|\[|\$\{?[A-Z_])[^\s"'<>*\[\]]{8,}/i, // CLI literal
 ];
 
 const TARGET_PATTERNS: RegExp[] = [
-  /\b(?:target|destination|deploy(?:ment)?|migrat(?:e|ion))\b.{0,80}\b(?:elastic beanstalk|fargate|amazon rds\b|amazon aurora|elasticache|amazon eks|amazon msk|app runner)\b/i,
+  /\b(?:recommend(?:s|ed)?|should|propos(?:e|ed))\b.{0,80}\b(?:elastic beanstalk|fargate|amazon rds\b|amazon aurora|elasticache|amazon eks|amazon msk|app runner)\b/i,
+  /\b(?:target|destination)\s+(?:is|=|:)\s*(?:elastic beanstalk|fargate|amazon rds\b|amazon aurora|elasticache|amazon eks|amazon msk|app runner)\b/i,
   /\b(?:recommend|recommends|recommended)\s+(?:using|use|deploying|deploy|moving|move|migrating|migrate|to|on)\b/i,
   /\b(?:recommended|proposed)\s+architecture\b/i,
-  /(?:\$\s?\d|\bmonthly cost\b|\bUSD\b|\bper month\b)/i,
+  /(?:\$\s?\d[\d,]*(?:\.\d+)?\s*(?:\/|per)\s*(?:mo(?:nth)?|hr|hour|yr|year)\b|\b(?:monthly|hourly|annual) cost\b|\b\d[\d,.]*\s*USD\s*(?:\/|per)\s*(?:mo(?:nth)?|hr|hour|yr|year)\b)/i,
 ];
 
 function walkStrings(value: Json, visit: (text: string) => void): void {
@@ -462,6 +478,29 @@ export interface RootMeasurement {
   withinLimits: boolean;
 }
 
+const EXCLUDED_SOURCE_DIRECTORIES = new Set([
+  ".git",
+  ".gradle",
+  ".migration",
+  ".next",
+  ".nyc_output",
+  ".venv",
+  "build",
+  "coverage",
+  "dist",
+  "log",
+  "logs",
+  "node_modules",
+  "target",
+  "tmp",
+]);
+
+function pathUsesExcludedSourceDirectory(path: string): boolean {
+  const segments = path.split(/[\\/]/u).filter((segment) => segment.length > 0);
+  return segments.some((segment) => EXCLUDED_SOURCE_DIRECTORIES.has(segment))
+    || segments.some((segment, index) => segment === "vendor" && segments[index + 1] === "bundle");
+}
+
 /** Walk a source root counting regular files and bytes; never follows symlinked dirs. */
 export function measureSourceRoot(rootAbs: string): RootMeasurement {
   let files = 0;
@@ -479,8 +518,8 @@ export function measureSourceRoot(rootAbs: string): RootMeasurement {
       continue;
     }
     for (const entry of entries) {
-      if ([".git", ".migration", "node_modules", ".venv"].includes(entry)) continue;
       const child = resolve(dir, entry);
+      if (pathUsesExcludedSourceDirectory(relative(rootAbs, child))) continue;
       let info;
       try {
         info = lstatSync(child);
@@ -492,7 +531,6 @@ export function measureSourceRoot(rootAbs: string): RootMeasurement {
         continue; // never follow or count symlinked source entries
       }
       if (info.isDirectory()) {
-        if (dir === rootAbs && entry === ".git") continue;
         stack.push(child);
       } else if (info.isFile()) {
         files += 1;
@@ -517,12 +555,11 @@ export function measureSourceRoot(rootAbs: string): RootMeasurement {
 function citationResolves(roots: string[], workspaceAbs: string, source: JsonObject): boolean {
   const relPath = source.path;
   if (typeof relPath !== "string") return false;
-  if (relPath.split("/").some((segment) => [".git", ".migration", "node_modules", ".venv"].includes(segment))) {
-    return false;
-  }
   const candidate = resolve(workspaceAbs, relPath);
   if (!isContainedPath(workspaceAbs, candidate)) return false;
-  if (!roots.some((root) => isContainedPath(root, candidate))) return false;
+  const containingRoot = roots.find((root) => isContainedPath(root, candidate));
+  if (!containingRoot) return false;
+  if (pathUsesExcludedSourceDirectory(relative(containingRoot, candidate))) return false;
   if (pathTraversesSymlink(workspaceAbs, candidate)) return false;
   let info;
   try {
@@ -531,10 +568,15 @@ function citationResolves(roots: string[], workspaceAbs: string, source: JsonObj
     return false;
   }
   if (!info.isFile() || info.isSymbolicLink()) return false;
+  let text: string;
+  try {
+    text = readFileSync(candidate, "utf8");
+  } catch {
+    return false;
+  }
   const start = source.line_start;
   const end = source.line_end;
   if (typeof start === "number" || typeof end === "number") {
-    const text = readFileSync(candidate, "utf8");
     const newlineCount = text.match(/\r\n|\r|\n/gu)?.length ?? 0;
     const lineCount = text.length === 0
       ? 0
@@ -607,17 +649,9 @@ function validRelativeRoot(value: string): boolean {
 }
 
 function validateRequest(schema: JsonObject, request: JsonObject, path: string): string[] {
-  const errors = validate(schema, request, schema, path);
+  const errors = validateDefinition(schema, "request", request, path);
   if (errors.length > 0) return errors;
 
-  const context = jsonObject(request.context);
-  const names = context?.configuration_names;
-  if (
-    !Array.isArray(names)
-    || names.some((name) => typeof name !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name))
-  ) {
-    errors.push(`${path}: configuration_names must contain names only`);
-  }
   errors.push(...scanCredentialContent(request).map((error) => `${path}: ${error}`));
   return errors;
 }
@@ -655,7 +689,7 @@ export function validateReviewArtifact(
       continue;
     }
     const requestErrors = validateRequest(schema, request, `${at}.request`);
-    const findingErrors = validate(schema, findings, schema, `${at}.findings`);
+    const findingErrors = validateDefinition(schema, "findings", findings, `${at}.findings`);
     errors.push(...requestErrors, ...findingErrors);
     if (requestErrors.length > 0 || findingErrors.length > 0) continue;
     errors.push(...validateSemantics(request, findings).map((error) => `${at}: ${error}`));
@@ -739,7 +773,7 @@ export interface SubmissionResult {
 export function evaluateSubmission(ctx: SubmissionContext): SubmissionResult {
   const reasons: string[] = [];
   reasons.push(...validateRequest(ctx.schema, ctx.request, "request").map((error) => `request ${error}`));
-  reasons.push(...validate(ctx.schema, ctx.submission, ctx.schema, "findings").map((error) => `findings ${error}`));
+  reasons.push(...validateDefinition(ctx.schema, "findings", ctx.submission, "findings").map((error) => `findings ${error}`));
   if (reasons.length === 0) {
     reasons.push(...validateSemantics(ctx.request, ctx.submission));
     reasons.push(...validateRuntimeSupport(ctx.request, ctx.submission));

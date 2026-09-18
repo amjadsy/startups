@@ -1,12 +1,11 @@
-// Focused tests for the read-only source_review phase: they import the SAME
-// production validator (tools/application-source-review.ts) the phase relies on, and
-// check the phase wiring, fixture state, and cross-plugin identity on disk.
+// Focused tests for the application-source validator. They import the production
+// implementation directly and check its contract, security, filesystem behavior,
+// fail-closed behavior, and cross-plugin identity.
 // Run: node --test tests/tools/application-source-review.test.ts
 
 import assert from 'node:assert/strict';
 import {
-  existsSync,
-  lstatSync,
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -33,6 +32,7 @@ import {
   selectQuestions,
   unknownForRequest,
   validate,
+  validateReviewArtifact,
   validateSemantics,
 } from '../../tools/application-source-review.ts';
 
@@ -167,6 +167,20 @@ describe('question selection from Heroku inventory', () => {
   });
 });
 
+describe('schema validator object fields', () => {
+  it('rejects undeclared keys inherited by ordinary JavaScript objects', () => {
+    const objectSchema: JsonObject = {
+      type: 'object',
+      additionalProperties: false,
+      properties: { runtime: { type: 'string' } },
+    };
+    for (const key of ['constructor', 'toString', '__proto__']) {
+      const value = JSON.parse(`{"runtime":"nodejs","${key}":{"unexpected":"content"}}`) as JsonObject;
+      assert.match(validate(objectSchema, value).join('\n'), new RegExp(`undeclared ${key}`));
+    }
+  });
+});
+
 // --- valid contracts + fail-closed replacement --------------------------------
 
 describe('evaluateSubmission: retain vs fail closed', () => {
@@ -184,6 +198,20 @@ describe('evaluateSubmission: retain vs fail closed', () => {
       assert.deepEqual(result.reasons, []);
       assert.equal(result.retained, true);
       assert.equal(result.findings, submission);
+    });
+  }
+
+  for (const runtime of ['Node.js 20', 'ruby-3.2', 'Java 21']) {
+    it(`normalizes the supported runtime label ${runtime}`, () => {
+      const ws = makeWorkspace({ 'package.json': '{\n  "name": "app"\n}\n' });
+      const result = evaluateSubmission({
+        schema,
+        request: request(['runtime_framework']),
+        submission: findings([runtimeFramework(runtime, NODE_SOURCES)]),
+        roots: [ws],
+        workspaceRoot: ws,
+      });
+      assert.equal(result.retained, true);
     });
   }
 
@@ -282,6 +310,20 @@ describe('evaluateSubmission: retain vs fail closed', () => {
       workspaceRoot: ws,
     });
     assert.equal(sourceRootRelative.retained, false);
+  });
+
+  it('fails closed instead of treating a request document as findings', () => {
+    const ws = makeWorkspace({ 'package.json': '{}\n' });
+    const reviewRequest = request(['runtime_framework']);
+    const result = evaluateSubmission({
+      schema,
+      request: reviewRequest,
+      submission: reviewRequest,
+      roots: [ws],
+      workspaceRoot: ws,
+    });
+    assert.equal(result.retained, false);
+    assert.match(result.reasons.join('\n'), /findings/);
   });
 
   it('fails closed on malformed, duplicate, and unrequested submissions', () => {
@@ -387,6 +429,77 @@ describe('evaluateSubmission: retain vs fail closed', () => {
   });
 });
 
+// --- final artifact validation -------------------------------------------------
+
+describe('final review artifact validation', () => {
+  function retainedArtifact(reviewRequest: JsonObject, limitations: string[] = []): JsonObject {
+    return {
+      reviews: [{
+        source_root: '.',
+        request: reviewRequest,
+        status: 'RETAINED',
+        findings: findings([runtimeFramework('nodejs', NODE_SOURCES)]),
+        limitations,
+      }],
+    };
+  }
+
+  it('accepts retained and canonical UNKNOWN review entries', () => {
+    const ws = makeWorkspace({ 'package.json': '{\n  "name": "app"\n}\n' });
+    const retainedRequest = request(['runtime_framework']);
+    assert.deepEqual(validateReviewArtifact(schema, retainedArtifact(retainedRequest), ws, [retainedRequest]), []);
+
+    const unknownRequest = publicationRequest();
+    assert.deepEqual(validateReviewArtifact(schema, publishableUnknown(), ws, [unknownRequest]), []);
+  });
+
+  it('rejects altered requests, extra entry fields, and retained limitations', () => {
+    const ws = makeWorkspace({ 'package.json': '{\n  "name": "app"\n}\n' });
+    const retainedRequest = request(['runtime_framework']);
+
+    const limited = validateReviewArtifact(
+      schema,
+      retainedArtifact(retainedRequest, ['Unexpected limitation.']),
+      ws,
+      [retainedRequest],
+    );
+    assert.match(limited.join('\n'), /RETAINED cannot have limitations/);
+
+    const altered = retainedArtifact(request(['runtime_framework']));
+    const alteredEntry = object((altered.reviews as Json[])[0]);
+    const alteredRequest = object(alteredEntry.request);
+    object(alteredRequest.application).app_name = 'different-app';
+    assert.match(
+      validateReviewArtifact(schema, altered, ws, [retainedRequest]).join('\n'),
+      /request content or inventory order does not match/,
+    );
+
+    const extra = retainedArtifact(retainedRequest);
+    object((extra.reviews as Json[])[0]).extra = true;
+    assert.match(validateReviewArtifact(schema, extra, ws, [retainedRequest]).join('\n'), /invalid entry shape/);
+  });
+
+  it('rejects non-canonical UNKNOWN findings and wrong document types', () => {
+    const ws = makeWorkspace({ 'package.json': '{}\n' });
+    const unknownRequest = publicationRequest();
+    const nonCanonical = publishableUnknown();
+    const nonCanonicalEntry = object((nonCanonical.reviews as Json[])[0]);
+    nonCanonicalEntry.findings = unknownForRequest(ALWAYS_QUESTIONS, 'Unexpected failure detail.');
+    nonCanonicalEntry.limitations = ['Unexpected failure detail.'];
+    assert.match(
+      validateReviewArtifact(schema, nonCanonical, ws, [unknownRequest]).join('\n'),
+      /canonical fail-closed replacement/,
+    );
+
+    const wrongType = retainedArtifact(request(['runtime_framework']));
+    object((wrongType.reviews as Json[])[0]).findings = request(['runtime_framework']);
+    assert.match(
+      validateReviewArtifact(schema, wrongType, ws, [request(['runtime_framework'])]).join('\n'),
+      /findings/,
+    );
+  });
+});
+
 // --- configuration names vs credentials ---------------------------------------
 
 describe('configuration names vs literal credentials', () => {
@@ -407,6 +520,24 @@ describe('configuration names vs literal credentials', () => {
       limitations: [],
     }]);
     assert.deepEqual(scanDisallowedContent(clean), []);
+  });
+
+  it('allows standard redaction placeholders in commands', () => {
+    for (const command of [
+      'heroku run rake seed --token=<redacted>',
+      'API_KEY=******** node app.js',
+      'node app.js --secret=${REDACTED}',
+    ]) {
+      const clean = findings([{
+        question: 'process_commands',
+        status: 'PRESENT',
+        value: [{ process_id: 'p', component_id: 'c', type: 'web', name: 'web', command }],
+        sources: [],
+        limitations: [],
+      }]);
+      assert.deepEqual(validate(schema, clean), []);
+      assert.deepEqual(scanDisallowedContent(clean), []);
+    }
   });
 
   it('rejects a high-confidence literal credential', () => {
@@ -455,20 +586,70 @@ describe('configuration names vs literal credentials', () => {
   });
 
   it('allows an existing AWS dependency without treating it as a target recommendation', () => {
-    const clean = findings([{
+    const dependency = findings([{
       question: 'external_services',
       status: 'PRESENT',
       value: [{
         dependency_id: 'database',
         component_id: 'component-api',
-        kind: 'DATABASE',
-        provider_reference: 'Amazon RDS',
-        setting_names: ['DATABASE_URL'],
+        process_ids: ['process-web'],
+        direction: 'OUTBOUND',
+        category: 'DATABASE',
+        service_reference: 'Amazon RDS',
+        setting_name: 'DATABASE_URL',
+        role: 'deployment reads the existing Amazon RDS reporting replica',
+        protocol: 'postgresql',
+        authentication_mechanism: 'connection string setting',
+        allowlist_behavior: 'unknown',
       }],
       sources: [],
       limitations: [],
     }]);
-    assert.deepEqual(scanDisallowedContent(clean), []);
+    const recurringJob = findings([{
+      question: 'recurring_jobs',
+      status: 'PRESENT',
+      value: [{
+        job_id: 'nightly-totals',
+        component_id: 'component-api',
+        process_ids: ['process-worker'],
+        name: 'nightly totals',
+        mechanism: 'scheduler',
+        command: 'bin/totals',
+        coordination: 'existing nightly migration of totals into Amazon Aurora',
+      }],
+      sources: [],
+      limitations: [],
+    }]);
+    const positionalParameter = findings([{
+      question: 'process_commands',
+      status: 'PRESENT',
+      value: [{
+        process_id: 'process-web',
+        component_id: 'component-api',
+        type: 'web',
+        name: 'web',
+        command: 'bin/start $1',
+      }],
+      sources: [],
+      limitations: [],
+    }]);
+    for (const clean of [dependency, recurringJob, positionalParameter]) {
+      assert.deepEqual(validate(schema, clean), []);
+      assert.deepEqual(scanDisallowedContent(clean), []);
+    }
+  });
+
+  it('still rejects explicit target recommendations and cost estimates', () => {
+    for (const command of ['Recommend deploying on AWS Fargate', 'Estimated at $120/month']) {
+      const tainted = findings([{
+        question: 'process_commands',
+        status: 'PRESENT',
+        value: [{ process_id: 'p', component_id: 'c', type: 'web', name: 'web', command }],
+        sources: [],
+        limitations: [],
+      }]);
+      assert.ok(scanDisallowedContent(tainted).length > 0);
+    }
   });
 });
 
@@ -501,8 +682,18 @@ describe('path containment', () => {
     assert.match(result.reasons.join('\n'), /source root escapes workspace/);
   });
 
-  it('measures a small source root within budget', () => {
-    const ws = makeWorkspace({ 'a.js': 'a\n', 'lib/b.js': 'b\n', '.git/objects/data': 'ignored\n' });
+  it('measures source while excluding generated, dependency, and state directories', () => {
+    const ws = makeWorkspace({
+      'a.js': 'a\n',
+      'lib/b.js': 'b\n',
+      '.git/objects/data': 'ignored\n',
+      '.gradle/cache/data': 'ignored\n',
+      '.next/cache/data': 'ignored\n',
+      'coverage/report.json': 'ignored\n',
+      'dist/app.js': 'ignored\n',
+      'target/classes/App.class': 'ignored\n',
+      'vendor/bundle/gem.rb': 'ignored\n',
+    });
     const measured = measureSourceRoot(ws);
     assert.equal(measured.files, 2);
     assert.equal(measured.unreadableEntries, 0);
@@ -510,18 +701,41 @@ describe('path containment', () => {
     assert.ok(measured.totalBytes <= LIMITS.maxTotalBytes);
   });
 
+  it('fails closed for unreadable citations with and without line bounds', () => {
+    const ws = makeWorkspace({ 'app.js': 'console.log("hello");\n' });
+    const citedFile = resolve(ws, 'app.js');
+    chmodSync(citedFile, 0o000);
+    try {
+      const sources: JsonObject[] = [{ path: 'app.js' }, { path: 'app.js', line_start: 1 }];
+      for (const source of sources) {
+        const result = evaluateSubmission({
+          schema,
+          request: request(['runtime_framework']),
+          submission: findings([runtimeFramework('nodejs', [source])]),
+          roots: [ws],
+          workspaceRoot: ws,
+        });
+        assert.equal(result.retained, false);
+        assert.match(result.reasons.join('\n'), /cited path does not resolve/);
+      }
+    } finally {
+      chmodSync(citedFile, 0o600);
+    }
+  });
+
   it('skips internal symlinks and rejects symlink or migration-state citations', () => {
     const outside = makeWorkspace({ 'secret.txt': 'not reviewed\n' });
     const ws = makeWorkspace({
       'package.json': '{}\n',
       '.migration/0901/application-source-review.json': '{}\n',
+      'dist/generated.js': 'generated\n',
     });
     symlinkSync(resolve(outside, 'secret.txt'), resolve(ws, 'linked-secret.txt'));
     const measured = measureSourceRoot(ws);
     assert.equal(measured.files, 1);
     assert.equal(measured.unreadableEntries, 0);
 
-    for (const path of ['linked-secret.txt', '.migration/0901/application-source-review.json']) {
+    for (const path of ['linked-secret.txt', '.migration/0901/application-source-review.json', 'dist/generated.js']) {
       const result = evaluateSubmission({
         schema,
         request: request(['runtime_framework']),
