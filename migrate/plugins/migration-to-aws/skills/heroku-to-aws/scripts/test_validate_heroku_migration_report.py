@@ -187,6 +187,37 @@ def test_cost_optimization_with_real_opportunity_row_passes() -> None:
     assert "REPORT_OK" in out
 
 
+def test_empty_tbody_with_credits_disclaimer_fails() -> None:
+    # Regression: an empty <tbody> plus the credits disclaimer prose that normally
+    # accompanies a populated table must NOT satisfy the content check on its own —
+    # the disclaimer is explanatory text, not an opportunity row or the explicit
+    # no-eligible-commitment sentence.
+    html = GOOD.replace(
+        '<section id="cost-optimization"><p>No 1-year/3-year commitment product applies to this architecture.</p></section>',
+        '<section id="cost-optimization"><table><thead><tr>'
+        '<th scope="col">Optimization</th></tr></thead><tbody></tbody></table>'
+        "<p>Activate credits don't cover RI/Savings Plan upfront costs — they apply "
+        "only to the ongoing discounted hourly rate.</p></section>",
+    )
+    code, out = run(html)
+    assert code == 1, out
+    assert "cost-optimization" in out
+
+
+def test_th_only_row_in_tbody_does_not_count_as_opportunity_row() -> None:
+    # A <tbody> row made only of <th> cells (no <td>) must not count as a
+    # populated opportunity row.
+    html = GOOD.replace(
+        '<section id="cost-optimization"><p>No 1-year/3-year commitment product applies to this architecture.</p></section>',
+        '<section id="cost-optimization"><table><thead><tr>'
+        '<th scope="col">Opportunity</th></tr></thead><tbody><tr>'
+        '<th scope="row">Totals</th></tr></tbody></table></section>',
+    )
+    code, out = run(html)
+    assert code == 1, out
+    assert "cost-optimization" in out
+
+
 def test_th_scope_with_spaces_around_equals_passes() -> None:
     # scope = "col" (spaces around =) is valid HTML and must be accepted —
     # a literal `scope="col"` regex would wrongly reject it.
@@ -243,6 +274,60 @@ def test_figure_with_aria_label_and_figcaption_passes() -> None:
     code, out = run(html)
     assert code == 0, out
     assert "REPORT_OK" in out
+
+
+def test_verdict_headline_with_spaces_around_equals_passes() -> None:
+    # class = "verdict-headline" (spaces around =) is valid HTML and must be
+    # accepted when recommendation.outcome is declared.
+    html = GOOD.replace(
+        '<p class="verdict-headline">Go, with conditions</p>',
+        '<p class = "verdict-headline">Go, with conditions</p>',
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out = run(html, migration_dir=_rec_dir(tmp))
+    assert code == 0, out
+    assert "REPORT_OK" in out
+
+
+def test_verdict_headline_unquoted_passes() -> None:
+    # class=verdict-headline (unquoted, single token) is valid HTML and must be
+    # accepted when recommendation.outcome is declared.
+    html = GOOD.replace(
+        '<p class="verdict-headline">Go, with conditions</p>',
+        "<p class=verdict-headline>Go, with conditions</p>",
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out = run(html, migration_dir=_rec_dir(tmp))
+    assert code == 0, out
+    assert "REPORT_OK" in out
+
+
+def test_badge_verdict_pill_with_spaces_around_equals_fails() -> None:
+    # class = "badge-verdict-go" (spaces around =) is valid, equivalent HTML and
+    # must still be caught by the badge ban — it must not bypass the check by
+    # using different (but legal) attribute formatting.
+    html = GOOD.replace(
+        '<p class="verdict-headline">Go, with conditions</p>',
+        '<p class="verdict-headline">Go, with conditions</p>'
+        '<span class = "badge-verdict-go">Go</span>',
+    )
+    code, out = run(html)
+    assert code == 1, out
+    assert "badge-verdict" in out.lower()
+
+
+def test_badge_verdict_pill_unquoted_fails() -> None:
+    # class=badge-verdict-go (unquoted) must also be caught — regression for the
+    # gap where a badge alongside a normal headline returned REPORT_OK because
+    # the literal `class="..."` regex didn't match unquoted attribute syntax.
+    html = GOOD.replace(
+        '<p class="verdict-headline">Go, with conditions</p>',
+        '<p class="verdict-headline">Go, with conditions</p>'
+        "<span class=badge-verdict-go>Go</span>",
+    )
+    code, out = run(html)
+    assert code == 1, out
+    assert "badge-verdict" in out.lower()
 
 
 def test_figure_without_figcaption_fails() -> None:

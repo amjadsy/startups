@@ -117,26 +117,65 @@ def _html_lang_declared(html: str) -> bool:
     return False
 
 
+NO_ELIGIBLE_COMMITMENT_SENTENCE = (
+    "no 1-year/3-year commitment product applies to this architecture"
+)
+
+
+def _has_populated_opportunity_row(body: str) -> bool:
+    """True if any <tbody> row has a <td> with non-empty text content — i.e. an
+    actual opportunity row, not just a header row or an empty <tbody>."""
+    for tbody_match in re.finditer(
+        r"<tbody\b[^>]*>(.*?)</tbody>", body, re.IGNORECASE | re.DOTALL
+    ):
+        for tr_match in re.finditer(
+            r"<tr\b[^>]*>(.*?)</tr>", tbody_match.group(1), re.IGNORECASE | re.DOTALL
+        ):
+            for td_match in re.finditer(
+                r"<td\b[^>]*>(.*?)</td>", tr_match.group(1), re.IGNORECASE | re.DOTALL
+            ):
+                if re.sub(r"<[^>]+>", "", td_match.group(1)).strip():
+                    return True
+    return False
+
+
 def _validate_optimization_content(body: str) -> list[str]:
-    """The cost-optimization section must render either a populated opportunities
-    table or the explicit no-eligible-commitment sentence — a heading or table
-    column headers alone are not content. Strip headings and <th> cells before
-    checking for remaining text, so "Cost Optimization Opportunities" (a heading)
-    or "Opportunity" / "Savings" (column headers) cannot satisfy the non-empty
-    check by themselves; an empty <tbody> then has no way to pass."""
-    stripped = re.sub(
-        r"<h[1-6]\b[^>]*>.*?</h[1-6]>", "", body, flags=re.IGNORECASE | re.DOTALL
-    )
-    stripped = re.sub(r"<th\b[^>]*>.*?</th>", "", stripped, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r"<[^>]+>", "", stripped).strip()
-    if not text:
-        return [
-            '<section id="cost-optimization"> is empty of substantive content — '
-            "render populated opportunity rows (not just column headers) or the "
-            "explicit no-eligible-commitment sentence, never a blank, heading-only, "
-            "or table-header-only section"
-        ]
-    return []
+    """The cost-optimization section must render EITHER a populated opportunities
+    table (a real <tbody> row with data) OR the explicit no-eligible-commitment
+    sentence — nothing else counts as content. This is a positive check, not
+    "any leftover text after stripping headings/<th>": that older approach let a
+    heading, column headers, AND any other prose (e.g. the credits disclaimer
+    that accompanies a populated table, or explanatory filler) satisfy the
+    requirement even with an empty <tbody>. Only a real opportunity row or the
+    literal no-eligible sentence can pass."""
+    if _has_populated_opportunity_row(body):
+        return []
+    text = re.sub(r"<[^>]+>", " ", body).lower()
+    text = re.sub(r"\s+", " ", text)
+    if NO_ELIGIBLE_COMMITMENT_SENTENCE in text:
+        return []
+    return [
+        '<section id="cost-optimization"> has no substantive content — render a '
+        "populated opportunity row (not just column headers, an empty <tbody>, or "
+        "other prose like the credits disclaimer) or the exact "
+        f'"{NO_ELIGIBLE_COMMITMENT_SENTENCE}" sentence, never a blank, '
+        "heading-only, or table-header-only section"
+    ]
+
+
+def _class_tokens(html_fragment: str) -> set[str]:
+    """Return the set of all `class` attribute tokens across every tag in the
+    fragment, parsed via the stdlib HTMLParser (the same approach already used
+    for lang/scope/aria-label) rather than a literal `class="value"` regex. This
+    accepts any legal spelling — `class="a b"`, `class = "a b"`, or an unquoted
+    single token like `class=verdict-headline` — so equivalent HTML always
+    produces the same tokens regardless of formatting."""
+    tokens: set[str] = set()
+    for _, attrs, _ in _collect_tags(html_fragment):
+        cls = attrs.get("class")
+        if cls:
+            tokens.update(cls.split())
+    return tokens
 
 
 def _validate_verdict(html: str, migration_dir: Path | None) -> list[str]:
@@ -147,8 +186,10 @@ def _validate_verdict(html: str, migration_dir: Path | None) -> list[str]:
     if summary is None:
         return errors  # missing-section already reported by the required-ID check
 
+    summary_classes = _class_tokens(summary)
+
     # Colored pill badges are banned outright (not merely as the "sole" carrier).
-    if re.search(r'class=["\'][^"\']*\bbadge-verdict-', summary, re.IGNORECASE):
+    if any(token.startswith("badge-verdict-") for token in summary_classes):
         errors.append(
             'decision-summary must use a typography-first verdict-headline, '
             "not badge-verdict-* pills (meaning must not depend on color alone)"
@@ -167,9 +208,7 @@ def _validate_verdict(html: str, migration_dir: Path | None) -> list[str]:
                 # Fail open on ambiguity: a missing/corrupt estimate does not force the
                 # verdict-headline requirement (we can't confirm an outcome was declared).
                 recommendation_outcome = False
-    if recommendation_outcome and not re.search(
-        r'class=["\'][^"\']*\bverdict-headline\b', summary, re.IGNORECASE
-    ):
+    if recommendation_outcome and "verdict-headline" not in summary_classes:
         errors.append(
             "estimation-infra.json declares recommendation.outcome but "
             "decision-summary has no verdict-headline element "
