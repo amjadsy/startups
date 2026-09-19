@@ -236,6 +236,35 @@ def test_decision_mode_without_phase_status_file_skips_generate_check(
     assert code == 0, out
 
 
+def test_decision_mode_rejects_truncated_phase_status_json(tmp_path: Path) -> None:
+    # Regression: a .phase-status.json that EXISTS but fails to parse (e.g.
+    # truncated mid-write) was previously treated the same as a MISSING file
+    # (fail open) — but INTERPRETER.md's State-file validation contract is
+    # explicit that invalid JSON is a STOP condition, not something to guess
+    # past. An unreadable state file must never be treated as evidence the
+    # current cycle is pre-execution.
+    (tmp_path / ".phase-status.json").write_text(
+        '{"phases":{"generate":"completed"', encoding="utf-8"
+    )
+    path = tmp_path / "decision-report.html"
+    path.write_text(DECISION_MINIMAL_PASS, encoding="utf-8")
+    code, out = run_validator(path, mode="decision", migration_dir=tmp_path)
+    assert code == 1, out
+    assert "corrupted" in out.lower()
+
+
+def test_decision_mode_rejects_empty_phase_status_json(tmp_path: Path) -> None:
+    # Same corruption class, different shape: an existing but entirely empty
+    # state file must also fail rather than silently defaulting to "no
+    # phases at all" (which would fail open incorrectly).
+    (tmp_path / ".phase-status.json").write_text("", encoding="utf-8")
+    path = tmp_path / "decision-report.html"
+    path.write_text(DECISION_MINIMAL_PASS, encoding="utf-8")
+    code, out = run_validator(path, mode="decision", migration_dir=tmp_path)
+    assert code == 1, out
+    assert "corrupted" in out.lower()
+
+
 def test_decision_mode_without_migration_dir_skips_disk_checks(tmp_path: Path) -> None:
     """Unit-testing HTML in isolation (no --migration-dir) must not fail on
     the terraform/generation-*.json checks — those require a real run dir."""

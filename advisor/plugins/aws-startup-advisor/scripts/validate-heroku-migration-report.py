@@ -160,16 +160,36 @@ def validate(html: str, migration_dir: Path | None, mode: str = "full") -> list[
         # that state is precisely what "decision mode" (pre-execution) must
         # not be, and .phase-status.json is the interpreter's own source of
         # truth for it (see phase-status.schema.json's run_mode/phases
-        # description). Fail open on a missing/corrupt status file (an
-        # ambiguous case must not block a genuinely fresh decision run).
+        # description).
+        #
+        # Fail open ONLY on a genuinely MISSING status file — that means no
+        # run has ever tracked state here, which is not evidence of anything
+        # (e.g. the isolated unit-test path validating HTML without a real
+        # $MIGRATION_DIR). Do NOT fail open on a file that EXISTS but is
+        # unreadable or fails to parse as JSON: that is state corruption, and
+        # INTERPRETER.md § State-file validation is explicit that invalid
+        # JSON is a STOP condition ("do not proceed or guess"), not something
+        # to treat as equivalent to "no state exists." Guessing "pending"
+        # past a corrupt file would let a broken run silently pass the one
+        # check this mode exists to enforce.
         phase_path = migration_dir / ".phase-status.json"
         generate_status: str | None = None
         if phase_path.is_file():
             try:
-                phase = json.loads(phase_path.read_text(encoding="utf-8"))
+                phase_text = phase_path.read_text(encoding="utf-8")
+                if not phase_text.strip():
+                    raise json.JSONDecodeError("empty file", phase_text, 0)
+                phase = json.loads(phase_text)
+            except (OSError, json.JSONDecodeError) as exc:
+                errors.append(
+                    "decision mode: .phase-status.json exists but could not "
+                    f"be read/parsed ({exc}) — state corrupted (invalid "
+                    "JSON). Delete the file and restart the current phase "
+                    "(INTERPRETER.md § State-file validation); an unreadable "
+                    "state file is not evidence of a pre-execution decision"
+                )
+            else:
                 generate_status = (phase or {}).get("phases", {}).get("generate")
-            except (OSError, json.JSONDecodeError):
-                generate_status = None
         if generate_status in ("completed", "in_progress"):
             errors.append(
                 "decision mode: .phase-status.json phases.generate is "

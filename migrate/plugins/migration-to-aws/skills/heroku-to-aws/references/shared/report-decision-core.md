@@ -23,8 +23,17 @@ matching GCP's pattern.
 run, `migration-report.html` is rendered **fresh from the artifacts** — do not
 extend, edit, or splice `decision-report.html`. All data needed for either
 output lives in the JSON artifacts (`estimation-infra.json`, `preferences.json`,
-`aws-design.json`, `scenarios/` when present). `generation-*.json` and
-`terraform/` do NOT exist in decision mode.
+`aws-design.json`, `scenarios/` when present).
+
+**Decision mode is pre-execution for THIS decide-complete cycle — not "no
+generated files exist anywhere on disk."** `validate-heroku-migration-report.py
+--mode decision` checks `.phase-status.json`'s `phases.generate` value
+(`"pending"` or absent passes; `"completed"`/`"in_progress"` fails), not
+whether `terraform/` or `generation-*.json` exist. A prior cycle's execution
+pack — including a customer's hand-edited `baseline.tf`/`variables.tf` or
+their own `terraform.tfvars`/state — may legitimately still be present after a
+workshop reprice (`workshop.md` § Entry never deletes it) and coexists with a
+fresh decision without being touched or archived.
 
 ## Decision-mode specifics
 

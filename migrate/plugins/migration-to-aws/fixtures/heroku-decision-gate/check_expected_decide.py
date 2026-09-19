@@ -3,7 +3,10 @@
 
 Locks the P2-A terminal semantics (current_phase complete + run_mode decide +
 generate pending) and the decision-pack artifacts (decision-report.html passes
-the validator in --mode decision; DECISION.md exists; no Generate artifacts).
+the validator in --mode decision; DECISION.md exists). Pre-execution is
+asserted via phases.generate, not raw file absence — see
+heroku-decision-gate/retained-execution-pack for the sibling fixture covering
+a decide-complete run where a prior cycle's execution pack is still present.
 Mirrors advisor/plugins/aws-startup-advisor/fixtures/gcp-decision-gate/check_expected_decide.py
 for heroku-to-aws's thinner report shape (decision-cta instead of GCP's
 appendix-based decision core).
@@ -48,15 +51,16 @@ def main() -> int:
     check(phases.get("estimate") == "completed", f"estimate={phases.get('estimate')}")
     check(phases.get("workshop") == "completed", f"workshop={phases.get('workshop')}")
 
-    # Decision pack exists; execution artifacts do not.
+    # Decision pack exists. Pre-execution is a STATE fact (phases.generate
+    # above, already asserted), not raw file absence — a prior cycle's
+    # execution pack may legitimately remain on disk after a workshop
+    # reprice (workshop.md § Entry never deletes it), so this fixture does
+    # NOT assert terraform/ or generation-*.json are absent; see
+    # heroku-decision-gate/retained-execution-pack for the case where they
+    # deliberately ARE present alongside a valid decide-complete state.
     report = run / "decision-report.html"
     check(report.exists(), "missing decision-report.html")
     check((run / "DECISION.md").exists(), "missing DECISION.md")
-    check(not (run / "terraform").exists(), "terraform/ must not exist on a decide run")
-    check(
-        not any(run.glob("generation-*.json")),
-        "generation-*.json must not exist on a decide run",
-    )
 
     # The decision report passes the validator in decision mode, including the
     # cross-artifact disk checks (terraform/, generation-*.json absence).
