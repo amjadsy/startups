@@ -225,22 +225,95 @@ SECTION_OPEN = re.compile(
 FIXTURE_CANARY_ID = "0611-0606"
 MIGRATION_ID_RE = re.compile(r"\b(\d{4}-\d{4})\b")
 
-# NOTE: _section_html uses non-greedy match to first </section>. This assumes
-# sections are NOT nested. Do not nest <section> elements in migration reports.
-
-
 def plugin_script_path() -> Path:
     """Return absolute path to this validator (for agent invocation)."""
     return Path(__file__).resolve()
 
 
+class _SectionScopeParser(HTMLParser):
+    """Locate <section id="..."> ... </section> by parsed tag structure rather
+    than a literal `id="value"` regex, so that:
+      - any legal attribute-value spelling is recognized (single-quoted
+        id='exec-costs', unquoted id=exec-costs, spaces around `=`) — a regex
+        anchored to `id=\"value\"` silently misses all of these;
+      - the matching CLOSE tag is found by counting nested <section> opens and
+        closes of the same tag name, so `</section >` (whitespace before `>`)
+        or a newline before the `>` still closes the section correctly, and a
+        nested <section> (if one ever appears) does not truncate the match
+        early;
+      - when `_section_html` returns None for a section that IS present in the
+        source but in a spelling regex doesn't recognize, callers must not
+        silently skip validation that section was supposed to gate (this was
+        the direct cause of a missing-anchor bypass: a validator's
+        `if exec_costs_html is not None:` guard skipped a real, rendered
+        section entirely because the extraction, not the requirement, failed).
+    Reuses the same approach already used elsewhere in this codebase
+    (`_CostAnchorParser`, and the Heroku validator's tag-depth section finder)
+    rather than inventing a third one.
+    """
+
+    def __init__(self, target_id: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.target_id = target_id
+        self.found_html: str | None = None
+        self._depth = 0  # >0 while inside the matched <section>, counting nested <section>s
+        self._parts: list[str] = []
+        self._raw_pos_stack: list[int] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "section":
+            if self._depth > 0:
+                self._parts.append(self.get_starttag_text() or "")
+            return
+        if self._depth > 0:
+            self._depth += 1
+            self._parts.append(self.get_starttag_text() or "")
+            return
+        if dict(attrs).get("id") == self.target_id:
+            self._depth = 1
+            self._parts = []
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self._depth > 0:
+            self._parts.append(self.get_starttag_text() or "")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag != "section" or self._depth == 0:
+            if self._depth > 0:
+                self._parts.append(f"</{tag}>")
+            return
+        self._depth -= 1
+        if self._depth == 0:
+            if self.found_html is None:
+                self.found_html = "".join(self._parts)
+        else:
+            self._parts.append("</section>")
+
+    def handle_data(self, data: str) -> None:
+        if self._depth > 0:
+            self._parts.append(data)
+
+    def handle_entityref(self, name: str) -> None:
+        if self._depth > 0:
+            self._parts.append(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        if self._depth > 0:
+            self._parts.append(f"&#{name};")
+
+    def handle_comment(self, data: str) -> None:
+        if self._depth > 0:
+            self._parts.append(f"<!--{data}-->")
+
+
 def _section_html(html: str, section_id: str) -> str | None:
-    pattern = re.compile(
-        rf"<section\b[^>]*\bid=\"{re.escape(section_id)}\"[^>]*>(.*?)</section>",
-        re.DOTALL | re.IGNORECASE,
-    )
-    match = pattern.search(html)
-    return match.group(1) if match else None
+    """Return the inner HTML of the first <section id="section_id"> in `html`,
+    found via parsed tag structure (any legal attribute/closing-tag spelling),
+    or None if that section is genuinely absent."""
+    parser = _SectionScopeParser(section_id)
+    parser.feed(html)
+    parser.close()
+    return parser.found_html
 
 
 def _section_id_counts(html: str) -> dict[str, int]:

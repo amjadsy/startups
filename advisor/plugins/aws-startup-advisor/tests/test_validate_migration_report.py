@@ -1538,3 +1538,61 @@ def test_cost_anchor_inside_template_does_not_satisfy_requirement(tmp_path: Path
     code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
     assert code == 1, out
     assert 'missing data-cost-key="aws_monthly_balanced"' in out
+
+
+def test_single_quoted_exec_costs_section_id_still_gates_required_anchor(
+    tmp_path: Path,
+) -> None:
+    # Regression: _section_html previously matched only a literal `id="value"`
+    # (double-quoted) regex. `<section id='exec-costs'>` is equally valid HTML,
+    # but the regex returned None for it, and the required-anchor check was
+    # gated behind `if exec_costs_html is not None:` — so a recognized
+    # exec-costs section silently skipped the required-anchor requirement
+    # entirely. Remove the Balanced anchor, keep an unanchored wrong figure,
+    # and single-quote the section's id attribute: this must still FAIL.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        '<strong data-cost-key="aws_monthly_balanced">$112</strong>',
+        "$999",
+        1,
+    ).replace(
+        '<section id="exec-costs">',
+        "<section id='exec-costs'>",
+        1,
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert 'missing data-cost-key="aws_monthly_balanced" anchor inside' in out
+
+
+def test_whitespace_before_exec_costs_closing_angle_bracket_is_still_parsed(
+    tmp_path: Path,
+) -> None:
+    # `</section >` (whitespace before `>`) is valid HTML. The old literal
+    # `.*?</section>` regex was non-greedy, so on the real fixture it did not
+    # return None here — it silently matched through to a LATER, unrelated
+    # </section> elsewhere in the document instead, extracting the wrong
+    # (truncated/overrun) content. The new parser-based _section_html must
+    # find the exec-costs section's own true end regardless of the whitespace.
+    fixture_html = FIXTURE.read_text(encoding="utf-8")
+    exec_costs_start = fixture_html.index('<section id="exec-costs">')
+    exec_costs_end = fixture_html.index("</section>", exec_costs_start) + len(
+        "</section>"
+    )
+    exec_costs_block = fixture_html[exec_costs_start:exec_costs_end]
+    mutated_block = exec_costs_block[: -len("</section>")] + "</section >"
+    html = (
+        fixture_html[:exec_costs_start]
+        + mutated_block
+        + fixture_html[exec_costs_end:]
+    ).replace(
+        '<strong data-cost-key="aws_monthly_balanced">$112</strong>',
+        "$999",
+        1,
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert 'missing data-cost-key="aws_monthly_balanced" anchor inside' in out

@@ -182,3 +182,58 @@ def test_trailing_text_outside_inner_tag_is_included() -> None:
     assert code == 1, out
     assert "cost figure mismatch" in out
     assert '"$1120"' in out
+
+
+# exec-costs deliberately placed LAST among the <section> elements (only <footer>
+# follows) so a non-greedy `.*?</section>` regex has no LATER </section> to fall
+# through to — this is what makes the closing-tag-spelling bug observable as a
+# clean `_section_html(...) is None` skip, rather than the regex silently
+# matching through to some other section's close tag and returning overrun
+# (but still exec-costs-containing) content that coincidentally still fails.
+GOOD_EXEC_COSTS_LAST = """<!DOCTYPE html>
+<html lang="en"><body><div class="report">
+<section id="decision-summary"><p class="verdict-headline">Go</p></section>
+<section id="cost-optimization"><p>No 1-year/3-year commitment product applies.</p></section>
+<section id="next-steps"><ol><li>See MIGRATION_GUIDE.md</li></ol></section>
+<section id="exec-costs"><p>Balanced <span data-cost-key="aws_monthly_balanced">$112/mo</span></p></section>
+<footer>draft for review</footer>
+</div></body></html>
+"""
+
+
+def test_whitespace_before_exec_costs_closing_angle_bracket_still_gates_required_anchor() -> None:
+    # Regression: _section_html previously matched only the literal string
+    # `</section>`. `</section >` (whitespace before `>`) is equally valid
+    # HTML, but the old regex returned None for it, and the required-anchor
+    # check was gated behind `if exec_costs_html is not None:` — so a
+    # recognized exec-costs section silently skipped the required-anchor
+    # requirement entirely. Remove the Balanced anchor, keep an unanchored
+    # wrong figure, and serialize exec-costs' closing tag with a trailing
+    # space: this must still FAIL.
+    html = GOOD_EXEC_COSTS_LAST.replace(
+        '<span data-cost-key="aws_monthly_balanced">$112/mo</span>',
+        "$999/mo",
+    ).replace(
+        "</section>\n<footer>",
+        "</section >\n<footer>",
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out = run(html, migration_dir=_est_dir(tmp, 112))
+    assert code == 1, out
+    assert 'missing data-cost-key="aws_monthly_balanced" anchor inside' in out
+
+
+def test_newline_before_exec_costs_closing_angle_bracket_still_gates_required_anchor() -> None:
+    # Same bypass, different whitespace: a newline before the closing `>` is
+    # also valid HTML and must not defeat the required-anchor check either.
+    html = GOOD_EXEC_COSTS_LAST.replace(
+        '<span data-cost-key="aws_monthly_balanced">$112/mo</span>',
+        "$999/mo",
+    ).replace(
+        "</section>\n<footer>",
+        "</section\n>\n<footer>",
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out = run(html, migration_dir=_est_dir(tmp, 112))
+    assert code == 1, out
+    assert 'missing data-cost-key="aws_monthly_balanced" anchor inside' in out

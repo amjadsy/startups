@@ -41,16 +41,77 @@ def _section_counts(html: str) -> dict[str, int]:
     return counts
 
 
+class _SectionScopeParser(HTMLParser):
+    """Locate <section id="..."> ... </section> by parsed tag structure rather
+    than a literal `<section ...>(.*?)</section>` regex, so any legal closing-
+    tag spelling — `</section>`, `</section >` (trailing whitespace), or a
+    newline before the `>` — is still recognized. A regex anchored to the
+    exact literal string `</section>` misses these; a real HTML parser's
+    handle_endtag fires the same regardless of how the tag was serialized."""
+
+    def __init__(self, target_id: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.target_id = target_id
+        self.found_html: str | None = None
+        self._depth = 0
+        self._parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "section":
+            if self._depth > 0:
+                self._parts.append(self.get_starttag_text() or "")
+            return
+        if self._depth > 0:
+            self._depth += 1
+            self._parts.append(self.get_starttag_text() or "")
+            return
+        if dict(attrs).get("id") == self.target_id:
+            self._depth = 1
+            self._parts = []
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self._depth > 0:
+            self._parts.append(self.get_starttag_text() or "")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag != "section" or self._depth == 0:
+            if self._depth > 0:
+                self._parts.append(f"</{tag}>")
+            return
+        self._depth -= 1
+        if self._depth == 0:
+            if self.found_html is None:
+                self.found_html = "".join(self._parts)
+        else:
+            self._parts.append("</section>")
+
+    def handle_data(self, data: str) -> None:
+        if self._depth > 0:
+            self._parts.append(data)
+
+    def handle_entityref(self, name: str) -> None:
+        if self._depth > 0:
+            self._parts.append(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        if self._depth > 0:
+            self._parts.append(f"&#{name};")
+
+    def handle_comment(self, data: str) -> None:
+        if self._depth > 0:
+            self._parts.append(f"<!--{data}-->")
+
+
 def _section_html(html: str, section_id: str) -> str | None:
-    """Return the inner HTML of <section id="section_id"> ... </section>, or
-    None when absent. Non-nesting (first matching close tag) — the Heroku
-    report skeleton never nests <section> elements, so this is sufficient."""
-    pattern = re.compile(
-        rf'<section\b[^>]*\bid=["\']{re.escape(section_id)}["\'][^>]*>(.*?)</section>',
-        re.DOTALL | re.IGNORECASE,
-    )
-    match = pattern.search(html)
-    return match.group(1) if match else None
+    """Return the inner HTML of the first <section id="section_id"> in `html`,
+    found via parsed tag structure (any legal attribute/closing-tag spelling),
+    or None when that section is genuinely absent. Non-nesting semantics
+    preserved (first section with a matching id wins) — the Heroku report
+    skeleton never nests <section> elements."""
+    parser = _SectionScopeParser(section_id)
+    parser.feed(html)
+    parser.close()
+    return parser.found_html
 
 
 def _normalize_money(text: str) -> str | None:
