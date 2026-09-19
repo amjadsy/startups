@@ -18,6 +18,13 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+# Do not write a __pycache__/ into fixtures/ for the sibling import below —
+# fixtures-check.ts's gitignore scan runs later in the same CI job and flags
+# ANY gitignored path present in the working tree (not just committed ones),
+# so an import-triggered bytecode cache here fails the build on environments
+# whose interpreter doesn't redirect sys.pycache_prefix elsewhere.
+sys.dont_write_bytecode = True
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from check_expected_decide import main as _shared_main  # noqa: E402
 
