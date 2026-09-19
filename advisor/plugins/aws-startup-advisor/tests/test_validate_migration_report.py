@@ -1596,3 +1596,29 @@ def test_whitespace_before_exec_costs_closing_angle_bracket_is_still_parsed(
     code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
     assert code == 1, out
     assert 'missing data-cost-key="aws_monthly_balanced" anchor inside' in out
+
+
+def test_escaped_anchor_example_inside_section_does_not_satisfy_requirement(
+    tmp_path: Path,
+) -> None:
+    # Regression: _SectionScopeParser decodes character references
+    # (convert_charrefs=True) and previously appended the DECODED text
+    # directly into the returned section HTML. An escaped code example like
+    # `<code>&lt;span data-cost-key="x"&gt;$112&lt;/span&gt;</code>` decodes
+    # to the literal text `<span data-cost-key="x">$112</span>` — reparsing
+    # that string (as _validate_cost_figures does, via _cost_anchor_matches)
+    # then finds a "real" anchor that never actually existed in the source.
+    # Remove the real Balanced anchor, leave a visible wrong figure, and add
+    # an escaped example containing the correct anchor+value inside
+    # exec-costs: this must still FAIL, not be satisfied by the example.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        '<strong data-cost-key="aws_monthly_balanced">$112</strong>',
+        "$999 "
+        '<code>&lt;span data-cost-key="aws_monthly_balanced"&gt;$112&lt;/span&gt;</code>',
+        1,
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert 'missing data-cost-key="aws_monthly_balanced" anchor inside' in out

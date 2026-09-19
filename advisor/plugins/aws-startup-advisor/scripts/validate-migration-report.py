@@ -291,15 +291,27 @@ class _SectionScopeParser(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         if self._depth > 0:
-            self._parts.append(data)
-
-    def handle_entityref(self, name: str) -> None:
-        if self._depth > 0:
-            self._parts.append(f"&{name};")
-
-    def handle_charref(self, name: str) -> None:
-        if self._depth > 0:
-            self._parts.append(f"&#{name};")
+            # Re-escape markup-syntax characters before appending. With
+            # convert_charrefs=True (the default this parser wants — plain
+            # decoded text is what every OTHER caller of _section_html
+            # expects, e.g. matching a dollar amount written as a numeric
+            # character reference), handle_data receives ALREADY-DECODED
+            # text: an escaped code example like `&lt;span
+            # data-cost-key="x"&gt;$112&lt;/span&gt;` decodes to the literal
+            # text `<span data-cost-key="x">$112</span>` — indistinguishable,
+            # once appended into the returned string, from a REAL <span> tag
+            # that was never actually in the source. Re-escaping `<`, `>`,
+            # and `&` here (the only characters that make reparsed text look
+            # like markup) makes the returned string round-trip safely
+            # through a second HTMLParser pass (e.g. _cost_anchor_matches)
+            # while leaving every other decoded character — including
+            # decoded numeric/named character references that are NOT
+            # `<`/`>`/`&` themselves, like a literal "$" from `&#36;` — as
+            # plain, matchable text for callers that scan for prose/dollar
+            # amounts rather than reparsing HTML structure.
+            self._parts.append(
+                data.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            )
 
     def handle_comment(self, data: str) -> None:
         if self._depth > 0:

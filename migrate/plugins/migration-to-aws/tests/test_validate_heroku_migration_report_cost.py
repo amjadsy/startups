@@ -237,3 +237,23 @@ def test_newline_before_exec_costs_closing_angle_bracket_still_gates_required_an
         code, out = run(html, migration_dir=_est_dir(tmp, 112))
     assert code == 1, out
     assert 'missing data-cost-key="aws_monthly_balanced" anchor inside' in out
+
+
+def test_escaped_anchor_example_inside_section_does_not_satisfy_requirement() -> None:
+    # Regression: _SectionScopeParser decodes character references before
+    # appending text into the returned section HTML. An escaped code example
+    # like `<code>&lt;span data-cost-key="x"&gt;$112&lt;/span&gt;</code>`
+    # decodes to the literal text `<span data-cost-key="x">$112</span>` —
+    # reparsing that string then finds a "real" anchor that never actually
+    # existed in the source. Remove the real anchor, leave a visible wrong
+    # figure, and add an escaped example with the correct anchor+value: this
+    # must still FAIL.
+    html = GOOD.replace(
+        '<span data-cost-key="aws_monthly_balanced">$112/mo</span>',
+        "$999/mo "
+        '<code>&lt;span data-cost-key="aws_monthly_balanced"&gt;$112/mo&lt;/span&gt;</code>',
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out = run(html, migration_dir=_est_dir(tmp, 112))
+    assert code == 1, out
+    assert 'missing data-cost-key="aws_monthly_balanced"' in out
