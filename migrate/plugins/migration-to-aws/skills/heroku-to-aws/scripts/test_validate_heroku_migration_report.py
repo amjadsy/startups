@@ -275,6 +275,49 @@ def test_opportunity_row_without_explicit_tbody_passes() -> None:
     assert "REPORT_OK" in out
 
 
+def test_opportunity_row_with_omitted_td_end_tag_passes() -> None:
+    # Regression: the HTML Standard permits a <td> end tag to be omitted
+    # immediately before the parent </tr>. A compact, perfectly valid table
+    # with no </td> at all must still register its real content — the old
+    # parser only finalized a cell on an EXPLICIT handle_endtag("td"), so this
+    # exact shape silently registered as empty and failed a valid report.
+    html = GOOD.replace(
+        '<section id="cost-optimization"><p>No 1-year/3-year commitment product applies to this architecture.</p></section>',
+        '<section id="cost-optimization"><table><tr>'
+        "<td>RDS Reserved Instance</tr></table></section>",
+    )
+    code, out = run(html)
+    assert code == 0, out
+    assert "REPORT_OK" in out
+
+
+def test_opportunity_row_with_sibling_omitted_td_end_tags_passes() -> None:
+    # Two sibling cells in the same row, both with omitted end tags — the
+    # second cell's start tag implicitly closes the first. The real
+    # opportunity text in the second cell must still be found.
+    html = GOOD.replace(
+        '<section id="cost-optimization"><p>No 1-year/3-year commitment product applies to this architecture.</p></section>',
+        '<section id="cost-optimization"><table><tr>'
+        "<td>Opportunity<td>RDS Reserved Instance</tr></table></section>",
+    )
+    code, out = run(html)
+    assert code == 0, out
+    assert "REPORT_OK" in out
+
+
+def test_opportunity_row_with_omitted_td_end_tag_blank_cell_still_fails() -> None:
+    # Control: an omitted end tag on a genuinely BLANK cell must not
+    # accidentally start passing just because the end tag is optional —
+    # only real, nonblank text should ever satisfy this check.
+    html = GOOD.replace(
+        '<section id="cost-optimization"><p>No 1-year/3-year commitment product applies to this architecture.</p></section>',
+        '<section id="cost-optimization"><table><tr><td></tr></table></section>',
+    )
+    code, out = run(html)
+    assert code == 1, out
+    assert "cost-optimization" in out
+
+
 def test_th_scope_with_spaces_around_equals_passes() -> None:
     # scope = "col" (spaces around =) is valid HTML and must be accepted —
     # a literal `scope="col"` regex would wrongly reject it.

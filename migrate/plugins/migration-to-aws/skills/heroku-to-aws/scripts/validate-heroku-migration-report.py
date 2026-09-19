@@ -143,36 +143,56 @@ class _OpportunityRowParser(HTMLParser):
         self.found = False
         self._table_depth = 0
         self._tr_depth = 0
-        self._td_depth = 0
+        self._td_open = False  # a <td> is currently open (its end tag may be omitted)
         self._td_has_text = False
 
     def _in_table(self) -> bool:
         return self._table_depth > 0
 
+    def _close_cell(self) -> None:
+        """Finalize whatever <td> is currently open, exactly as a real HTML
+        parser would when the cell's end tag is omitted: the HTML Standard
+        permits a <td> end tag to be omitted immediately before the next
+        <td>/<th>, or before its parent <tr>/<table> closes. Only checking
+        text on an EXPLICIT handle_endtag("td") missed every cell written
+        with an omitted end tag (e.g. `<table><tr><td>text</tr></table>`,
+        which never fires handle_endtag("td") at all) — a populated,
+        perfectly valid compact table would then silently register as
+        empty."""
+        if self._td_open and self._td_has_text:
+            self.found = True
+        self._td_open = False
+        self._td_has_text = False
+
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "table":
             self._table_depth += 1
         elif tag == "tr" and self._in_table():
+            self._close_cell()  # any cell open from a previous row must not leak across rows
             self._tr_depth += 1
-        elif tag == "td" and self._tr_depth > 0:
-            self._td_depth += 1
-            self._td_has_text = False
+        elif tag in ("td", "th") and self._tr_depth > 0:
+            self._close_cell()  # a new cell always implicitly closes any sibling cell still open
+            if tag == "td":
+                self._td_open = True
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        pass  # a self-closed <td/> or <tr/> can never carry text content
+        if tag in ("td", "th") and self._tr_depth > 0:
+            self._close_cell()  # a self-closed <td/> or <th/> can never carry text content
 
     def handle_endtag(self, tag: str) -> None:
-        if tag == "td" and self._td_depth > 0:
-            self._td_depth -= 1
-            if self._td_depth == 0 and self._td_has_text:
-                self.found = True
-        elif tag == "tr" and self._tr_depth > 0:
-            self._tr_depth -= 1
-        elif tag == "table" and self._table_depth > 0:
-            self._table_depth -= 1
+        if tag in ("td", "th"):
+            self._close_cell()
+        elif tag == "tr":
+            self._close_cell()
+            if self._tr_depth > 0:
+                self._tr_depth -= 1
+        elif tag == "table":
+            self._close_cell()
+            if self._table_depth > 0:
+                self._table_depth -= 1
 
     def handle_data(self, data: str) -> None:
-        if self._td_depth > 0 and data.strip():
+        if self._td_open and data.strip():
             self._td_has_text = True
 
 
