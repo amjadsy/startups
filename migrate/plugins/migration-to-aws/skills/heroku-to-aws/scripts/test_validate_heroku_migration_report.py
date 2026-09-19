@@ -218,6 +218,63 @@ def test_th_only_row_in_tbody_does_not_count_as_opportunity_row() -> None:
     assert "cost-optimization" in out
 
 
+def test_nbsp_only_opportunity_cell_fails() -> None:
+    # Regression: a <td> whose only content is a non-breaking-space entity is
+    # visually blank. Raw-source matching sees "&nbsp;" as non-empty literal
+    # text; a parser that decodes character references first correctly treats
+    # it as blank.
+    html = GOOD.replace(
+        '<section id="cost-optimization"><p>No 1-year/3-year commitment product applies to this architecture.</p></section>',
+        '<section id="cost-optimization"><table><tbody><tr>'
+        "<td>&nbsp;</td></tr></tbody></table></section>",
+    )
+    code, out = run(html)
+    assert code == 1, out
+    assert "cost-optimization" in out
+
+
+def test_numeric_charref_only_opportunity_cell_fails() -> None:
+    # Same as above but with the numeric character reference form (&#160;)
+    # rather than the named entity.
+    html = GOOD.replace(
+        '<section id="cost-optimization"><p>No 1-year/3-year commitment product applies to this architecture.</p></section>',
+        '<section id="cost-optimization"><table><tbody><tr>'
+        "<td>&#160;</td></tr></tbody></table></section>",
+    )
+    code, out = run(html)
+    assert code == 1, out
+    assert "cost-optimization" in out
+
+
+def test_commented_out_opportunity_row_fails() -> None:
+    # Regression: a real opportunity row that is commented out in the HTML
+    # source must not count. A regex scanning raw source can match inside an
+    # HTML comment; a parser naturally routes comment text away from
+    # handle_data.
+    html = GOOD.replace(
+        '<section id="cost-optimization"><p>No 1-year/3-year commitment product applies to this architecture.</p></section>',
+        '<section id="cost-optimization"><table><tbody>'
+        "<!-- <tr><td>RDS Reserved Instance</td></tr> --></tbody></table></section>",
+    )
+    code, out = run(html)
+    assert code == 1, out
+    assert "cost-optimization" in out
+
+
+def test_opportunity_row_without_explicit_tbody_passes() -> None:
+    # Regression: <table><tr><td>...</td></tr></table> with no <tbody> tag at
+    # all is valid HTML (an implicit tbody is inferred) and a real opportunity
+    # row inside it must still count as content.
+    html = GOOD.replace(
+        '<section id="cost-optimization"><p>No 1-year/3-year commitment product applies to this architecture.</p></section>',
+        '<section id="cost-optimization"><table><tr>'
+        "<td>RDS Reserved Instance</td></tr></table></section>",
+    )
+    code, out = run(html)
+    assert code == 0, out
+    assert "REPORT_OK" in out
+
+
 def test_th_scope_with_spaces_around_equals_passes() -> None:
     # scope = "col" (spaces around =) is valid HTML and must be accepted —
     # a literal `scope="col"` regex would wrongly reject it.

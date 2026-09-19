@@ -122,21 +122,68 @@ NO_ELIGIBLE_COMMITMENT_SENTENCE = (
 )
 
 
+class _OpportunityRowParser(HTMLParser):
+    """Stdlib-parser scan for a populated <td> inside a <table> — parses actual
+    table structure rather than matching raw HTML source, so it:
+      - decodes character references (convert_charrefs=True) before text is
+        seen, so a cell containing only "&nbsp;"/"&#160;" is correctly treated
+        as blank rather than non-empty literal markup;
+      - never sees text inside HTML comments (HTMLParser's tokenizer routes
+        comments to handle_comment, not handle_data), so a commented-out
+        <tr>...</tr> can never register as a populated row;
+      - tracks "inside <table>, inside <tr>, inside <td>" state directly,
+        without requiring an explicit <tbody> — a <table><tr><td> with no
+        <tbody> is valid HTML (browsers infer an implicit tbody) and must be
+        treated the same as one with an explicit <tbody>.
+    <th> cells are deliberately excluded — header rows never count as an
+    opportunity row, regardless of tbody/thead placement."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.found = False
+        self._table_depth = 0
+        self._tr_depth = 0
+        self._td_depth = 0
+        self._td_has_text = False
+
+    def _in_table(self) -> bool:
+        return self._table_depth > 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "table":
+            self._table_depth += 1
+        elif tag == "tr" and self._in_table():
+            self._tr_depth += 1
+        elif tag == "td" and self._tr_depth > 0:
+            self._td_depth += 1
+            self._td_has_text = False
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        pass  # a self-closed <td/> or <tr/> can never carry text content
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "td" and self._td_depth > 0:
+            self._td_depth -= 1
+            if self._td_depth == 0 and self._td_has_text:
+                self.found = True
+        elif tag == "tr" and self._tr_depth > 0:
+            self._tr_depth -= 1
+        elif tag == "table" and self._table_depth > 0:
+            self._table_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._td_depth > 0 and data.strip():
+            self._td_has_text = True
+
+
 def _has_populated_opportunity_row(body: str) -> bool:
-    """True if any <tbody> row has a <td> with non-empty text content — i.e. an
-    actual opportunity row, not just a header row or an empty <tbody>."""
-    for tbody_match in re.finditer(
-        r"<tbody\b[^>]*>(.*?)</tbody>", body, re.IGNORECASE | re.DOTALL
-    ):
-        for tr_match in re.finditer(
-            r"<tr\b[^>]*>(.*?)</tr>", tbody_match.group(1), re.IGNORECASE | re.DOTALL
-        ):
-            for td_match in re.finditer(
-                r"<td\b[^>]*>(.*?)</td>", tr_match.group(1), re.IGNORECASE | re.DOTALL
-            ):
-                if re.sub(r"<[^>]+>", "", td_match.group(1)).strip():
-                    return True
-    return False
+    """True if any <tr> inside a <table> has a <td> (not <th>) with non-empty
+    text content — i.e. an actual opportunity row, not just a header row, an
+    empty cell, a whitespace-only/entity-only cell, or a commented-out row."""
+    parser = _OpportunityRowParser()
+    parser.feed(body)
+    parser.close()
+    return parser.found
 
 
 def _validate_optimization_content(body: str) -> list[str]:
