@@ -50,35 +50,28 @@ Recompute inventory fingerprint. If it differs from
 
 > Inventory changed since baseline. Re-run Discover before workshop reprice.
 
-### 2. Stale Generate guard
+### 2. Stale Generate guard — already enforced at Entry, not repeated here
 
-If `.phase-status.json` has `phases.generate` (or later) `completed`, require
-Estimate `_re_entry_guard` confirm and reset those phases to `pending` before
-continuing.
+`workshop.md` § Entry step 2 ("Stale Generate/decide guard") is the single
+authoritative point that detects and retires ANY stale Generate/decide state
+(completed, in-progress, or a resolved decide-complete with `run_mode` set),
+including which exact files get deleted and why `terraform/` must never be
+deleted wholesale. It runs before `workshop-refresh.md` is ever reached, on
+every path into this phase (Apply & reprice, Compare scenarios, or exiting
+workshop without touching this file at all). By the time this step runs,
+`phases.generate` has therefore already been reset to `"pending"` and the
+stale execution pack already deleted, if either was present.
 
-**Delete the stale execution pack, not just the phase status (mandatory).**
-Resetting `phases.generate` to `pending` without removing what Generate wrote
-leaves a decision-mode re-entry permanently blocked: `terraform/` and
-`generation-*.json` from the PREVIOUS design still sit on disk, and
-`validate-heroku-migration-report.py --mode decision` requires both absent
-(`report-decision-core.md` — decision mode is pre-execution). Design/Estimate
-are about to be overwritten by this reprice, so that stale execution pack no
-longer matches either artifact regardless of what the user chooses next. On
-user confirm of the guard above, also delete (do not archive into
-`scenarios/`, which stores JSON snapshots only, never Terraform):
+Do not re-check `phases.generate == "completed"` or re-derive the deletion
+list here — a second check at this point would never fire, since Entry step 2
+already reset it on this same invocation. That mismatch (a guard conditioned
+on state its own code path already mutated upstream) is exactly the bug this
+restructuring fixes; re-adding an equivalent check here would silently
+reintroduce it.
 
-- `terraform/` (recursive)
-- `generation-*.json` (e.g. `generation-warnings.json`)
-- `MIGRATION_GUIDE.md`, `README.md` (Generate-only docs; re-derived from the
-  eventual re-run)
-- `migration-report.html`, `report-validation-status.json` (the FULL-mode
-  report and its stamp — stale the moment Design/Estimate change; a fresh
-  decision or full report is rendered from the new artifacts on the next
-  Decision-gate choice)
-
-If the user does NOT confirm the guard (declines the re-entry), **stop** here
-— do not patch preferences or re-run Design/Estimate; the existing execution
-pack and decide/execute state are left untouched.
+If `workshop-refresh.md` is ever invoked without having passed through
+`workshop.md` § Entry, treat that as an interpreter bug — flag it rather than
+re-deriving the cleanup here.
 
 ### 3. Patch preferences
 

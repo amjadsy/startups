@@ -23,8 +23,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
+from html.parser import HTMLParser
 from pathlib import Path
 
 # Required in both modes.
@@ -42,16 +42,38 @@ MODE_REQUIRED_SECTION_ID = {
     "decision": "decision-cta",
 }
 
-SECTION_OPEN = re.compile(
-    r'<section\b[^>]*\bid=["\']([^"\']+)["\'][^>]*>',
-    re.IGNORECASE,
-)
+
+class _SectionOpenTagCollector(HTMLParser):
+    """Collect the `id` of every real (rendered) <section> open tag.
+
+    Uses the stdlib parser rather than a regex so that a <section id="..."> that
+    only exists inside an HTML comment (e.g. an unexpanded template placeholder
+    like `<!-- <section id="decision-basis"> when ... -->`) is never counted as
+    present — HTMLParser routes comment text to handle_comment, never
+    re-tokenizing it as a real tag, whereas a regex scanning raw source text
+    cannot distinguish a real tag from one that merely looks like a tag inside
+    a comment."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.section_ids: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "section":
+            sid = dict(attrs).get("id")
+            if sid:
+                self.section_ids.append(sid)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.handle_starttag(tag, attrs)
 
 
 def _section_counts(html: str) -> dict[str, int]:
+    parser = _SectionOpenTagCollector()
+    parser.feed(html)
+    parser.close()
     counts: dict[str, int] = {}
-    for match in SECTION_OPEN.finditer(html):
-        sid = match.group(1)
+    for sid in parser.section_ids:
         counts[sid] = counts.get(sid, 0) + 1
     return counts
 

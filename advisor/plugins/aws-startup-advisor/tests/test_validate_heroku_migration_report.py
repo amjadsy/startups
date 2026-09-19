@@ -260,6 +260,33 @@ def test_decision_basis_present_and_required_passes(tmp_path: Path) -> None:
     assert code == 0, out
 
 
+def test_decision_basis_shipped_skeleton_placeholder_comment_does_not_satisfy_requirement(
+    tmp_path: Path,
+) -> None:
+    """Regression: _section_counts previously matched a <section id="..."> tag
+    via a raw-source regex, so the exact unexpanded skeleton placeholder from
+    generate-report.md — `<!-- <section id="decision-basis"> when
+    recommendation.decision_basis exists -->` — was counted as a real section
+    even though it never renders anything. A report that never actually filled
+    in the template (declared decision_basis, but shipped the comment
+    verbatim) must FAIL, not silently report decision-basis as present."""
+    (tmp_path / "estimation-infra.json").write_text(
+        '{"recommendation": {"decision_basis": {"measured": ["x"], "assumed": [], "unknown": []}}}',
+        encoding="utf-8",
+    )
+    html = DECISION_MINIMAL_PASS.replace(
+        '<section id="decision-summary"><h2>Decision</h2></section>',
+        '<section id="decision-summary"><h2>Decision</h2></section>'
+        "<!-- <section id=\"decision-basis\"> when recommendation.decision_basis exists -->",
+    )
+    path = tmp_path / "decision-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, mode="decision", migration_dir=tmp_path)
+    assert code == 1, out
+    assert "decision-basis" in out
+    assert "decision_basis" in out
+
+
 def test_missing_file_fails_cleanly() -> None:
     code, out = run_validator(Path("/nonexistent/decision-report.html"), mode="decision")
     assert code == 1, out
