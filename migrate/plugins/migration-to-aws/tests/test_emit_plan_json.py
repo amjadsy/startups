@@ -9,9 +9,12 @@ fails open (exit 0, no file) on any missing/unusable input.
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -431,6 +434,168 @@ def test_no_temp_file_left_after_success(tmp_path: Path) -> None:
 
     assert (tmp_path / "plan.json").exists()
     assert list(tmp_path.glob("*.tmp")) == []
+    assert list(tmp_path.glob(".plan-*")) == []  # unique mkstemp temp is renamed away
+
+
+def test_gcp_monthly_shape_and_bare_numbers(tmp_path: Path) -> None:
+    # GCP core services carry the figure under `monthly` + a `service` label, with a
+    # nested `alternative` that must NOT become its own line item; some breakdowns
+    # use bare numbers keyed by category.
+    _seed(
+        tmp_path,
+        projected={
+            "aws_monthly_balanced": 265,
+            "breakdown": {
+                "compute": {"service": "Fargate", "monthly": 71, "alternative": {"service": "Lambda", "monthly": 9}},
+                "database": {"service": "Aurora PostgreSQL", "monthly": 269},
+                "networking": {"service": "ALB + NAT Gateway", "monthly": 53},
+                "misc": 12,
+            },
+        },
+    )
+    result = _run(tmp_path)
+
+    plan = json.loads((tmp_path / "plan.json").read_text())
+    by = {i["serviceName"]: i["monthlyCost"] for i in plan["cost"]["awsServiceItems"]}
+    assert by == {"Fargate": 71, "Aurora PostgreSQL": 269, "ALB + NAT Gateway": 53, "misc": 12}
+    assert "Lambda" not in by  # the nested alternative is not a separate service
+
+
+def test_omits_service_items_over_the_hundred_item_cap(tmp_path: Path) -> None:
+    breakdown = {f"svc{n}": {"mid": 1} for n in range(101)}
+    _seed(tmp_path, projected={"aws_monthly_balanced": 101, "breakdown": breakdown})
+    result = _run(tmp_path)
+
+    plan = json.loads((tmp_path / "plan.json").read_text())
+    assert "awsServiceItems" not in plan["cost"]
+
+
+def test_service_items_skips_overlong_name_and_over_cap_cost(tmp_path: Path) -> None:
+    _seed(
+        tmp_path,
+        projected={
+            "aws_monthly_balanced": 40,
+            "breakdown": {
+                "x" * 129: {"mid": 10},  # name exceeds 128 -> skipped
+                "Huge": {"mid": 100_000_001},  # over the USD cap -> skipped
+                "Good": {"mid": 30},
+            },
+        },
+    )
+    result = _run(tmp_path)
+
+    plan = json.loads((tmp_path / "plan.json").read_text())
+    assert [i["serviceName"] for i in plan["cost"]["awsServiceItems"]] == ["Good"]
+
+
+def test_service_items_name_bound_uses_utf16_length(tmp_path: Path) -> None:
+    # 65 astral-plane chars = 65 code points but 130 UTF-16 units (> 128); the strict
+    # web schema counts UTF-16, so this must be dropped even though len() is 65.
+    astral = "\U0001F600" * 65
+    _seed(
+        tmp_path,
+        projected={"aws_monthly_balanced": 40, "breakdown": {astral: {"mid": 10}, "Good": {"mid": 30}}},
+    )
+    result = _run(tmp_path)
+
+    plan = json.loads((tmp_path / "plan.json").read_text())
+    assert [i["serviceName"] for i in plan["cost"]["awsServiceItems"]] == ["Good"]
+
+
+def test_service_items_drops_over_cap_primary_without_substituting(tmp_path: Path) -> None:
+    # monthly is the primary figure but over cap; must NOT fall back to mid=5.
+    _seed(
+        tmp_path,
+        projected={
+            "aws_monthly_balanced": 40,
+            "breakdown": {
+                "X": {"service": "X", "monthly": 100_000_001, "mid": 5},
+                "Good": {"mid": 30},
+            },
+        },
+    )
+    result = _run(tmp_path)
+
+    plan = json.loads((tmp_path / "plan.json").read_text())
+    assert [i["serviceName"] for i in plan["cost"]["awsServiceItems"]] == ["Good"]
+
+
+def test_fail_open_on_aws_monthly_over_usd_cap(tmp_path: Path) -> None:
+    _seed(tmp_path, projected={"aws_monthly_balanced": 100_000_001})
+    result = _run(tmp_path)
+
+    assert result.returncode == 0
+    assert result.stdout.startswith("PLAN_SKIP |")
+    # Distinct over-cap diagnostic, not the missing/malformed "no usable" reason.
+    assert "exceeds" in result.stdout
+    assert "no usable" not in result.stdout
+    assert not (tmp_path / "plan.json").exists()
+
+
+def test_sweeps_old_orphan_temp_but_keeps_a_recent_one(tmp_path: Path) -> None:
+    old = tmp_path / ".plan-OLD.json.tmp"
+    old.write_text("orphan", encoding="utf-8")
+    backdated = time.time() - 7200  # 2h old -> abandoned
+    os.utime(old, (backdated, backdated))
+    recent = tmp_path / ".plan-RECENT.json.tmp"  # simulates a concurrent run's live temp
+    recent.write_text("in-flight", encoding="utf-8")
+
+    _seed(tmp_path)
+    result = _run(tmp_path)
+
+    assert result.stdout.startswith("PLAN_OK |")
+    assert not old.exists()  # reclaimed
+    assert recent.exists()  # a live concurrent temp is preserved
+    assert (tmp_path / "plan.json").exists()
+
+
+def test_plan_json_is_written_owner_only(tmp_path: Path) -> None:
+    # plan.json holds customer cost data; it is written 0600 (owner-only), not the
+    # umask-wide 0644 a plain write would produce.
+    _seed(tmp_path)
+    _run(tmp_path)
+
+    mode = stat.S_IMODE((tmp_path / "plan.json").stat().st_mode)
+    assert mode == 0o600
+
+
+def test_corrupt_input_preserves_a_prior_valid_plan(tmp_path: Path) -> None:
+    # A transient/corrupt input on re-run is unclassifiable — it must NOT destroy a
+    # previously-valid handoff (unlike a deterministic SkipEmit, which does clear it).
+    prior = tmp_path / "plan.json"
+    prior.write_text('{"prior": true}', encoding="utf-8")
+    (tmp_path / ".phase-status.json").write_text("{not json", encoding="utf-8")
+    (tmp_path / "estimation-infra.json").write_text("{}", encoding="utf-8")
+    result = _run(tmp_path)
+
+    assert result.stdout.startswith("PLAN_SKIP |")
+    assert prior.read_text() == '{"prior": true}'
+
+
+def test_sweeps_orphan_temp_even_on_a_skip(tmp_path: Path) -> None:
+    # The sweep runs on every invocation, so a fail-open run still reclaims orphans.
+    old = tmp_path / ".plan-OLD.json.tmp"
+    old.write_text("orphan", encoding="utf-8")
+    backdated = time.time() - 7200
+    os.utime(old, (backdated, backdated))
+    # No artifacts -> SkipEmit early, before the write path.
+    result = _run(tmp_path)
+
+    assert result.stdout.startswith("PLAN_SKIP |")
+    assert not old.exists()
+
+
+def test_pre_existing_fixed_temp_path_is_left_untouched(tmp_path: Path) -> None:
+    # The writer no longer uses a predictable plan.json.tmp; a stray one at that path
+    # must be neither read nor overwritten (guards the old symlink-overwrite hazard).
+    stray = tmp_path / "plan.json.tmp"
+    stray.write_text("do not touch", encoding="utf-8")
+    _seed(tmp_path)
+    result = _run(tmp_path)
+
+    assert result.stdout.startswith("PLAN_OK |")
+    assert (tmp_path / "plan.json").exists()
+    assert stray.read_text() == "do not touch"
 
 
 def test_bad_plugin_json_omits_producer_version_but_still_emits(tmp_path: Path) -> None:

@@ -37,6 +37,8 @@ import json
 import math
 import os
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 # scripts/ -> plugin root (holds .claude-plugin/plugin.json).
@@ -57,6 +59,21 @@ SKILL_TO_PLATFORM = {
 # We copy the "balanced" AWS scenario (projected_costs.aws_monthly_balanced), so the
 # basis the web contract records for that figure is BALANCED.
 AWS_MONTHLY_BASIS = "BALANCED"
+
+# Bounds the strict web import contract enforces. Mirrored here so an out-of-bounds
+# value is dropped (or the handoff fails open) locally rather than being emitted and
+# rejecting the whole import: USD amounts <= $100M, at most 100 service items, each
+# serviceName at most 128 chars.
+MAX_USD_AMOUNT = 100_000_000
+MAX_SERVICE_ITEMS = 100
+MAX_SERVICE_NAME_LEN = 128
+
+# Naming for the write temp files, shared by the writer and the orphan sweep below.
+_TEMP_PREFIX = ".plan-"
+_TEMP_SUFFIX = ".json.tmp"
+# A real write finishes in milliseconds, so any temp older than this is an orphan
+# abandoned by a crashed run and safe to reclaim without racing a live writer.
+_ORPHAN_TEMP_AGE_S = 3600
 
 # The current-cost key each platform writes. Checked first so an extra *_monthly
 # field in current_costs can't be copied into sourceMonthly by accident.
@@ -79,9 +96,10 @@ def _is_amount(value: object) -> bool:
     """True for a real, finite, non-negative JSON number.
 
     Excludes bool (a Python int subclass, so a JSON `true` would otherwise slip
-    through) and non-finite floats: json.load accepts Infinity/NaN by default, and
-    json.dumps would then emit the literal tokens `Infinity`/`NaN`, which are not
-    valid JSON and the strict web import rejects — sinking the whole handoff.
+    through) and non-finite floats (json.load accepts Infinity/NaN by default, and
+    json.dumps would then emit the literal tokens `Infinity`/`NaN`, which the strict
+    web import rejects). The USD cap is checked SEPARATELY by callers so an over-cap
+    value can be diagnosed distinctly from a missing/malformed one.
     """
     return (
         isinstance(value, (int, float))
@@ -89,6 +107,20 @@ def _is_amount(value: object) -> bool:
         and math.isfinite(value)
         and value >= 0
     )
+
+
+def _is_usable_amount(value: object) -> bool:
+    """A non-negative number within the contract's USD cap — the values safe to copy
+    into OPTIONAL cost fields (service items, sourceMonthly), which are simply dropped
+    when over cap rather than failing the whole handoff."""
+    return _is_amount(value) and value <= MAX_USD_AMOUNT
+
+
+def _import_str_len(text: str) -> int:
+    """Length as the strict web schema (JS/TS) counts it — UTF-16 code units, not
+    Python code points — so the serviceName bound matches the import exactly even for
+    astral-plane characters (which are one code point but two UTF-16 units)."""
+    return len(text.encode("utf-16-le")) // 2
 
 
 def _source_monthly(current_costs: object, source_platform: str) -> float | None:
@@ -104,7 +136,7 @@ def _source_monthly(current_costs: object, source_platform: str) -> float | None
     # Honor ONLY the platform's own key. No fallback to any other *_monthly field:
     # copying an unrelated one (e.g. support_monthly) would fabricate a source figure.
     preferred = PLATFORM_SOURCE_KEY.get(source_platform)
-    if preferred and _is_amount(current_costs.get(preferred)):
+    if preferred and _is_usable_amount(current_costs.get(preferred)):
         return current_costs[preferred]
     return None
 
@@ -112,11 +144,13 @@ def _source_monthly(current_costs: object, source_platform: str) -> float | None
 def _service_items(projected: object) -> list[dict]:
     """Per-service line items copied from projected_costs.breakdown.
 
-    The breakdown is keyed by service, but its shape varies across skills: a key is
-    either the display name itself (e.g. "Elastic Beanstalk") or a slug carrying a
-    nested "service" label (e.g. "security_baseline" -> "AWS Security Baseline").
-    `.mid` is the monthly figure. The "total" rollup row and any entry without a
-    usable numeric `.mid` are skipped, and GCP runs may carry an empty breakdown.
+    The breakdown is keyed by service, and its shape varies across skills and rows.
+    An entry is either a bare monthly number, or an object carrying the figure under
+    `monthly` (GCP core services) or `mid` (observability / Heroku scenarios) plus an
+    optional `service` display label; the key is the fallback display name. Nested
+    `alternative`/`components`/sub-cost objects are ignored — only the entry's own
+    figure is read. The "total" rollup row, any entry with no usable amount, and any
+    name over the contract length are skipped; GCP runs may carry an empty breakdown.
 
     classification is INFRASTRUCTURE — always correct here because this writer only
     emits INFRA_ONLY runs (AI-inclusive runs are skipped upstream), so it is implied
@@ -131,19 +165,30 @@ def _service_items(projected: object) -> list[dict]:
     items: list[dict] = []
     for key, entry in breakdown.items():
         # Drop the aggregate row (any casing) so the total is never shown as a service.
-        if not isinstance(key, str) or key.strip().lower() == "total" or not isinstance(entry, dict):
+        if not isinstance(key, str) or key.strip().lower() == "total":
             continue
-        monthly = entry.get("mid")
-        if not _is_amount(monthly):
+
+        if _is_usable_amount(entry):
+            # Bare-number form: {"compute": 75}.
+            name, monthly = key, entry
+        elif isinstance(entry, dict):
+            # Object form: the figure is under `monthly` (GCP) or `mid`
+            # (observability/Heroku) — one key per row. Take the first PRESENT key and
+            # validate that one; don't substitute the other when the primary figure is
+            # present but out of range, which would misreport a different number.
+            raw = next((entry[k] for k in ("monthly", "mid") if k in entry), None)
+            if not _is_usable_amount(raw):
+                continue
+            monthly = raw
+            label = entry.get("service")
+            name = label if isinstance(label, str) and label.strip() else key
+        else:
             continue
-        name = entry.get("service")
-        # Fall back to the key when the label is missing OR blank, so a whitespace-only
-        # label doesn't discard an item whose key is a perfectly good display name.
-        if not isinstance(name, str) or not name.strip():
-            name = key
-        # Skip if even the key is blank, and skip an aggregate that surfaced via the
-        # label rather than the key (e.g. service:"Total") so a rollup is never shown.
-        if not name.strip() or name.strip().lower() == "total":
+
+        name = name.strip()
+        # Skip a blank name, a rollup surfaced via the label (service:"Total"), and a
+        # name the strict import would reject for length.
+        if not name or name.lower() == "total" or _import_str_len(name) > MAX_SERVICE_NAME_LEN:
             continue
         items.append(
             {
@@ -200,6 +245,10 @@ def build_plan(migration_dir: Path, plugin_json_path: Path) -> tuple[dict, str, 
     aws_monthly = projected.get("aws_monthly_balanced") if isinstance(projected, dict) else None
     if not _is_amount(aws_monthly):
         raise SkipEmit("no usable projected_costs.aws_monthly_balanced")
+    # Distinct from the missing/malformed case above: a real figure that merely
+    # exceeds the contract cap, so an on-call reader isn't sent hunting for corruption.
+    if aws_monthly > MAX_USD_AMOUNT:
+        raise SkipEmit("projected_costs.aws_monthly_balanced exceeds the supported maximum")
 
     plan: dict = {
         "schemaVersion": SCHEMA_VERSION,
@@ -217,7 +266,10 @@ def build_plan(migration_dir: Path, plugin_json_path: Path) -> tuple[dict, str, 
         plan["cost"]["sourceMonthly"] = source_monthly
 
     service_items = _service_items(projected)
-    if service_items:
+    # The contract caps the list at 100. If a breakdown yields more, there is no
+    # meaningful subset to pick, so omit the optional field rather than send an
+    # over-limit list that would reject the whole handoff.
+    if 0 < len(service_items) <= MAX_SERVICE_ITEMS:
         plan["cost"]["awsServiceItems"] = service_items
 
     # The web contract's field is `producerVersion` (named for the producer, not the
@@ -248,6 +300,24 @@ def _unlink_quietly(path: Path) -> None:
         pass
 
 
+def _sweep_orphan_temps(directory: Path) -> None:
+    """Best-effort removal of write temps abandoned by a crashed earlier run. Because
+    unique mkstemp names are no longer reused, nothing else reclaims them; the age
+    gate (a real write finishes in milliseconds) keeps a concurrent run's in-flight
+    temp from being deleted."""
+    cutoff = time.time() - _ORPHAN_TEMP_AGE_S
+    try:
+        candidates = list(directory.glob(_TEMP_PREFIX + "*" + _TEMP_SUFFIX))
+    except OSError:
+        return
+    for candidate in candidates:
+        try:
+            if candidate.stat().st_mtime < cutoff:
+                candidate.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -266,33 +336,51 @@ def main() -> int:
     migration_dir: Path = args.migration_dir
     out_path = migration_dir / "plan.json"
 
+    # Reclaim any temp abandoned by a crashed earlier run, on EVERY invocation (not
+    # only the write path) so a dir that keeps failing open still gets cleaned up.
+    _sweep_orphan_temps(migration_dir)
+
     try:
         plan, platform, scope = build_plan(migration_dir, args.plugin_json)
     except SkipEmit as skip:
+        # Deterministic disqualification (the run grew to include AI, lost its run_id,
+        # has no cost estimate, etc.): this run should have NO plan, so drop a stale
+        # one left by an earlier run.
         _unlink_quietly(out_path)
         print(f"PLAN_SKIP | reason={skip}")
         return 0
     except Exception as err:
         # Fail open on ANY error, not just the expected OSError/ValueError: a missed
-        # handoff must never break the migration, so an unexpected fault (a corrupt
-        # artifact that raises RecursionError/MemoryError, an unforeseen edge) skips
-        # cleanly rather than crashing the run with a traceback. SkipEmit is handled
-        # above with its specific reason.
-        _unlink_quietly(out_path)
+        # handoff must never break the migration. But this is an UNCLASSIFIABLE input
+        # fault (corrupt/unreadable artifact, RecursionError, ...) — we cannot tell
+        # whether a prior plan.json is stale, so leave it: a transient glitch must not
+        # destroy a previously-valid handoff. A later clean run overwrites it.
         print(f"PLAN_SKIP | reason=unreadable input: {err}")
         return 0
 
-    # Write atomically: render to a sibling temp file, then rename into place. A
-    # crash/kill mid-write can then only leave the temp file, never a truncated
+    # Write atomically to a UNIQUE, exclusively-created temp in the same dir, then
+    # rename into place. mkstemp (O_EXCL, mode 0600) means concurrent reruns never
+    # share a temp path and a pre-existing temp symlink can't be followed, so a
+    # crash/kill can only leave an orphan temp — never a truncated or cross-written
     # plan.json the import might ingest.
-    tmp_path = out_path.parent / (out_path.name + ".tmp")
     try:
-        tmp_path.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
+        fd, tmp_name = tempfile.mkstemp(dir=str(out_path.parent), prefix=_TEMP_PREFIX, suffix=_TEMP_SUFFIX)
+    except OSError as err:
+        print(f"PLAN_SKIP | reason=could not write plan.json: {err}")
+        return 0
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(plan, indent=2) + "\n")
+        # Keep mkstemp's private 0600 (owner-only): plan.json holds the customer's
+        # cost figures, and the only consumer is the same user's browser upload, so a
+        # secure default loses nothing. Intentional — not the umask-wide 0644 that a
+        # plain write would have produced.
         os.replace(tmp_path, out_path)
     except Exception as err:
         # Fail open on any write-path fault. os.replace is atomic, so on failure a
         # prior run's plan.json is untouched and still valid — leave it and clean up
-        # only our temp, rather than destroying a good handoff.
+        # only this invocation's own temp, never a good handoff.
         _unlink_quietly(tmp_path)
         print(f"PLAN_SKIP | reason=could not write plan.json: {err}")
         return 0
