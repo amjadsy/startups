@@ -174,3 +174,31 @@ def test_numeric_character_reference_dollar_sign_still_flagged() -> None:
     code, out = run(html)
     assert code == 1, out
     assert "$25,684.89" in out
+
+
+def test_bad_monthly_figure_not_exempted_by_next_cells_rate_word() -> None:
+    # Regression: a block-level boundary (a table cell/row end) was emitted
+    # as a single separating space, which does not itself stop a word-based
+    # regex — an unrelated word that happens to open the NEXT cell (e.g.
+    # "Hourly") was readable as the FIRST cell's own rate suffix.
+    html = GOOD.replace(
+        "Est. $112/mo",
+        "Est. <table><tr><td>$25,684.89</td>"
+        "<td>Hourly rates unchanged</td></tr></table>",
+    )
+    code, out = run(html)
+    assert code == 1, out
+    assert "$25,684.89" in out
+
+
+def test_bad_monthly_figure_still_flagged_with_unrelated_neighbor_cell() -> None:
+    # Control for the above: the same boundary case but the neighboring
+    # cell's text does NOT start with a rate word.
+    html = GOOD.replace(
+        "Est. $112/mo",
+        "Est. <table><tr><td>$25,684.89</td>"
+        "<td>Rates unchanged</td></tr></table>",
+    )
+    code, out = run(html)
+    assert code == 1, out
+    assert "$25,684.89" in out

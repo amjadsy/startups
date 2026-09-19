@@ -430,7 +430,7 @@ CENTS_RE = re.compile(r"\$([0-9][0-9,]*)\.([0-9]{2})\b")
 _RATE_SUFFIX_RE = re.compile(
     r"^\s*(?:/|\(|\bper\b)?\s*(?:mo\b\s*(?:per\b\s*)?)?"
     r"(?:hr|hour|hourly|vcpu|gb|gib|tb|image|unit|policy|1m|10k|"
-    r"[0-9]+-mo\b)",
+    r"[0-9]+-mo)\b",
     re.IGNORECASE,
 )
 
@@ -492,13 +492,23 @@ class _DecodedTextRunParser(HTMLParser):
         # Calculation/Notes column, per currently-open table (stack, for
         # nested tables — innermost wins).
         self._table_stack: list[dict[str, object]] = []
+        # Absolute character offsets (into text()) where a block-level
+        # boundary (a separating space from a non-inline tag) was inserted.
+        # A rate-suffix match must never read PAST one of these into
+        # unrelated content from a different cell/row/paragraph — a single
+        # space alone doesn't stop a word-based regex, since a real word
+        # like "Hourly" can legitimately start the very next cell's text
+        # (see the class docstring's third bullet).
+        self._boundaries: list[int] = []
 
     def _current_table(self) -> dict[str, object] | None:
         return self._table_stack[-1] if self._table_stack else None
 
-    def _emit(self, text: str) -> None:
+    def _emit(self, text: str, *, is_boundary: bool = False) -> None:
         if not text:
             return
+        if is_boundary:
+            self._boundaries.append(sum(len(p) for p in self._parts))
         table = self._current_table()
         in_calc = bool(table and table.get("in_calc_cell"))
         self._parts.append(text)
@@ -527,11 +537,11 @@ class _DecodedTextRunParser(HTMLParser):
             elif tag == "td" and table.get("calc_col_index") == col_index:
                 table["in_calc_cell"] = True
         elif tag not in self._INLINE_TAGS:
-            self._emit(" ")
+            self._emit(" ", is_boundary=True)
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag not in self._INLINE_TAGS and tag not in self._INERT_TAGS:
-            self._emit(" ")
+            self._emit(" ", is_boundary=True)
 
     def handle_endtag(self, tag: str) -> None:
         if tag in self._INERT_TAGS:
@@ -549,7 +559,7 @@ class _DecodedTextRunParser(HTMLParser):
         elif tag == "table" and self._table_stack:
             self._table_stack.pop()
         if tag not in self._INLINE_TAGS:
-            self._emit(" ")
+            self._emit(" ", is_boundary=True)
 
     def handle_data(self, data: str) -> None:
         if self._inert_depth > 0:
@@ -571,13 +581,18 @@ class _DecodedTextRunParser(HTMLParser):
             mask.extend([in_calc] * len(part))
         return mask
 
+    def boundaries(self) -> list[int]:
+        """Absolute offsets (into text()) of every block-level separator —
+        the hard stops a rate-suffix match must never read past."""
+        return self._boundaries
 
-def _decoded_text_with_calc_mask(html: str) -> tuple[str, list[bool]]:
+
+def _decoded_text_with_calc_mask(html: str) -> tuple[str, list[bool], list[int]]:
     scope = _readability_scope(html)
     parser = _DecodedTextRunParser()
     parser.feed(scope)
     parser.close()
-    return parser.text(), parser.calc_mask()
+    return parser.text(), parser.calc_mask(), parser.boundaries()
 
 
 def _validate_currency_formatting(html: str) -> list[str]:
@@ -590,7 +605,7 @@ def _validate_currency_formatting(html: str) -> list[str]:
     arithmetic like "1 vCPU × $0.04048 × 511 hrs" with no adjacent unit
     suffix at all)."""
     errors: list[str] = []
-    text, calc_mask = _decoded_text_with_calc_mask(html)
+    text, calc_mask, boundaries = _decoded_text_with_calc_mask(html)
     seen: set[str] = set()
     for match in CENTS_RE.finditer(text):
         whole = int(match.group(1).replace(",", ""))
@@ -598,7 +613,21 @@ def _validate_currency_formatting(html: str) -> list[str]:
             continue
         if any(calc_mask[match.start():match.end()]):
             continue
-        trailing = text[match.end():match.end() + 25]
+        # The rate-suffix window must stop at the next block-level boundary
+        # (table cell/row, paragraph, etc.) even if that's before the normal
+        # 25-char lookahead — a boundary is inserted as a single space, which
+        # does not itself stop a word-based regex, so an unrelated word that
+        # happens to start the NEXT cell/block (e.g. "Hourly" opening a
+        # sibling note column) must never be readable as this figure's own
+        # rate suffix. bisect finds the first boundary offset > match.end();
+        # a boundary exactly AT match.end() (the very next char) also cuts
+        # the window to empty, correctly blocking any suffix read across it.
+        cutoff = match.end() + 25
+        for boundary in boundaries:
+            if boundary >= match.end():
+                cutoff = min(cutoff, boundary)
+                break
+        trailing = text[match.end():cutoff]
         if _RATE_SUFFIX_RE.match(trailing):
             continue
         token = match.group(0)

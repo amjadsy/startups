@@ -68,7 +68,7 @@ CENTS_RE = re.compile(r"\$([0-9][0-9,]*)\.([0-9]{2})\b")
 _RATE_SUFFIX_RE = re.compile(
     r"^\s*(?:/|\(|\bper\b)?\s*(?:mo\b\s*(?:per\b\s*)?)?"
     r"(?:hr|hour|hourly|vcpu|gb|gib|tb|image|unit|policy|1m|10k|"
-    r"[0-9]+-mo\b)",
+    r"[0-9]+-mo)\b",
     re.IGNORECASE,
 )
 
@@ -94,17 +94,32 @@ class _DecodedTextParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self._parts: list[str] = []
         self._inert_depth = 0
+        # Absolute offsets (into text()) of every block-level separator — a
+        # rate-suffix match must never read past one of these into unrelated
+        # content from a different cell/row/paragraph (see
+        # validate-migration-report.py's identical tracking for the full
+        # rationale — a single separating space does not itself stop a
+        # word-based regex when the next block happens to start with a real
+        # rate-unit word like "Hourly").
+        self._boundaries: list[int] = []
+
+    def _append(self, text: str, *, is_boundary: bool = False) -> None:
+        if not text:
+            return
+        if is_boundary:
+            self._boundaries.append(sum(len(p) for p in self._parts))
+        self._parts.append(text)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in self._INERT_TAGS:
             self._inert_depth += 1
             return
         if self._inert_depth == 0 and tag not in self._INLINE_TAGS:
-            self._parts.append(" ")
+            self._append(" ", is_boundary=True)
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag not in self._INLINE_TAGS and tag not in self._INERT_TAGS:
-            self._parts.append(" ")
+            self._append(" ", is_boundary=True)
 
     def handle_endtag(self, tag: str) -> None:
         if tag in self._INERT_TAGS:
@@ -112,21 +127,24 @@ class _DecodedTextParser(HTMLParser):
                 self._inert_depth -= 1
             return
         if self._inert_depth == 0 and tag not in self._INLINE_TAGS:
-            self._parts.append(" ")
+            self._append(" ", is_boundary=True)
 
     def handle_data(self, data: str) -> None:
         if self._inert_depth == 0:
-            self._parts.append(data)
+            self._append(data)
 
     def text(self) -> str:
         return "".join(self._parts)
 
+    def boundaries(self) -> list[int]:
+        return self._boundaries
 
-def _decoded_text(html: str) -> str:
+
+def _decoded_text(html: str) -> tuple[str, list[int]]:
     parser = _DecodedTextParser()
     parser.feed(_body_scope(html))
     parser.close()
-    return parser.text()
+    return parser.text(), parser.boundaries()
 
 
 def _validate_currency_formatting(html: str) -> list[str]:
@@ -134,13 +152,18 @@ def _validate_currency_formatting(html: str) -> list[str]:
     figure whose whole-dollar part is >= $2 and that is not immediately
     followed by a per-unit-rate suffix (/hr, per policy, etc.)."""
     errors: list[str] = []
-    text = _decoded_text(html)
+    text, boundaries = _decoded_text(html)
     seen: set[str] = set()
     for match in CENTS_RE.finditer(text):
         whole = int(match.group(1).replace(",", ""))
         if whole < _CENTS_MEANINGFUL_BELOW:
             continue
-        trailing = text[match.end():match.end() + 25]
+        cutoff = match.end() + 25
+        for boundary in boundaries:
+            if boundary >= match.end():
+                cutoff = min(cutoff, boundary)
+                break
+        trailing = text[match.end():cutoff]
         if _RATE_SUFFIX_RE.match(trailing):
             continue
         token = match.group(0)

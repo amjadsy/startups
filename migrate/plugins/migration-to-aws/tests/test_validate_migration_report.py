@@ -1548,3 +1548,45 @@ def test_same_rate_figure_outside_calculation_column_still_flagged(tmp_path: Pat
     code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
     assert code == 1, out
     assert "$23.50" in out
+
+
+def test_bad_monthly_figure_not_exempted_by_next_cells_rate_word(
+    tmp_path: Path,
+) -> None:
+    # Regression: a block-level boundary (a table cell/row end) was emitted
+    # as a single separating space, which does not itself stop a word-based
+    # regex — an unrelated word that happens to open the NEXT cell (e.g.
+    # "Hourly") was readable as the FIRST cell's own rate suffix. A bad
+    # monthly figure followed, across a real <td> boundary, by a note
+    # starting with "Hourly" must still fail — that word belongs to a
+    # different cell's text, not this figure's own unit.
+    html = MINIMAL_PASS.replace(
+        '<section id="exec-costs"><h2>Costs</h2></section>',
+        '<section id="exec-costs"><h2>Costs</h2>'
+        "<table><tbody><tr><td>$25,684.89</td>"
+        "<td>Hourly rates unchanged</td></tr></tbody></table></section>",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, require_toc=False)
+    assert code == 1, out
+    assert "$25,684.89" in out
+
+
+def test_bad_monthly_figure_still_flagged_with_unrelated_neighbor_cell(
+    tmp_path: Path,
+) -> None:
+    # Control for the above: the same boundary case but the neighboring
+    # cell's text does NOT start with a rate word, confirming the fix isn't
+    # accidentally over-broad (e.g. blocking ANY text after a boundary).
+    html = MINIMAL_PASS.replace(
+        '<section id="exec-costs"><h2>Costs</h2></section>',
+        '<section id="exec-costs"><h2>Costs</h2>'
+        "<table><tbody><tr><td>$25,684.89</td>"
+        "<td>Rates unchanged</td></tr></tbody></table></section>",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, require_toc=False)
+    assert code == 1, out
+    assert "$25,684.89" in out
