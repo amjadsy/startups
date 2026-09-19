@@ -140,18 +140,44 @@ def validate(html: str, migration_dir: Path | None, mode: str = "full") -> list[
                     '("What This Assessment Rests On")'
                 )
 
-    if mode == "decision":
-        # Decision mode is pre-execution: these must not exist yet on disk (the
-        # report-decision-core.md contract). Only checked when a migration dir
-        # was supplied — the fixture/unit-test path may validate HTML in
-        # isolation without one.
-        if migration_dir is not None:
-            if (migration_dir / "terraform").exists():
-                errors.append("decision mode: terraform/ must not exist on a decide run")
-            if any(migration_dir.glob("generation-*.json")):
-                errors.append(
-                    "decision mode: generation-*.json must not exist on a decide run"
-                )
+    if mode == "decision" and migration_dir is not None:
+        # Decision mode's real invariant: THIS decide-complete cycle has not
+        # itself gone through Generate yet (phases.generate is "pending" or
+        # absent). It is NOT "no terraform/ or generation-*.json file exists
+        # on disk" — a prior Generate/workshop-reprice cycle's execution pack
+        # can legitimately still be sitting there (workshop re-entry
+        # preserves it deliberately: it may hold customer-edited baseline.tf/
+        # variables.tf or hand-authored terraform.tfvars/state that cannot be
+        # safely deleted). Treating raw file presence as the signal made a
+        # perfectly valid decision, after a workshop reprice on a
+        # previously-executed run, permanently unable to pass — the pre-
+        # execution claim this check exists to make ("no code has been
+        # generated for the CURRENT decision") was never really about the
+        # filesystem; it's about .phase-status.json's own bookkeeping.
+        #
+        # phases.generate == "completed"/"in_progress" is exactly the signal
+        # that consent to execute for the CURRENT cycle was already given —
+        # that state is precisely what "decision mode" (pre-execution) must
+        # not be, and .phase-status.json is the interpreter's own source of
+        # truth for it (see phase-status.schema.json's run_mode/phases
+        # description). Fail open on a missing/corrupt status file (an
+        # ambiguous case must not block a genuinely fresh decision run).
+        phase_path = migration_dir / ".phase-status.json"
+        generate_status: str | None = None
+        if phase_path.is_file():
+            try:
+                phase = json.loads(phase_path.read_text(encoding="utf-8"))
+                generate_status = (phase or {}).get("phases", {}).get("generate")
+            except (OSError, json.JSONDecodeError):
+                generate_status = None
+        if generate_status in ("completed", "in_progress"):
+            errors.append(
+                "decision mode: .phase-status.json phases.generate is "
+                f"{generate_status!r} — this decide-complete cycle already "
+                "went through Generate; decision mode is pre-execution only "
+                "for the CURRENT cycle (a prior cycle's execution pack may "
+                "legitimately remain on disk after a workshop reprice)"
+            )
 
     return errors
 

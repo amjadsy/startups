@@ -8,6 +8,7 @@ script is invoked as a CLI in every skill call site.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -174,22 +175,65 @@ def test_decision_mode_rejects_next_steps_instead_of_cta(tmp_path: Path) -> None
     assert "next-steps" in out  # and the wrong-mode section is present
 
 
-def test_decision_mode_rejects_terraform_dir_on_disk(tmp_path: Path) -> None:
+def test_decision_mode_rejects_completed_generate_phase(tmp_path: Path) -> None:
+    # The real pre-execution invariant: THIS decide-complete cycle must not
+    # have already gone through Generate. Signaled by .phase-status.json's
+    # phases.generate, not by raw file presence on disk (see the sibling
+    # test below — stale files from a PRIOR cycle may legitimately remain).
+    (tmp_path / ".phase-status.json").write_text(
+        json.dumps({"phases": {"generate": "completed"}}), encoding="utf-8"
+    )
+    path = tmp_path / "decision-report.html"
+    path.write_text(DECISION_MINIMAL_PASS, encoding="utf-8")
+    code, out = run_validator(path, mode="decision", migration_dir=tmp_path)
+    assert code == 1, out
+    assert "phases.generate" in out
+
+
+def test_decision_mode_rejects_in_progress_generate_phase(tmp_path: Path) -> None:
+    (tmp_path / ".phase-status.json").write_text(
+        json.dumps({"phases": {"generate": "in_progress"}}), encoding="utf-8"
+    )
+    path = tmp_path / "decision-report.html"
+    path.write_text(DECISION_MINIMAL_PASS, encoding="utf-8")
+    code, out = run_validator(path, mode="decision", migration_dir=tmp_path)
+    assert code == 1, out
+    assert "phases.generate" in out
+
+
+def test_decision_mode_tolerates_stale_terraform_dir_when_generate_pending(
+    tmp_path: Path,
+) -> None:
+    # Regression: a workshop reprice on a PREVIOUSLY-executed run resets
+    # phases.generate to "pending" but does not (and must not) delete the
+    # previous execution pack, since terraform/ may hold customer edits
+    # (baseline.tf/variables.tf) or hand-authored terraform.tfvars/state that
+    # cannot be safely deleted. A stale terraform/ directory coexisting with
+    # phases.generate == "pending" is the expected, supported post-reprice
+    # state and must PASS, not fail on raw directory presence.
+    (tmp_path / ".phase-status.json").write_text(
+        json.dumps({"phases": {"generate": "pending"}}), encoding="utf-8"
+    )
     (tmp_path / "terraform").mkdir()
+    (tmp_path / "terraform" / "terraform.tfvars").write_text(
+        "operations_email = \"ops@example.com\"", encoding="utf-8"
+    )
+    (tmp_path / "generation-warnings.json").write_text("{}", encoding="utf-8")
     path = tmp_path / "decision-report.html"
     path.write_text(DECISION_MINIMAL_PASS, encoding="utf-8")
     code, out = run_validator(path, mode="decision", migration_dir=tmp_path)
-    assert code == 1, out
-    assert "terraform" in out.lower()
+    assert code == 0, out
 
 
-def test_decision_mode_rejects_generation_artifacts_on_disk(tmp_path: Path) -> None:
-    (tmp_path / "generation-infra.json").write_text("{}", encoding="utf-8")
+def test_decision_mode_without_phase_status_file_skips_generate_check(
+    tmp_path: Path,
+) -> None:
+    # Fail open on a missing .phase-status.json: an ambiguous case (no state
+    # file at all) must not block a genuinely fresh decision run.
     path = tmp_path / "decision-report.html"
     path.write_text(DECISION_MINIMAL_PASS, encoding="utf-8")
     code, out = run_validator(path, mode="decision", migration_dir=tmp_path)
-    assert code == 1, out
-    assert "generation-" in out
+    assert code == 0, out
 
 
 def test_decision_mode_without_migration_dir_skips_disk_checks(tmp_path: Path) -> None:
