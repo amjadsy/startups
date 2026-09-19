@@ -1268,3 +1268,144 @@ def test_removing_savings_plan_option_rows_fails_despite_posture_caveat(
     code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
     assert code == 1, out
     assert "Savings Plans" in out
+
+
+# --- Currency formatting (rule 2: monthly figures render as whole dollars) ---
+
+
+def test_reference_fixture_has_no_currency_formatting_violations() -> None:
+    """The committed fixture's small sub-dollar figures ($0.06, $0.40, $1.50,
+    etc.) must not trip the check — they are genuinely sub-dollar precision."""
+    html = FIXTURE.read_text(encoding="utf-8")
+    path = FIXTURE
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 0, out
+    assert "currency formatting" not in out
+
+
+def test_monthly_figure_with_cents_fails(tmp_path: Path) -> None:
+    # Regression: a multi-thousand-dollar monthly figure rendered with cents
+    # (the exact SF Beach report drift) must fail, not silently pass.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "Est. $112/mo AWS vs $165/mo GCP infra",
+        "Est. $25,684.89/mo AWS vs $165/mo GCP infra",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert "currency formatting" in out
+    assert "$25,684.89" in out
+
+
+def test_small_monthly_total_under_two_dollars_with_cents_passes(tmp_path: Path) -> None:
+    # $1.50, $0.40 etc. are the skill rule's own examples of meaningful
+    # sub-dollar precision and must not be flagged regardless of context.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "Est. $112/mo AWS vs $165/mo GCP infra",
+        "Est. $1.50/mo AWS vs $165/mo GCP infra",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 0, out
+    assert "currency formatting" not in out
+
+
+def test_hourly_rate_with_cents_passes(tmp_path: Path) -> None:
+    # A per-hour instance rate legitimately carries cents even when the
+    # whole-dollar part is >= 2 — the /hr suffix exempts it.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "Est. $112/mo AWS vs $165/mo GCP infra",
+        "Est. $23.50/hr AWS vs $165/mo GCP infra",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 0, out
+    assert "currency formatting" not in out
+
+
+def test_per_unit_commitment_rate_with_cents_passes(tmp_path: Path) -> None:
+    # A provisioned-throughput style rate ("$21.18 (1-mo commit)") is a
+    # per-unit rate, not a rounded monthly total.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "Est. $112/mo AWS vs $165/mo GCP infra",
+        "Est. $21.18 (1-mo commit) AWS vs $165/mo GCP infra",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 0, out
+    assert "currency formatting" not in out
+
+
+def test_per_policy_rate_with_cents_passes(tmp_path: Path) -> None:
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "Est. $112/mo AWS vs $165/mo GCP infra",
+        "Est. $5.00/mo per policy AWS vs $165/mo GCP infra",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 0, out
+    assert "currency formatting" not in out
+
+
+def test_multiple_bad_monthly_figures_all_reported(tmp_path: Path) -> None:
+    # Each distinct offending token is reported once, even when several
+    # different bad figures appear in the same report.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "Est. $112/mo AWS vs $165/mo GCP infra",
+        "Est. $1,371.82/mo AWS vs $80.30/mo GCP infra",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert "$1,371.82" in out
+    assert "$80.30" in out
+
+
+def test_repeated_bad_figure_reported_once(tmp_path: Path) -> None:
+    # The same offending token appearing multiple times (e.g. a total quoted
+    # in both a metric card and a table) is reported once, not once per
+    # occurrence.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "Est. $112/mo AWS vs $165/mo GCP infra",
+        "Est. $999.99/mo AWS vs $999.99/mo GCP infra",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert out.count("$999.99") == 1
+
+
+def test_currency_formatting_check_ignores_css_declarations(tmp_path: Path) -> None:
+    # CSS values inside <style> must never be mistaken for cost figures (this
+    # check only scans the <body>, matching _readability_scope's behavior).
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "</style>",
+        "/* fake, never a real cost figure */ .fake { margin: $999.12; }\n</style>",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 0, out
+    assert "currency formatting" not in out
+
+
+def test_percentages_and_versions_never_trigger_currency_check(tmp_path: Path) -> None:
+    # Sanity: numbers with a decimal point but no leading $ (percentages,
+    # version numbers, RTO hours) are never in scope for this check.
+    html = FIXTURE.read_text(encoding="utf-8") + (
+        "<!-- appended smoke content, never actually rendered by the browser "
+        "since it's after </html>, but exercises the regex path -->\n"
+        "<p>Terraform 1.15.2, 82.5% reduction, RTO 4.5 hours.</p>\n"
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 0, out
+    assert "currency formatting" not in out

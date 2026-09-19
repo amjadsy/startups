@@ -12,7 +12,7 @@ Usage:
       --estimation-ai estimation-ai.json
 
 Script location: this file lives at
-  advisor/plugins/aws-startup-advisor/scripts/validate-migration-report.py
+  migrate/plugins/migration-to-aws/scripts/validate-migration-report.py
 Agents should invoke it via Path(__file__) resolution or:
   python3 "$(dirname ...)/scripts/validate-migration-report.py" ...
 """
@@ -26,7 +26,7 @@ import sys
 from html import unescape
 from pathlib import Path
 
-# Plugin root: advisor/plugins/aws-startup-advisor/
+# Plugin root: migrate/plugins/migration-to-aws/
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
 REQUIRED_SECTION_IDS = [
@@ -399,6 +399,60 @@ def _validate_readability(html: str) -> list[str]:
     for pattern, label in READABILITY_PATTERNS:
         if re.search(pattern, scope, re.IGNORECASE):
             errors.append(f"readability: {label}")
+    return errors
+
+
+# generate-artifacts-report.md rule 2 ("Currency formatting"): monthly figures
+# render as whole dollars with thousands separators ($1,415, $118); cents are
+# reserved for genuinely sub-dollar precision ($1.50, $0.40) — e.g. hourly or
+# per-unit rates, or small monthly totals under ~$2 where a cents digit is
+# still meaningful. A multi-hundred/thousand-dollar figure rendered with cents
+# (e.g. $25,684.89/mo) is the regression this check exists to catch: it read
+# as unrounded raw arithmetic output rather than an authored report figure,
+# and it is long enough to overflow a fixed-width metric card.
+CENTS_RE = re.compile(r"\$([0-9][0-9,]*)\.([0-9]{2})\b")
+
+# A cents figure immediately followed (within ~25 chars) by one of these is a
+# per-unit rate, not an absolute monthly cost — cents are meaningful there
+# regardless of the whole-dollar magnitude (e.g. "$21.18 (1-mo commit)" for a
+# model-unit-hour rate, "$5.00/mo per policy").
+_RATE_SUFFIX_RE = re.compile(
+    r"^\s*(?:/|\(|\bper\b)?\s*"
+    r"(?:hr|hour|hourly|vcpu|gb|gib|tb|image|unit|policy|1m|10k|month|"
+    r"mo\b\s*per\b|[0-9]+-mo\b)",
+    re.IGNORECASE,
+)
+
+# Whole-dollar part below this is small enough that a cents digit is itself
+# meaningful precision (matches the skill rule's own examples: $1.50, $0.40).
+_CENTS_MEANINGFUL_BELOW = 2
+
+
+def _validate_currency_formatting(html: str) -> list[str]:
+    """Monthly cost figures must render as whole dollars (rule 2). Flag any
+    $X.YY figure whose whole-dollar part is >= $2 and that is not immediately
+    followed by a per-unit-rate suffix (/hr, per policy, etc.) — those are
+    legitimately sub-dollar-precision rates, not rounded monthly totals."""
+    errors: list[str] = []
+    scope = _readability_scope(html)
+    seen: set[str] = set()
+    for match in CENTS_RE.finditer(scope):
+        whole = int(match.group(1).replace(",", ""))
+        if whole < _CENTS_MEANINGFUL_BELOW:
+            continue
+        trailing = scope[match.end():match.end() + 25]
+        if _RATE_SUFFIX_RE.match(trailing):
+            continue
+        token = match.group(0)
+        if token in seen:
+            continue
+        seen.add(token)
+        errors.append(
+            f'currency formatting: "{token}" renders cents on a monthly-scale '
+            "figure — round to a whole dollar (generate-artifacts-report.md "
+            'rule 2: cents only for genuinely sub-dollar precision, e.g. "'
+            '$1.50", "$0.40", or a per-unit rate like "$0.018/hr")'
+        )
     return errors
 
 
@@ -1034,6 +1088,7 @@ def validate_report(
 
     if check_readability:
         errors.extend(_validate_readability(html))
+        errors.extend(_validate_currency_formatting(html))
         errors.extend(_validate_exec_vocabulary(html))
         errors.extend(_validate_decision_language(html, estimation_infra))
         # Normal generated reports require a TOC. Use the same signal to
