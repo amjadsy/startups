@@ -1409,3 +1409,142 @@ def test_percentages_and_versions_never_trigger_currency_check(tmp_path: Path) -
     code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
     assert code == 0, out
     assert "currency formatting" not in out
+
+
+def test_bad_monthly_figure_spelled_slash_month_fails(tmp_path: Path) -> None:
+    # Regression: "month" alone must not exempt a figure the way "/hr" does —
+    # it's exactly the unit an ordinary monthly total is denominated in, not
+    # evidence of a per-unit rate. Same underlying $25,684.89 regression as
+    # test_monthly_figure_with_cents_fails, spelled "/month" instead of "/mo".
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "Est. $112/mo AWS vs $165/mo GCP infra",
+        "Est. $25,684.89/month AWS vs $165/mo GCP infra",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert "$25,684.89" in out
+
+
+def test_bad_monthly_figure_spelled_per_month_fails(tmp_path: Path) -> None:
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "Est. $112/mo AWS vs $165/mo GCP infra",
+        "Est. $25,684.89 per month AWS vs $165/mo GCP infra",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert "$25,684.89" in out
+
+
+def test_bad_monthly_figure_spelled_monthly_fails(tmp_path: Path) -> None:
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "Est. $112/mo AWS vs $165/mo GCP infra",
+        "Est. $25,684.89 monthly AWS vs $165/mo GCP infra",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert "$25,684.89" in out
+
+
+def test_hourly_rate_split_by_inline_tag_still_recognized(tmp_path: Path) -> None:
+    # Regression: raw-HTML regex matching saw </strong> between the amount and
+    # its unit and failed to recognize the rate suffix, sending an otherwise
+    # valid report to the .incomplete.html path. A decoded-text extraction
+    # must treat inline markup as transparent to a reader.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "Est. $112/mo AWS vs $165/mo GCP infra",
+        "Est. <strong>$23.50</strong>/hr AWS vs $165/mo GCP infra",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 0, out
+    assert "currency formatting" not in out
+
+
+def test_hourly_rate_with_nbsp_before_unit_still_recognized(tmp_path: Path) -> None:
+    # Regression: an HTML entity separator between the amount and its unit
+    # must decode before the rate-suffix match, not read as literal "&nbsp;"
+    # text that breaks the adjacency check.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "Est. $112/mo AWS vs $165/mo GCP infra",
+        "Est. $23.50&nbsp;/hr AWS vs $165/mo GCP infra",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 0, out
+    assert "currency formatting" not in out
+
+
+def test_commented_out_raw_figure_never_flagged(tmp_path: Path) -> None:
+    # Regression: an HTML comment is never rendered by a browser, so a raw,
+    # unrounded figure left in a comment (e.g. an authoring note) must not be
+    # flagged — a plain substring/regex scan over raw HTML source cannot tell
+    # comment text apart from real content.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "Est. $112/mo AWS vs $165/mo GCP infra",
+        "Est. $112/mo AWS vs $165/mo GCP infra"
+        "<!-- raw estimate $25,684.89/mo -->",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 0, out
+    assert "currency formatting" not in out
+
+
+def test_numeric_character_reference_dollar_sign_still_flagged(tmp_path: Path) -> None:
+    # Regression: the reverse direction of the entity-decoding gap — a
+    # numeric character reference for "$" (&#36;) is real, VISIBLE content
+    # once decoded, and must not silently pass just because the raw source
+    # never spells the amount with a literal "$".
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "Est. $112/mo AWS vs $165/mo GCP infra",
+        "Est. &#36;25,684.89/mo AWS vs $165/mo GCP infra",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert "$25,684.89" in out
+
+
+def test_calculation_notes_column_rate_arithmetic_not_flagged(tmp_path: Path) -> None:
+    # Regression: Appendix B's documented Calculation/Notes column
+    # (generate-artifacts-report.md: "Service Category, AWS Service, Monthly
+    # Cost (Balanced), Calculation/Notes") legitimately renders per-unit rate
+    # arithmetic with no adjacent unit suffix at all, e.g. "1 vCPU × $23.50 ×
+    # 511 hrs" — the reference fixture's own real Calculation/notes column
+    # uses this exact shape. Replacing its sub-$2 rate with one >= $2 must
+    # still pass, since it's rate context by table structure, not by suffix.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "1 vCPU &times; $0.04048 &times; 511 hrs",
+        "1 vCPU &times; $23.50 &times; 511 hrs",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 0, out
+    assert "currency formatting" not in out
+
+
+def test_same_rate_figure_outside_calculation_column_still_flagged(tmp_path: Path) -> None:
+    # Control for the above: the SAME rate figure, in a Monthly Cost cell
+    # (NOT the Calculation/Notes column), must still be flagged — the
+    # exemption is scoped to the documented column, not to any number that
+    # merely looks like a rate.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "Est. $112/mo AWS vs $165/mo GCP infra",
+        "Est. $23.50/mo AWS vs $165/mo GCP infra",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert "$23.50" in out

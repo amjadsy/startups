@@ -18,6 +18,7 @@ import argparse
 import json
 import re
 import sys
+from html.parser import HTMLParser
 from pathlib import Path
 
 REQUIRED_SECTION_IDS = [
@@ -52,17 +53,80 @@ def _body_scope(html: str) -> str:
 # Ported from validate-migration-report.py — same currency-formatting rule
 # (monthly figures render as whole dollars; cents are reserved for genuinely
 # sub-dollar precision or per-unit rates). See that file's comment for the
-# full rationale; kept identical here so both validators stay in sync.
+# full rationale; kept identical here so both validators stay in sync. The
+# Heroku report has no documented Calculation/Notes column (its exec-costs
+# section is a Heroku-vs-AWS side-by-side or three-tier table, per
+# generate-report.md — no per-service arithmetic show-work column), so this
+# copy has no calc-column exemption; everything else ports unchanged.
 CENTS_RE = re.compile(r"\$([0-9][0-9,]*)\.([0-9]{2})\b")
 
+# Deliberately does NOT accept a BARE "month"/"mo" as itself the qualifying
+# unit — see validate-migration-report.py's _RATE_SUFFIX_RE comment for the
+# full rationale (a bare "/mo" is exactly the unit an ordinary monthly total
+# is denominated in, not evidence of a per-unit rate). "/mo per <unit>" is
+# still accepted (e.g. "$5.00/mo per policy").
 _RATE_SUFFIX_RE = re.compile(
-    r"^\s*(?:/|\(|\bper\b)?\s*"
-    r"(?:hr|hour|hourly|vcpu|gb|gib|tb|image|unit|policy|1m|10k|month|"
-    r"mo\b\s*per\b|[0-9]+-mo\b)",
+    r"^\s*(?:/|\(|\bper\b)?\s*(?:mo\b\s*(?:per\b\s*)?)?"
+    r"(?:hr|hour|hourly|vcpu|gb|gib|tb|image|unit|policy|1m|10k|"
+    r"[0-9]+-mo\b)",
     re.IGNORECASE,
 )
 
 _CENTS_MEANINGFUL_BELOW = 2
+
+
+class _DecodedTextParser(HTMLParser):
+    """Extract rendered text as the browser would present it — entities
+    decoded, comments and inert content (script/style/template) excluded —
+    while preserving amount/unit adjacency across inline markup (mirrors
+    validate-migration-report.py's _DecodedTextRunParser; see that file's
+    class docstring for the full rationale). No Calculation/Notes column
+    tracking here — the Heroku report has no such column."""
+
+    _INLINE_TAGS = {
+        "a", "abbr", "b", "bdi", "bdo", "cite", "code", "data", "dfn", "em",
+        "i", "kbd", "mark", "q", "s", "samp", "small", "span", "strong",
+        "sub", "sup", "time", "u", "var", "wbr",
+    }
+    _INERT_TAGS = {"script", "style", "template"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._inert_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._INERT_TAGS:
+            self._inert_depth += 1
+            return
+        if self._inert_depth == 0 and tag not in self._INLINE_TAGS:
+            self._parts.append(" ")
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag not in self._INLINE_TAGS and tag not in self._INERT_TAGS:
+            self._parts.append(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._INERT_TAGS:
+            if self._inert_depth > 0:
+                self._inert_depth -= 1
+            return
+        if self._inert_depth == 0 and tag not in self._INLINE_TAGS:
+            self._parts.append(" ")
+
+    def handle_data(self, data: str) -> None:
+        if self._inert_depth == 0:
+            self._parts.append(data)
+
+    def text(self) -> str:
+        return "".join(self._parts)
+
+
+def _decoded_text(html: str) -> str:
+    parser = _DecodedTextParser()
+    parser.feed(_body_scope(html))
+    parser.close()
+    return parser.text()
 
 
 def _validate_currency_formatting(html: str) -> list[str]:
@@ -70,13 +134,13 @@ def _validate_currency_formatting(html: str) -> list[str]:
     figure whose whole-dollar part is >= $2 and that is not immediately
     followed by a per-unit-rate suffix (/hr, per policy, etc.)."""
     errors: list[str] = []
-    scope = _body_scope(html)
+    text = _decoded_text(html)
     seen: set[str] = set()
-    for match in CENTS_RE.finditer(scope):
+    for match in CENTS_RE.finditer(text):
         whole = int(match.group(1).replace(",", ""))
         if whole < _CENTS_MEANINGFUL_BELOW:
             continue
-        trailing = scope[match.end():match.end() + 25]
+        trailing = text[match.end():match.end() + 25]
         if _RATE_SUFFIX_RE.match(trailing):
             continue
         token = match.group(0)

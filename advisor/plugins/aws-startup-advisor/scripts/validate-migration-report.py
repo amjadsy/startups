@@ -24,6 +24,7 @@ import json
 import re
 import sys
 from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
 
 # Plugin root: migrate/plugins/migration-to-aws/
@@ -412,14 +413,24 @@ def _validate_readability(html: str) -> list[str]:
 # and it is long enough to overflow a fixed-width metric card.
 CENTS_RE = re.compile(r"\$([0-9][0-9,]*)\.([0-9]{2})\b")
 
-# A cents figure immediately followed (within ~25 chars) by one of these is a
-# per-unit rate, not an absolute monthly cost — cents are meaningful there
-# regardless of the whole-dollar magnitude (e.g. "$21.18 (1-mo commit)" for a
-# model-unit-hour rate, "$5.00/mo per policy").
+# A cents figure immediately followed (within ~25 chars of DECODED, tag-free
+# text) by one of these is a per-unit rate, not an absolute monthly cost —
+# cents are meaningful there regardless of the whole-dollar magnitude (e.g.
+# "$21.18 (1-mo commit)" for a model-unit-hour rate, "$5.00/mo per policy").
+# Deliberately does NOT accept a BARE "month"/"mo" as itself the qualifying
+# unit: that is exactly the unit an ordinary MONTHLY total is denominated in,
+# so treating it alone as a rate suffix would exempt the very figures this
+# rule targets (the regression case itself renders as "$25,684.89/mo" —
+# trailing "/mo" alone is not evidence of a per-unit rate). "/mo per <unit>"
+# IS still accepted, since "per <unit>" is what actually marks it a rate —
+# "/mo" there is just a connector before the real per-unit qualifier, as in
+# "$5.00/mo per policy". Genuine sub-dollar-precision monthly totals are
+# instead handled by the _CENTS_MEANINGFUL_BELOW threshold below, not by
+# unit text.
 _RATE_SUFFIX_RE = re.compile(
-    r"^\s*(?:/|\(|\bper\b)?\s*"
-    r"(?:hr|hour|hourly|vcpu|gb|gib|tb|image|unit|policy|1m|10k|month|"
-    r"mo\b\s*per\b|[0-9]+-mo\b)",
+    r"^\s*(?:/|\(|\bper\b)?\s*(?:mo\b\s*(?:per\b\s*)?)?"
+    r"(?:hr|hour|hourly|vcpu|gb|gib|tb|image|unit|policy|1m|10k|"
+    r"[0-9]+-mo\b)",
     re.IGNORECASE,
 )
 
@@ -427,20 +438,167 @@ _RATE_SUFFIX_RE = re.compile(
 # meaningful precision (matches the skill rule's own examples: $1.50, $0.40).
 _CENTS_MEANINGFUL_BELOW = 2
 
+# Appendix B's documented per-service cost breakdown table
+# (generate-artifacts-report.md: "Service Category, AWS Service, Monthly Cost
+# (Balanced), Calculation/Notes") renders its arithmetic show-work in a
+# dedicated column, e.g. "1 vCPU × $0.04048 × 511 hrs" — a per-unit rate with
+# no adjacent unit suffix at all (it's followed by "× <quantity> <unit>", not
+# "/hr"). Cells under a "Calculation" or "Notes" column header are rate
+# context by construction; a cents figure there is never a rounded monthly
+# display total; scope this by table structure, not a paragraph read of every
+# possible calculation phrasing.
+_CALC_NOTES_HEADER_RE = re.compile(r"calculation|\bnotes\b", re.IGNORECASE)
+
+
+class _DecodedTextRunParser(HTMLParser):
+    """Extract rendered text as the browser would present it — entities
+    decoded, comments and inert content (script/style/template) excluded —
+    while preserving amount/unit adjacency across inline markup and marking
+    which text runs fall inside a table cell under a "Calculation"/"Notes"
+    column header.
+
+    Rationale (all three are real gaps in matching raw HTML source directly):
+      - character references (`&nbsp;`, `&times;`) are never decoded before
+        pattern matching, so a rate written with an entity separator reads as
+        different text than the same rate written with a literal character;
+      - comments and <script>/<style> content are not rendered, but a plain
+        substring/regex scan over raw HTML sees them as ordinary text — a
+        commented-out raw figure must not be flagged, since the browser never
+        shows it;
+      - inline tags split adjacent tokens in the source (`<strong>$23.50</strong>/hr`
+        has `</strong>` between the amount and its unit) even though a reader
+        sees "$23.50/hr" as one continuous phrase — inline tags must not
+        introduce a gap, while block-level tags (row/cell/paragraph
+        boundaries) SHOULD still separate otherwise-unrelated text so two
+        different table cells' numbers never fuse into one token.
+    """
+
+    # A conservative set of tags that visually run text together with their
+    # siblings (the browser renders no line break) — every other tag is
+    # treated as block-level and gets a separating space.
+    _INLINE_TAGS = {
+        "a", "abbr", "b", "bdi", "bdo", "cite", "code", "data", "dfn", "em",
+        "i", "kbd", "mark", "q", "s", "samp", "small", "span", "strong",
+        "sub", "sup", "time", "u", "var", "wbr",
+    }
+    _INERT_TAGS = {"script", "style", "template"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._calc_col: list[bool] = []  # per-part flag: inside a Calculation/Notes cell
+        self._inert_depth = 0
+        # Table header tracking: which <th> column index (0-based) is a
+        # Calculation/Notes column, per currently-open table (stack, for
+        # nested tables — innermost wins).
+        self._table_stack: list[dict[str, object]] = []
+
+    def _current_table(self) -> dict[str, object] | None:
+        return self._table_stack[-1] if self._table_stack else None
+
+    def _emit(self, text: str) -> None:
+        if not text:
+            return
+        table = self._current_table()
+        in_calc = bool(table and table.get("in_calc_cell"))
+        self._parts.append(text)
+        self._calc_col.append(in_calc)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._INERT_TAGS:
+            self._inert_depth += 1
+            return
+        if self._inert_depth > 0:
+            return
+        if tag == "table":
+            self._table_stack.append(
+                {"header_row": False, "col": 0, "calc_col_index": None,
+                 "in_calc_cell": False, "cell_col": 0}
+            )
+        elif tag in ("thead", "tr"):
+            table = self._current_table()
+            if table is not None and tag == "tr":
+                table["cell_col"] = 0
+        elif tag in ("th", "td") and self._current_table() is not None:
+            table = self._current_table()
+            col_index = table["cell_col"]
+            if tag == "th":
+                table["_pending_th_col"] = col_index
+            elif tag == "td" and table.get("calc_col_index") == col_index:
+                table["in_calc_cell"] = True
+        elif tag not in self._INLINE_TAGS:
+            self._emit(" ")
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag not in self._INLINE_TAGS and tag not in self._INERT_TAGS:
+            self._emit(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._INERT_TAGS:
+            if self._inert_depth > 0:
+                self._inert_depth -= 1
+            return
+        if self._inert_depth > 0:
+            return
+        table = self._current_table()
+        if tag == "th" and table is not None and "_pending_th_col" in table:
+            table["cell_col"] = table["_pending_th_col"] + 1
+        elif tag == "td" and table is not None:
+            table["in_calc_cell"] = False
+            table["cell_col"] = table["cell_col"] + 1
+        elif tag == "table" and self._table_stack:
+            self._table_stack.pop()
+        if tag not in self._INLINE_TAGS:
+            self._emit(" ")
+
+    def handle_data(self, data: str) -> None:
+        if self._inert_depth > 0:
+            return
+        table = self._current_table()
+        if table is not None and "_pending_th_col" in table:
+            if _CALC_NOTES_HEADER_RE.search(data):
+                table["calc_col_index"] = table["_pending_th_col"]
+        self._emit(data)
+
+    def text(self) -> str:
+        return "".join(self._parts)
+
+    def calc_mask(self) -> list[bool]:
+        """Per-character (matching text()) flag: True while inside a
+        Calculation/Notes column cell."""
+        mask: list[bool] = []
+        for part, in_calc in zip(self._parts, self._calc_col):
+            mask.extend([in_calc] * len(part))
+        return mask
+
+
+def _decoded_text_with_calc_mask(html: str) -> tuple[str, list[bool]]:
+    scope = _readability_scope(html)
+    parser = _DecodedTextRunParser()
+    parser.feed(scope)
+    parser.close()
+    return parser.text(), parser.calc_mask()
+
 
 def _validate_currency_formatting(html: str) -> list[str]:
     """Monthly cost figures must render as whole dollars (rule 2). Flag any
     $X.YY figure whose whole-dollar part is >= $2 and that is not immediately
     followed by a per-unit-rate suffix (/hr, per policy, etc.) — those are
-    legitimately sub-dollar-precision rates, not rounded monthly totals."""
+    legitimately sub-dollar-precision rates, not rounded monthly totals — and
+    that is not inside a documented Calculation/Notes column cell (Appendix B
+    per-service breakdown show-work, which legitimately renders rate
+    arithmetic like "1 vCPU × $0.04048 × 511 hrs" with no adjacent unit
+    suffix at all)."""
     errors: list[str] = []
-    scope = _readability_scope(html)
+    text, calc_mask = _decoded_text_with_calc_mask(html)
     seen: set[str] = set()
-    for match in CENTS_RE.finditer(scope):
+    for match in CENTS_RE.finditer(text):
         whole = int(match.group(1).replace(",", ""))
         if whole < _CENTS_MEANINGFUL_BELOW:
             continue
-        trailing = scope[match.end():match.end() + 25]
+        if any(calc_mask[match.start():match.end()]):
+            continue
+        trailing = text[match.end():match.end() + 25]
         if _RATE_SUFFIX_RE.match(trailing):
             continue
         token = match.group(0)

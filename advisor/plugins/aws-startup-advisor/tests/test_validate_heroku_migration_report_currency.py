@@ -103,3 +103,74 @@ def test_percentages_and_versions_never_trigger_currency_check() -> None:
     code, out = run(html)
     assert code == 0, out
     assert "currency formatting" not in out
+
+
+def test_per_policy_rate_with_cents_passes() -> None:
+    html = GOOD.replace("Est. $112/mo", "Est. $5.00/mo per policy")
+    code, out = run(html)
+    assert code == 0, out
+    assert "currency formatting" not in out
+
+
+def test_bad_monthly_figure_spelled_slash_month_fails() -> None:
+    # Regression: "month" alone must not exempt a figure the way "/hr" does —
+    # it's exactly the unit an ordinary monthly total is denominated in, not
+    # evidence of a per-unit rate.
+    html = GOOD.replace("Est. $112/mo", "Est. $25,684.89/month")
+    code, out = run(html)
+    assert code == 1, out
+    assert "$25,684.89" in out
+
+
+def test_bad_monthly_figure_spelled_per_month_fails() -> None:
+    html = GOOD.replace("Est. $112/mo", "Est. $25,684.89 per month")
+    code, out = run(html)
+    assert code == 1, out
+    assert "$25,684.89" in out
+
+
+def test_bad_monthly_figure_spelled_monthly_fails() -> None:
+    html = GOOD.replace("Est. $112/mo", "Est. $25,684.89 monthly")
+    code, out = run(html)
+    assert code == 1, out
+    assert "$25,684.89" in out
+
+
+def test_hourly_rate_split_by_inline_tag_still_recognized() -> None:
+    # Regression: raw-HTML regex matching saw </strong> between the amount
+    # and its unit and failed to recognize the rate suffix.
+    html = GOOD.replace("Est. $112/mo", "Est. <strong>$23.50</strong>/hr")
+    code, out = run(html)
+    assert code == 0, out
+    assert "currency formatting" not in out
+
+
+def test_hourly_rate_with_nbsp_before_unit_still_recognized() -> None:
+    # Regression: an HTML entity separator between the amount and its unit
+    # must decode before the rate-suffix match.
+    html = GOOD.replace("Est. $112/mo", "Est. $23.50&nbsp;/hr")
+    code, out = run(html)
+    assert code == 0, out
+    assert "currency formatting" not in out
+
+
+def test_commented_out_raw_figure_never_flagged() -> None:
+    # Regression: an HTML comment is never rendered by a browser, so a raw,
+    # unrounded figure left in a comment must not be flagged.
+    html = GOOD.replace(
+        "Est. $112/mo",
+        "Est. $112/mo<!-- raw estimate $25,684.89/mo -->",
+    )
+    code, out = run(html)
+    assert code == 0, out
+    assert "currency formatting" not in out
+
+
+def test_numeric_character_reference_dollar_sign_still_flagged() -> None:
+    # Regression: the reverse direction of the entity-decoding gap — a
+    # numeric character reference for "$" (&#36;) is real, visible content
+    # once decoded, and must not silently pass.
+    html = GOOD.replace("Est. $112/mo", "Est. &#36;25,684.89/mo")
+    code, out = run(html)
+    assert code == 1, out
+    assert "$25,684.89" in out
