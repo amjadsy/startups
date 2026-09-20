@@ -203,8 +203,10 @@ that case.
      appendices, no Terraform, CTA footer). Validate with
      `python3 "$PLUGIN_ROOT/scripts/validate-heroku-migration-report.py" "$MIGRATION_DIR/decision-report.html" --mode decision --migration-dir "$MIGRATION_DIR"`
      (absolute paths — cwd must not be load-bearing; `--migration-dir` is required
-     so the decision-mode pre-execution checks — no `terraform/` / `generation-*.json`
-     yet — actually run) and fix failures before presenting.
+     so the decision-mode pre-execution check — `.phase-status.json`'s
+     `phases.generate` must be `"pending"` or absent for THIS cycle, not raw
+     `terraform/` / `generation-*.json` absence; see `report-decision-core.md` —
+     actually runs) and fix failures before presenting.
   2. Set `run_mode: "decide"` and `current_phase: "complete"` in
      `.phase-status.json` (`phases.generate` **stays** `"pending"` — this
      combination means "decision complete, execution available on request";
