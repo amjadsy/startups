@@ -1534,6 +1534,48 @@ def test_calculation_notes_column_rate_arithmetic_not_flagged(tmp_path: Path) ->
     assert "currency formatting" not in out
 
 
+def test_calc_notes_column_monthly_component_amount_still_flagged(
+    tmp_path: Path,
+) -> None:
+    # Regression: the Calculation/Notes column exemption was scoped to the
+    # WHOLE cell, so an ordinary monthly component amount summed alongside a
+    # real rate ("ALB $22 + NAT $33 for VPC-attached Fargate/RDS") was
+    # exempted too, even though it is not itself a per-unit rate. Only a
+    # figure immediately followed by a multiplication marker (×, x, times)
+    # is a rate operand; a plain summed component amount must still be
+    # checked for whole-dollar rounding.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "ALB $22 + NAT $33 for VPC-attached Fargate/RDS",
+        "ALB $22.49 + NAT $33 for VPC-attached Fargate/RDS",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert "$22.49" in out
+
+
+def test_calc_notes_column_calculated_monthly_result_still_flagged(
+    tmp_path: Path,
+) -> None:
+    # Regression: the calculated monthly RESULT of the shown arithmetic
+    # ("... = $12,008.50/mo") is not itself a rate operand either — it is
+    # exactly the kind of unrounded monthly total this rule exists to catch,
+    # even though it sits in the same Calculation/Notes cell as a legitimate
+    # rate. The rate operand ($23.50, followed by ×) must still pass; the
+    # trailing result must still fail.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "1 vCPU &times; $0.04048 &times; 511 hrs",
+        "1 instance &times; $23.50 &times; 511 hrs = $12,008.50/mo",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert "$12,008.50" in out
+    assert "$23.50" not in out
+
+
 def test_same_rate_figure_outside_calculation_column_still_flagged(tmp_path: Path) -> None:
     # Control for the above: the SAME rate figure, in a Monthly Cost cell
     # (NOT the Calculation/Notes column), must still be flagged — the

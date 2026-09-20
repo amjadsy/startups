@@ -443,11 +443,18 @@ _CENTS_MEANINGFUL_BELOW = 2
 # (Balanced), Calculation/Notes") renders its arithmetic show-work in a
 # dedicated column, e.g. "1 vCPU × $0.04048 × 511 hrs" — a per-unit rate with
 # no adjacent unit suffix at all (it's followed by "× <quantity> <unit>", not
-# "/hr"). Cells under a "Calculation" or "Notes" column header are rate
-# context by construction; a cents figure there is never a rounded monthly
-# display total; scope this by table structure, not a paragraph read of every
-# possible calculation phrasing.
+# "/hr"). Cells under a "Calculation" or "Notes" column header ARE where rate
+# operands like this legitimately appear with cents, but the column header
+# alone is not proof every dollar figure in the cell is a rate: the same
+# cell's prose can carry ordinary whole-dollar component amounts summed
+# together ("ALB $22 + NAT $33 for VPC-attached Fargate/RDS") or the
+# calculated monthly RESULT of the shown arithmetic ("... = $12,008.50/mo")
+# — neither of those is itself a per-unit rate, and both must still be held
+# to the whole-dollar rule. Only the operand immediately followed by a
+# multiplication marker (×, "x", or "times") is exempt; scope the exemption
+# to that operand specifically, not the whole cell.
 _CALC_NOTES_HEADER_RE = re.compile(r"calculation|\bnotes\b", re.IGNORECASE)
+_CALC_RATE_OPERAND_RE = re.compile(r"^\s*(?:×|\bx\b|\btimes\b)", re.IGNORECASE)
 
 
 class _DecodedTextRunParser(HTMLParser):
@@ -611,17 +618,16 @@ def _validate_currency_formatting(html: str) -> list[str]:
         whole = int(match.group(1).replace(",", ""))
         if whole < _CENTS_MEANINGFUL_BELOW:
             continue
-        if any(calc_mask[match.start():match.end()]):
-            continue
-        # The rate-suffix window must stop at the next block-level boundary
-        # (table cell/row, paragraph, etc.) even if that's before the normal
-        # 25-char lookahead — a boundary is inserted as a single space, which
-        # does not itself stop a word-based regex, so an unrelated word that
-        # happens to start the NEXT cell/block (e.g. "Hourly" opening a
-        # sibling note column) must never be readable as this figure's own
-        # rate suffix. bisect finds the first boundary offset > match.end();
-        # a boundary exactly AT match.end() (the very next char) also cuts
-        # the window to empty, correctly blocking any suffix read across it.
+        # The rate-suffix / rate-operand window must stop at the next
+        # block-level boundary (table cell/row, paragraph, etc.) even if
+        # that's before the normal 25-char lookahead — a boundary is
+        # inserted as a single space, which does not itself stop a
+        # word-based regex, so an unrelated word that happens to start the
+        # NEXT cell/block (e.g. "Hourly" opening a sibling note column) must
+        # never be readable as this figure's own rate suffix. bisect finds
+        # the first boundary offset > match.end(); a boundary exactly AT
+        # match.end() (the very next char) also cuts the window to empty,
+        # correctly blocking any suffix read across it.
         cutoff = match.end() + 25
         for boundary in boundaries:
             if boundary >= match.end():
@@ -629,6 +635,14 @@ def _validate_currency_formatting(html: str) -> list[str]:
                 break
         trailing = text[match.end():cutoff]
         if _RATE_SUFFIX_RE.match(trailing):
+            continue
+        # In a Calculation/Notes cell, ONLY a figure immediately followed by
+        # a multiplication marker (×, "x", "times") is a rate operand and
+        # exempt — a component amount being summed ("ALB $22 + NAT $33") or
+        # the calculated monthly result ("= $12,008.50/mo") in the SAME cell
+        # is not itself a rate and must still be held to the whole-dollar
+        # rule, even though the cell as a whole is rate context.
+        if any(calc_mask[match.start():match.end()]) and _CALC_RATE_OPERAND_RE.match(trailing):
             continue
         token = match.group(0)
         if token in seen:
