@@ -9,7 +9,7 @@ same rule, same regressions, same fixture-shaped inline HTML pattern.
 
 from __future__ import annotations
 
-import subprocess
+import subprocess  # nosec B404 — test-only, list args, no shell, committed script path
 import sys
 import tempfile
 from pathlib import Path
