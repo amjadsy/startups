@@ -29,11 +29,15 @@ read the official pages below directly. These lookups require no Temporal accoun
 MCP connection, or authentication prompt. Temporal documents this access method at
 `https://docs.temporal.io/with-ai.md`.
 
-Prefer the Markdown page; if it cannot be read, try the same URL without `.md` or
-use `https://docs.temporal.io/llms.txt` to locate its current official page. If web
-access is unavailable, the lookup fails, or the page does not establish the fact,
-continue with the cached value and its original snapshot date, marked unverified.
-Do not pause the flow to install a server or request a login.
+Use the official access guidance above and `https://docs.temporal.io/llms.txt` to
+discover current documentation pages. The feature URLs below are current entry points,
+not permanent identifiers. Prefer Markdown; if an entry point moves, returns 404, or
+cannot be read, try the HTML page or rediscover the feature page through the index.
+A missing page does not establish that a feature was removed. An index entry is only
+a discovery result: fetch the linked feature page and observe the fact before marking
+it verified. If web access is unavailable, rediscovery or retrieval fails, or the page
+does not establish the fact, continue with the cached value and its original snapshot
+date, marked unverified. Do not pause the flow to install a server or request a login.
 
 Only a fact actually fetched and observed this run counts as verified. Record each
 Temporal result in `design.json.volatile_facts` with `source: "web"` and its source URL
@@ -50,7 +54,8 @@ can report the evidence accurately.
   the only buyer-side channel used here; Temporal platform documentation does not verify
   AWS Marketplace terms.)
 - **Feature statuses** (Serverless Workers, Workflow Streams, External Payload Storage,
-  Worker Versioning) — fetch the corresponding official page:
+  Worker Versioning) — use these current entry points, rediscovering through the official
+  index above when needed:
   - Serverless Workers on AWS Lambda: `https://docs.temporal.io/serverless-workers/aws-lambda.md`
   - Workflow Streams: `https://docs.temporal.io/workflow-streams.md`
   - External Payload Storage: `https://docs.temporal.io/external-storage.md`
@@ -86,11 +91,12 @@ observed this run may be listed as verified.
 4. On failure OR if you did not call the MCP at all (unavailable, skipped), use the cached
    `value` and list the field as fallen-back.
 
-**Anti-fabrication rule (do not skip):** a field may appear in the "verified via MCP" list ONLY
-if you actually made an MCP call this run and observed its result. If you did not call the MCP
-for a field — for any reason — it goes in the cached/fell-back list. Never claim verification you
-did not perform. If the AWS Knowledge MCP was not called at all, its verified list is empty
-and its fields are cached. Temporal web verification is recorded separately as described above.
+**Anti-fabrication rule (do not skip):** Never claim verification you did not perform,
+whether via AWS Knowledge MCP or public web. A fact may appear in its channel's verified
+list ONLY if you actually made that channel's lookup this run and observed evidence for
+the fact. A skipped, unavailable, failed, or inconclusive lookup goes in the cached/unverified
+list with the original snapshot date. If a channel was not called, its verified list is
+empty; successful verification via the other channel remains valid.
 
 ## AWS Agent Registry availability
 
