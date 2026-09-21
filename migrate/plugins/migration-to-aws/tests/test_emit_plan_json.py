@@ -308,7 +308,12 @@ def test_infra_plus_ai_is_full_and_summed(tmp_path: Path) -> None:
     )
     (tmp_path / "estimation-ai.json").write_text(
         json.dumps(
-            {"cost_comparison": {"projected_bedrock_monthly": 540}, "current_costs": {"gcp_monthly_ai_spend": 1250}}
+            {
+                "cost_comparison": {"projected_bedrock_monthly": 540},
+                "current_costs": {"gcp_monthly_ai_spend": 1250},
+                "accuracy_confidence": "±15-25%",
+                "pricing_source": "cached",
+            }
         ),
         encoding="utf-8",
     )
@@ -318,9 +323,10 @@ def test_infra_plus_ai_is_full_and_summed(tmp_path: Path) -> None:
     assert plan["scope"] == "FULL"
     assert plan["cost"]["awsMonthlyBasis"] == "INFRA_PLUS_AI_SUM"
     assert plan["cost"]["awsMonthly"] == 479 + 540
-    assert plan["cost"]["sourceMonthly"] == 690 + 1250
-    # FULL requires cost.accuracy — derived from the base (infra) estimate.
-    assert plan["cost"]["accuracy"] == {"minPercent": 5, "maxPercent": 10, "pricingSource": "CACHED"}
+    # The two source baselines are not comparable, so sourceMonthly is omitted on FULL.
+    assert "sourceMonthly" not in plan["cost"]
+    # Looser declared band carried whole (±5-10% vs ±15-25% -> ±15-25%); both cached.
+    assert plan["cost"]["accuracy"] == {"minPercent": 15, "maxPercent": 25, "pricingSource": "CACHED"}
     by = {i["serviceName"]: i for i in plan["cost"]["awsServiceItems"]}
     assert by["Fargate"]["classification"] == "INFRASTRUCTURE"
     assert by["Amazon Bedrock"] == {"serviceName": "Amazon Bedrock", "monthlyCost": 540, "classification": "AI_ML"}
@@ -340,7 +346,11 @@ def test_billing_plus_ai_is_full_billing_basis(tmp_path: Path) -> None:
     )
     (tmp_path / "estimation-ai.json").write_text(
         json.dumps(
-            {"cost_comparison": {"projected_bedrock_monthly": 100}, "current_costs": {"gcp_monthly_ai_spend": 200}}
+            {
+                "cost_comparison": {"projected_bedrock_monthly": 100},
+                "current_costs": {"gcp_monthly_ai_spend": 200},
+                "accuracy_confidence": "±15-25%",
+            }
         ),
         encoding="utf-8",
     )
@@ -349,16 +359,17 @@ def test_billing_plus_ai_is_full_billing_basis(tmp_path: Path) -> None:
     plan = json.loads((tmp_path / "plan.json").read_text())
     assert plan["scope"] == "FULL"
     assert plan["cost"]["awsMonthlyBasis"] == "BILLING_MID_PLUS_AI_SUM"
-    assert plan["cost"]["accuracy"] == {"minPercent": 30, "maxPercent": 40}
     assert plan["cost"]["awsMonthly"] == 420 + 100
-    assert plan["cost"]["sourceMonthly"] == 690 + 200
+    assert "sourceMonthly" not in plan["cost"]
+    # billing ±30-40% is looser than AI ±15-25%, so the billing band is carried whole.
+    assert plan["cost"]["accuracy"] == {"minPercent": 30, "maxPercent": 40}
     assert any(
         i["serviceName"] == "Amazon Bedrock" and i["classification"] == "AI_ML"
         for i in plan["cost"]["awsServiceItems"]
     )
 
 
-def test_full_accuracy_widens_to_cover_both_estimates(tmp_path: Path) -> None:
+def test_full_accuracy_uses_looser_declared_band(tmp_path: Path) -> None:
     _seed(
         tmp_path,
         projected={"aws_monthly_balanced": 479},
@@ -380,8 +391,9 @@ def test_full_accuracy_widens_to_cover_both_estimates(tmp_path: Path) -> None:
     result = _run(tmp_path)
 
     plan = json.loads((tmp_path / "plan.json").read_text())
-    # widest envelope of ±5-10% and ±15-25%; both cached -> pricingSource kept.
-    assert plan["cost"]["accuracy"] == {"minPercent": 5, "maxPercent": 25, "pricingSource": "CACHED"}
+    # The looser DECLARED band is carried whole (±15-25%), not a synthesized ±5-25%;
+    # both cached -> pricingSource kept.
+    assert plan["cost"]["accuracy"] == {"minPercent": 15, "maxPercent": 25, "pricingSource": "CACHED"}
 
 
 def test_full_accuracy_drops_pricing_source_when_estimates_disagree(tmp_path: Path) -> None:
@@ -400,8 +412,8 @@ def test_full_accuracy_drops_pricing_source_when_estimates_disagree(tmp_path: Pa
     result = _run(tmp_path)
 
     plan = json.loads((tmp_path / "plan.json").read_text())
-    # cached vs live can't be one truthful enum -> pricingSource omitted, band still widened.
-    assert plan["cost"]["accuracy"] == {"minPercent": 5, "maxPercent": 25}
+    # looser declared band (±15-25%); cached vs live can't be one truthful enum -> omit.
+    assert plan["cost"]["accuracy"] == {"minPercent": 15, "maxPercent": 25}
 
 
 def test_ai_only_run_is_deferred(tmp_path: Path) -> None:
@@ -422,23 +434,33 @@ def test_ai_only_run_is_deferred(tmp_path: Path) -> None:
     assert not (tmp_path / "plan.json").exists()
 
 
-def test_both_infra_and_billing_present_skips(tmp_path: Path) -> None:
-    _seed(tmp_path)  # infra
+def test_both_infra_and_billing_present_prefers_infra(tmp_path: Path) -> None:
+    # A billing-only run that re-entered with Terraform leaves both files; infra is the
+    # authoritative estimate, so export it (BALANCED) and ignore the stale billing one.
+    _seed(tmp_path)  # infra: aws_monthly_balanced = 112
     (tmp_path / "estimation-billing.json").write_text(
         json.dumps({"cost_comparison": {"aws_monthly_mid": 10, "gcp_monthly": 20}}), encoding="utf-8"
     )
     result = _run(tmp_path)
 
-    assert result.stdout.startswith("PLAN_SKIP |")
-    assert not (tmp_path / "plan.json").exists()
+    assert result.stdout.startswith("PLAN_OK |")
+    plan = json.loads((tmp_path / "plan.json").read_text())
+    assert plan["scope"] == "INFRA_ONLY"
+    assert plan["cost"]["awsMonthlyBasis"] == "BALANCED"
+    assert plan["cost"]["awsMonthly"] == 112  # infra figure, not the billing 10
 
 
-def test_full_omits_source_when_one_route_lacks_it(tmp_path: Path) -> None:
-    # infra has no source baseline; can't sum a complete source figure -> omit it.
-    _seed(tmp_path, current_costs={"source": "unavailable"}, accuracy_confidence="±5-10%")
+def test_full_omits_source_monthly_even_when_both_present(tmp_path: Path) -> None:
+    # Both routes HAVE a source baseline, but they are not comparable, so a FULL run
+    # never presents a source total regardless.
+    _seed(tmp_path, current_costs={"gcp_monthly": 690}, accuracy_confidence="±5-10%")
     (tmp_path / "estimation-ai.json").write_text(
         json.dumps(
-            {"cost_comparison": {"projected_bedrock_monthly": 540}, "current_costs": {"gcp_monthly_ai_spend": 1250}}
+            {
+                "cost_comparison": {"projected_bedrock_monthly": 540},
+                "current_costs": {"gcp_monthly_ai_spend": 1250},
+                "accuracy_confidence": "±15-25%",
+            }
         ),
         encoding="utf-8",
     )
@@ -447,6 +469,22 @@ def test_full_omits_source_when_one_route_lacks_it(tmp_path: Path) -> None:
     plan = json.loads((tmp_path / "plan.json").read_text())
     assert plan["scope"] == "FULL"
     assert "sourceMonthly" not in plan["cost"]
+
+
+def test_full_skipped_when_a_contributing_route_lacks_an_accuracy_band(tmp_path: Path) -> None:
+    # Base has a band but the AI estimate does not -> can't state a combined band -> skip.
+    _seed(tmp_path, accuracy_confidence="±5-10%")
+    (tmp_path / "estimation-ai.json").write_text(
+        json.dumps(
+            {"cost_comparison": {"projected_bedrock_monthly": 540}, "current_costs": {"gcp_monthly_ai_spend": 1250}}
+        ),
+        encoding="utf-8",
+    )
+    result = _run(tmp_path)
+
+    assert result.stdout.startswith("PLAN_SKIP |")
+    assert "accuracy" in result.stdout
+    assert not (tmp_path / "plan.json").exists()
 
 
 def test_infra_only_emits_accuracy_when_present(tmp_path: Path) -> None:
@@ -494,7 +532,13 @@ def test_full_over_item_cap_omits_whole_table(tmp_path: Path) -> None:
         accuracy_confidence="±5-10%",
     )
     (tmp_path / "estimation-ai.json").write_text(
-        json.dumps({"cost_comparison": {"projected_bedrock_monthly": 50}, "current_costs": {"gcp_monthly_ai_spend": 80}}),
+        json.dumps(
+            {
+                "cost_comparison": {"projected_bedrock_monthly": 50},
+                "current_costs": {"gcp_monthly_ai_spend": 80},
+                "accuracy_confidence": "±5-10%",
+            }
+        ),
         encoding="utf-8",
     )
     result = _run(tmp_path)

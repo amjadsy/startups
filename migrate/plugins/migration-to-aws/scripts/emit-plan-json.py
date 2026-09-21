@@ -190,23 +190,19 @@ def _accuracy(data: dict) -> dict | None:
     return accuracy
 
 
-def _merge_accuracy(base: dict | None, other: dict | None) -> dict | None:
-    """Combine two accuracy bands into the widest envelope — a summed FULL plan is no
-    more precise than its looser half, so base-only would understate the uncertainty.
-    pricingSource is kept only when both agree; a single enum can't truthfully describe
-    two different pricing sources."""
-    if base is None:
-        return other
-    if other is None:
-        return base
-    merged: dict = {
-        "minPercent": min(base["minPercent"], other["minPercent"]),
-        "maxPercent": max(base["maxPercent"], other["maxPercent"]),
-    }
-    pricing = base.get("pricingSource")
-    if pricing is not None and pricing == other.get("pricingSource"):
-        merged["pricingSource"] = pricing
-    return merged
+def _looser_accuracy(a: dict, b: dict) -> dict:
+    """Return the LOOSER of two declared accuracy bands, carried WHOLE — never a
+    synthesized min/max. A combined plan then reports an uncertainty a producer
+    actually declared (e.g. the billing band must never be reported tighter than it
+    stated), instead of inventing a band neither estimate claimed. "Looser" is the
+    larger (maxPercent, then minPercent). pricingSource is kept only when both routes
+    declare the same source."""
+    looser = a if (a["maxPercent"], a["minPercent"]) >= (b["maxPercent"], b["minPercent"]) else b
+    result: dict = {"minPercent": looser["minPercent"], "maxPercent": looser["maxPercent"]}
+    pricing = a.get("pricingSource")
+    if pricing is not None and pricing == b.get("pricingSource"):
+        result["pricingSource"] = pricing
+    return result
 
 
 def _source_monthly(current_costs: object, source_platform: str) -> float | None:
@@ -344,16 +340,15 @@ def _billing_route(data: dict) -> tuple[float, float | None, list[dict]]:
     return aws, source, _billing_service_items(data.get("aws_projection"))
 
 
-def _ai_route(data: dict) -> tuple[float, float | None]:
-    """(awsMonthly, sourceMonthly-or-None) for an AI estimate. No per-service list."""
+def _ai_route(data: dict) -> float:
+    """The AI estimate's AWS (Bedrock) monthly figure. No per-service list, and its
+    source baseline is intentionally not read: it is not comparable with the infra/
+    billing baseline, so a combined run does not present a summed source total."""
     comparison = data.get("cost_comparison")
     aws = comparison.get("projected_bedrock_monthly") if isinstance(comparison, dict) else None
     if not _is_amount(aws):
         raise SkipEmit("no usable cost_comparison.projected_bedrock_monthly")
-    current = data.get("current_costs")
-    raw_source = current.get("gcp_monthly_ai_spend") if isinstance(current, dict) else None
-    source = raw_source if _is_usable_amount(raw_source) else None
-    return aws, source
+    return aws
 
 
 def build_plan(migration_dir: Path, plugin_json_path: Path) -> tuple[dict, str, str]:
@@ -388,10 +383,11 @@ def build_plan(migration_dir: Path, plugin_json_path: Path) -> tuple[dict, str, 
     billing_data = _load_route(migration_dir / "estimation-billing.json")
     ai_data = _load_route(migration_dir / "estimation-ai.json")
 
-    if infra_data is not None and billing_data is not None:
-        raise SkipEmit("both infra and billing estimates present (unexpected)")
-
-    # Base (non-AI) route: infra or billing.
+    # Base (non-AI) route: infra takes precedence over billing. Both files can
+    # legitimately coexist after a billing-only run re-enters with Terraform (the infra
+    # route rewrites estimation-infra.json but nothing removes the stale billing one),
+    # and infra is the authoritative estimate in that case — so prefer it rather than
+    # treating the pair as an error.
     base_data = infra_data if infra_data is not None else billing_data
     base_aws = base_source = base_basis = None
     base_items: list[dict] = []
@@ -402,22 +398,21 @@ def build_plan(migration_dir: Path, plugin_json_path: Path) -> tuple[dict, str, 
         base_aws, base_source, base_items = _billing_route(billing_data)
         base_basis = "BILLING_MID"
 
-    ai_aws = ai_source = None
-    if ai_data is not None:
-        ai_aws, ai_source = _ai_route(ai_data)
+    ai_aws = _ai_route(ai_data) if ai_data is not None else None
 
     if base_aws is None and ai_aws is None:
         raise SkipEmit("no cost estimate to hand off")
 
     if base_aws is not None and ai_aws is not None:
-        # Combined run: sum the two routes (the *_PLUS_AI_SUM basis names the operation)
+        # Combined run: sum the AWS figures (the *_PLUS_AI_SUM basis names the operation)
         # and add one Bedrock line for the AI figure, which has no per-service breakdown.
         scope = "FULL"
         basis = "INFRA_PLUS_AI_SUM" if infra_data is not None else "BILLING_MID_PLUS_AI_SUM"
         aws_monthly = base_aws + ai_aws
-        source_monthly = (
-            base_source + ai_source if base_source is not None and ai_source is not None else None
-        )
+        # The infra/billing baseline and the AI-spend baseline are not comparable (the
+        # plugin marks the combination "not comparable"), so their sources are NOT
+        # summed. Omit sourceMonthly on a mixed run; the AWS side is still summed.
+        source_monthly = None
         items = base_items + [
             {"serviceName": "Amazon Bedrock", "monthlyCost": ai_aws, "classification": "AI_ML"}
         ]
@@ -450,14 +445,15 @@ def build_plan(migration_dir: Path, plugin_json_path: Path) -> tuple[dict, str, 
         source_monthly = None  # optional — drop rather than sink the handoff
 
     # cost.accuracy is optional for infra-only/billing-only (emitted when present) and
-    # REQUIRED for a FULL import. For FULL, widen the base band to also cover the AI
-    # estimate's band so the summed plan doesn't understate its uncertainty; a FULL run
-    # with no derivable band is skipped rather than emitted and rejected.
+    # REQUIRED for a FULL import. A FULL plan must carry a band BOTH contributing routes
+    # declared, so require a usable band from each and keep the looser one whole; a run
+    # missing either can't state a trustworthy combined band, so skip it.
     accuracy = _accuracy(base_data) if isinstance(base_data, dict) else None
     if scope == "FULL":
-        accuracy = _merge_accuracy(accuracy, _accuracy(ai_data) if isinstance(ai_data, dict) else None)
-        if accuracy is None:
-            raise SkipEmit("FULL run has no usable accuracy band for cost.accuracy")
+        ai_accuracy = _accuracy(ai_data) if isinstance(ai_data, dict) else None
+        if accuracy is None or ai_accuracy is None:
+            raise SkipEmit("FULL run needs a usable accuracy band from both the base and AI estimates")
+        accuracy = _looser_accuracy(accuracy, ai_accuracy)
 
     plan: dict = {
         "schemaVersion": SCHEMA_VERSION,
