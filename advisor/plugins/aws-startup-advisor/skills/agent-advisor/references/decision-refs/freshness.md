@@ -8,6 +8,12 @@ or the run directory in an outbound request — the answer never depends on it.
 
 ## Fields to verify at runtime via the awsknowledge MCP
 
+- AgentCore platform V1/V2 behavior, V2-specific Regions, environment/startup limits, deployment
+  tooling, and version-specific CPU/memory prices (`platform_versions`, `v2_regions`,
+  `v2_constraints`, `microvms_pricing` in the runtime profile). Follow `agentcore-platform.md`.
+  Cached dates are source snapshots, never this run's verification. Unverified applicability
+  leaves V2 provisional; it does not automatically select V1.
+
 - AgentCore microVMs session cap (currently 8h) and Instances session cap (currently 14d)
 - AgentCore microVMs compute cap (2 vCPU / 8 GB; Instances lifts it via EC2 choice)
 - AgentCore / AgentCore Instances / Lambda MicroVMs region availability (Instances

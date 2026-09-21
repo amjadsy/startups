@@ -22,6 +22,8 @@ _preconditions:
   - _validate_json: [scoring-result.json, confirm.json, model-recommendation.json]
     _on_failure: _unrecoverable
 _postconditions:
+  - _assert: "Each effective AgentCore microVM unit has agentcore_platform per agentcore-platform.md, defaults to V2, and names an evidenced exception for V1; Instances and other effective runtimes have null; the primary record is mirrored at the top level; pending checks make the recommendation provisional. Runtime scores and compute-type routing are unchanged."
+    _on_failure: _halt_and_inform
   - _check_file_exists: design.json
     _on_failure: _halt_and_inform
   - _validate_json: design.json
@@ -81,18 +83,19 @@ all models.
 
 ## Step 4b — I/O-wait TCO differentiator (surface proactively)
 
-Most customers don't know AgentCore Runtime (and Harness) bill **$0 during I/O wait** (active
-CPU only). Surface this as a TCO advantage — WITHOUT adding a question — when it actually
+AgentCore microVMs charge for active CPU, with memory billed separately. When current-run
+evidence confirms this behavior, surface it as a TCO advantage — WITHOUT adding a question — when it actually
 matters: if `traffic_pattern` is `bursty` or `idle`, OR `session_state` is `hitl`, AND AgentCore
 is viable (winning runtime is `agentcore`, or it is in a `co_recommend` set, or it was not
 eliminated). Set `io_wait_tco_note = true` in design.json and include a short note for the doc,
-e.g.: "Your traffic is spiky / has human-in-the-loop waits — on AgentCore you pay nothing while
-the agent waits on the model or a human (active-CPU billing only), which is a real TCO edge vs
-always-on compute. Exact numbers come from the migration/pricing plugins." No dollar figures
+e.g.: "Your traffic has model or human waits: AgentCore charges no CPU fees when no CPU is
+consumed, while memory remains billable. V2 can reclaim unused memory during the session;
+savings depend on the workload and the selected platform's rates." No dollar figures
 here. If AgentCore is not viable, omit the note. **The note applies to the microVMs compute
 type only** — when `agentcore_compute_type` is `instances`, billing is EC2 in the user's
 account plus a management fee (an idle instance costs money unless the session is stopped),
-so omit the $0-I/O-wait claim and let the scoring warning carry the pricing caveat instead.
+so omit the active-CPU benefit and let the scoring warning carry the pricing caveat instead.
+If billing evidence is missing, leave `io_wait_tco_note = false` and record the check as pending.
 
 ## Step 4c — FedRAMP status (WIP, not a hard block)
 
@@ -292,6 +295,13 @@ POC dispatch) MUST read `unit.effective_runtime` as the deploy/cost/render targe
 (the `_assert` that verdict equals the workload-classes token still holds) AND
 `effective_runtime: "ecs"` (where it actually deploys). In a split run the two are equal.
 
+**AgentCore platform resolution:** after resolving `effective_runtime`, load
+`references/decision-refs/agentcore-platform.md` for each effective AgentCore unit. Write its
+`agentcore_platform` record (or null for Instances); other effective runtimes get null. Apply
+the V2 default and automatic applicability checks without changing scores or asking for a
+version preference. Append pending platform checks to `warnings` and set the design
+`recommendation_status` to `provisional`; preserve any provisional status from scoring.
+
 Each unit also carries its `coupling` object over from `context-signals.json.units[]` (verbatim
 — `{ "mode": "queue|api|a2a|none" }`), **falling back to `answers.json.units[<id>].coupling`
 when context-signals.json is absent** (a skipped-Discover run whose unit Clarify materialized —
@@ -311,7 +321,7 @@ interconnect value describes the system.
 
 **Legacy mirror (collapse + compatibility):** the primary unit (identified by
 `answers.json.primary_unit`, chosen in Clarify) has its verdict, chosen_runtime,
-deployment_model, agentcore_services, and model_recommendation ALSO written at design.json's top
+deployment_model, agentcore_services, agentcore_platform, and model_recommendation ALSO written at design.json's top
 level, exactly as today. The top-level `chosen_runtime` is the primary unit's RESOLVED runtime:
 `confirm.json.resolved_runtimes[primary_unit]` (== the co_recommend pick when the primary's
 verdict was co_recommend, else its plain verdict). It is always set — for a single-winner verdict
@@ -333,6 +343,7 @@ considered" and the "Eliminated" line (Generate reads design.json, not scoring-r
       "coupling": { "mode": "queue | api | a2a | none (carried over from context-signals.json.units[])" },
       "deployment_model": "...",
       "agentcore_compute_type": "microvms | instances | null (verbatim from this unit's scoring result; instances = capacity-provider EC2 — >8h/GPU/heavy/instance-type workloads)",
+      "agentcore_platform": {"version": "V2", "status": "pending", "reason": "...", "checks": []},
       "agentcore_services": [...],
       "model_recommendation": {...},
       "rationale": "...",
@@ -347,6 +358,7 @@ considered" and the "Eliminated" line (Generate reads design.json, not scoring-r
   },
   "verdict": "...", "chosen_runtime": "...", "deployment_model": "...",
   "agentcore_compute_type": "microvms | instances | null",
+  "agentcore_platform": "primary unit record, or null",
   "agentcore_services": [...], "model_recommendation": {...}, "warnings": [...],
   "scores": {...}, "eliminated": {...}, "blocking_constraints": [...],
   "volatile_facts": {"microvms_session_cap": {"value": "8h", "source": "mcp|cached"},
@@ -384,6 +396,6 @@ in Step 6, independent of `handoff_required`.)
 
 ## Maturity/readiness and provisional-verification extension
 
-Load `references/decision-refs/maturity-readiness.md` with the design inputs. Copy `target_maturity`, `readiness`, `recommendation_status`, and `deferred_verification_requirements` from the run artifacts into `design.json`, preserving the release and evaluation gates applicable to the tier. A `provisional` recommendation is not a launch approval: state the unresolved constraint, verification key, owner, and blocking decision explicitly.
+Load `references/decision-refs/maturity-readiness.md` with the design inputs. Copy `target_maturity`, `readiness`, and `deferred_verification_requirements` from the run artifacts into `design.json`, preserving the release and evaluation gates applicable to the tier. Preserve `recommendation_status` as provisional if either scoring or the platform applicability checks are pending; copying scoring status must not clear a pending platform check. A `provisional` recommendation is not a launch approval: state the unresolved constraint, verification key, owner, and blocking decision explicitly.
 
 This supersedes the unconditional statement in Step 4b: include an AgentCore I/O-wait billing advantage only if the sibling `$RUN_DIR/current-run-verifications.json` artifact is schema-valid, its `run_id` matches `$RUN_DIR`, and its `agentcore.io_wait_billing` record has `status: "verified"` with a source-backed observed value from this run. Never read or write verification evidence through `answers.json`. Without validated current-run evidence, say only that the billing behavior requires current verification and do not make a comparative billing claim.

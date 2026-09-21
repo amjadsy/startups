@@ -102,6 +102,15 @@ the POC "plan could not be applied — see aws-design-ai.json" in plan.md and th
 Key the trigger on `primary_pattern` (a schema'd, checklist-enforced field) — NOT on the
 `migration_path` string, whose value is free-form outside mantle/converse/gpt-oss.
 
+**AgentCore platform contract (all AgentCore branches):** load
+`references/decision-refs/agentcore-platform.md` and consume each unit's `agentcore_platform`.
+For older runs without it, return to Design to resolve it, then refresh Estimate/Generate before
+producing deployable artifacts. Do not infer V1 from absence. Before deployment, resolve pending
+checks against the actual generated code, complete environment, Region, and tooling. Record
+new evidence in Design and refresh the recommendation; if unresolved, generate the plan with a
+blocking TODO and an `exit 1` before resource creation in deploy.sh. This applies to 3-H, 3-F,
+and 3a–3e. When evidence changes the version, refresh Estimate/Generate and the plan as well.
+
 ## Step 2 — Resolve the Bedrock model id per unit (verify, don't guess)
 
 **For EACH unit** in `design.json.units[]` **whose `model_recommendation` is non-null**, resolve
@@ -557,8 +566,11 @@ if __name__ == "__main__":
   block naming the capacity-provider setup (create capacity provider → create runtime
   with compute type Instances → same invoke path). Verify current capacity-provider
   CLI/API usage via the awsknowledge MCP before writing that block (freshness rule).
-- A bash script that runs `agentcore configure` then
-  `agentcore launch --auto-update-on-conflict` (the project's standard launch invocation).
+- For a microVM target, copy `scripts/set_agentcore_platform.py` into the POC. After
+  `agentcore configure` / `agentcore launch`, use it to set and read back the planned platform.
+  Preserve the Instances functional-POC warning above: its microVM POC needs its own explicit
+  platform applicability check and cost note, never a V2 label on the Instances recommendation.
+  Do not run the helper against an actual Instances runtime.
 - **Guardrails baked into the script**: at the top, echo a clear warning that running it creates
   real AWS resources in the user's account and may incur cost; require an explicit
   `read -p "Type 'deploy' to continue: "` confirmation before any `agentcore` call.
@@ -567,7 +579,10 @@ if __name__ == "__main__":
   via the awsknowledge MCP (freshness rule). If not verified this run, keep the
   `# TODO: verify current agentcore CLI flags against AWS docs` comment above the commands.
 
-Use this template:
+Use this template for a verified microVM POC. Substitute `PLATFORM_VERSION` from the unit's
+Design record and `DEPLOY_REGION` from its checked target Region; neither is a new user prompt.
+Use a run-specific agent name. If the caller changes Region, re-run applicability checks before
+generating a new script. Verify toolkit flags/config paths against the installed version.
 
 ```bash
 #!/usr/bin/env bash
@@ -575,18 +590,36 @@ set -euo pipefail
 
 # ⚠️  This creates REAL resources in your AWS account and may incur charges.
 echo "This will deploy an AgentCore POC to AWS account: $(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo '<not logged in>')"
-echo "Region: ${AWS_REGION:-us-east-1}   Model: ${BEDROCK_MODEL_ID:-<MODEL_ID>}"
+echo "Region: ${AWS_REGION:-<verified-target-region>}   Model: ${BEDROCK_MODEL_ID:-<MODEL_ID>}"
 read -r -p "Type 'deploy' to continue: " CONFIRM
 [ "$CONFIRM" = "deploy" ] || { echo "Aborted."; exit 1; }
 
-export AWS_REGION="${AWS_REGION:-us-east-1}"
+# Invalidate evidence from an earlier attempt before beginning this deployment.
+rm -f runtime-verification.json
+DEPLOY_REGION="<verified-target-region>"
+PLATFORM_VERSION="V2"  # Replace with the unit's recorded version, including an evidenced V1 exception.
+[ "${AWS_REGION:-$DEPLOY_REGION}" = "$DEPLOY_REGION" ] || { echo "Region changed; recheck platform applicability."; exit 1; }
+export AWS_REGION="$DEPLOY_REGION"
 export BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-<MODEL_ID>}"
+AGENT_NAME="${AGENT_NAME:-poc-agent-<run_id>}"
 
+uv run --with boto3 python set_agentcore_platform.py --check-sdk
 # TODO: verify current agentcore CLI flags against AWS docs (awsknowledge MCP)
-agentcore configure --entrypoint agent.py --name "${AGENT_NAME:-poc-agent}"
-agentcore launch --auto-update-on-conflict --env AWS_REGION="$AWS_REGION" --env BEDROCK_MODEL_ID="$BEDROCK_MODEL_ID"
+agentcore configure --entrypoint agent.py --name "$AGENT_NAME" --region "$AWS_REGION"
+agentcore launch --agent "$AGENT_NAME" --auto-update-on-conflict --env AWS_REGION="$AWS_REGION" --env BEDROCK_MODEL_ID="$BEDROCK_MODEL_ID"
 
-echo "Deployed. Test with the curl in README.md. Tear down with: agentcore destroy  # TODO: verify"
+AGENT_RUNTIME_ID="$(uv run --with pyyaml python - "$AGENT_NAME" <<'PY'
+import pathlib, sys, yaml
+config = yaml.safe_load(pathlib.Path(".bedrock_agentcore.yaml").read_text())
+print(config["agents"][sys.argv[1]]["bedrock_agentcore"]["agent_id"])
+PY
+)"
+VERIFICATION="$(uv run --with boto3 python set_agentcore_platform.py \
+  --runtime-id "$AGENT_RUNTIME_ID" --region "$AWS_REGION" \
+  --platform-version "$PLATFORM_VERSION")"
+printf '%s\n' "$VERIFICATION" > runtime-verification.json
+cat runtime-verification.json
+echo "Platform verified. Run the smoke test in README.md. Tear down with: agentcore destroy --agent $AGENT_NAME"
 ```
 
 ### 3e. `README.md` — the POC runbook
@@ -599,8 +632,9 @@ and may incur charges."** Then:
 - **Prerequisites:** AWS credentials configured, target region, `uv`, the `agentcore` CLI
   installed, model access enabled for the resolved Bedrock model.
 - **Deploy:** `./deploy.sh` (one command).
-- **Test after deploy:** a sample `curl`/CLI call to `/invocations` with a prompt, and the
-  expected shape of the response.
+- **Test after deploy:** confirm `runtime-verification.json` has `READY` and the planned
+  platform before a sample `curl`/CLI call to `/invocations` with a prompt. For V2, also test
+  new sessions, idle-then-invoke, and credential refresh where applicable per agentcore-platform.md.
 - **Tear down:** how to remove the POC (the `agentcore` destroy/delete path) so the user doesn't
   leave resources running — mark the exact command `TODO: verify` if not MCP-checked.
 - **Cost note:** POC-scale resources are small but non-zero; point to the recommendation doc's
@@ -633,7 +667,9 @@ mandatory; no step may be skipped or reordered:**
    pass them explicitly (`--region`, `--profile`) on every subsequent AWS command.
 2. **Command boundary.** Execute ONLY the commands present in the generated `deploy.sh`
    (e.g. `agentcore configure`, `agentcore launch`) plus read-only verification calls
-   (`/ping`, `aws sts get-caller-identity`, describe/list). Anything else — ad-hoc resource
+   (`/ping`, `aws sts get-caller-identity`, describe/list). The generated platform helper
+   may update only the runtime created by this POC; record the update/version in the ledger
+   and apply the same per-step confirmation. Anything else — ad-hoc resource
    creation, VPC/network changes, modifying or deleting resources this run did not create —
    is out of bounds.
 3. **Per-step confirmation.** Before each resource-creating or billable command: show the
