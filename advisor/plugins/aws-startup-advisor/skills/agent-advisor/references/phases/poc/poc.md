@@ -581,8 +581,11 @@ if __name__ == "__main__":
 
 Use this template for a verified microVM POC. Substitute `PLATFORM_VERSION` from the unit's
 Design record and `DEPLOY_REGION` from its checked target Region; neither is a new user prompt.
-Use a run-specific agent name. If the caller changes Region, re-run applicability checks before
-generating a new script. Verify toolkit flags/config paths against the installed version.
+Use a run-specific agent name; normalize hyphens in the default run ID to underscores and
+validate any explicit name against the toolkit's 1–48 character contract. Use the final name
+consistently for configure, launch, config lookup, and teardown. If the caller changes Region,
+re-run applicability checks before generating a new script. Verify toolkit flags/config paths
+against the installed version.
 
 ```bash
 #!/usr/bin/env bash
@@ -601,7 +604,13 @@ PLATFORM_VERSION="V2"  # Replace with the unit's recorded version, including an 
 [ "${AWS_REGION:-$DEPLOY_REGION}" = "$DEPLOY_REGION" ] || { echo "Region changed; recheck platform applicability."; exit 1; }
 export AWS_REGION="$DEPLOY_REGION"
 export BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-<MODEL_ID>}"
-AGENT_NAME="${AGENT_NAME:-poc-agent-<run_id>}"
+DEFAULT_AGENT_NAME="poc_agent_<run_id>"
+DEFAULT_AGENT_NAME="${DEFAULT_AGENT_NAME//-/_}"
+AGENT_NAME="${AGENT_NAME:-$DEFAULT_AGENT_NAME}"
+if [[ ! "$AGENT_NAME" =~ ^[a-zA-Z][a-zA-Z0-9_]{0,47}$ ]]; then
+  echo "Invalid agent name: use 1-48 letters, numbers, or underscores, starting with a letter."
+  exit 1
+fi
 
 uv run --with boto3 python set_agentcore_platform.py --check-sdk
 # TODO: verify current agentcore CLI flags against AWS docs (awsknowledge MCP)
@@ -678,8 +687,9 @@ mandatory; no step may be skipped or reordered:**
    `$RUN_DIR/poc/created-resources.json` BEFORE running its create command
    (`{"type": ..., "name": ..., "region": ..., "status": "pending"}`), then update
    `"status": "created"` after — a crash between create and record must not orphan an
-   untracked resource. On the code path, all resource names carry the run id suffix (e.g.
-   `poc-agent-<run_id>`) for idempotency and safe teardown matching. On the Harness path,
+   untracked resource. On the code path, generated runtime names carry the normalized run ID
+   suffix (e.g. `poc_agent_0921_1530`); record the final validated name for safe teardown
+   matching, including when the user supplies an explicit name. On the Harness path,
    the CLI names resources itself (project/agent name + generated suffix) — do not promise
    run-id suffixes; instead record the actual names/ARNs (and the CloudFormation stack name)
    in the ledger after deploy, and make those the teardown match keys.
