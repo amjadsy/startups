@@ -450,11 +450,25 @@ _CENTS_MEANINGFUL_BELOW = 2
 # together ("ALB $22 + NAT $33 for VPC-attached Fargate/RDS") or the
 # calculated monthly RESULT of the shown arithmetic ("... = $12,008.50/mo")
 # — neither of those is itself a per-unit rate, and both must still be held
-# to the whole-dollar rule. Only the operand immediately followed by a
-# multiplication marker (×, "x", or "times") is exempt; scope the exemption
-# to that operand specifically, not the whole cell.
+# to the whole-dollar rule. Only an operand actually adjacent to a
+# multiplication marker (×, "x", or "times") — on EITHER side, since the
+# rate can be the left or right operand ("1 vCPU × $0.04048" vs.
+# "511 hrs × $23.50") — is exempt; scope the exemption to that operand
+# specifically, not the whole cell.
+#
+# The bare "x" alternative must not match a capital "X" that merely opens an
+# unrelated word like "X-Ray": a plain \b is satisfied by the letter/hyphen
+# boundary there, so the marker additionally requires either end-of-string
+# or a following separator (whitespace, "$", or a digit) that actually looks
+# like the start of the other operand, never a letter/hyphen continuing a
+# service name.
 _CALC_NOTES_HEADER_RE = re.compile(r"calculation|\bnotes\b", re.IGNORECASE)
-_CALC_RATE_OPERAND_RE = re.compile(r"^\s*(?:×|\bx\b|\btimes\b)", re.IGNORECASE)
+_CALC_RATE_OPERAND_TRAILING_RE = re.compile(
+    r"^\s*(?:×|times\b|x(?=\s|$|[$0-9]))", re.IGNORECASE
+)
+_CALC_RATE_OPERAND_LEADING_RE = re.compile(
+    r"(?:×|\btimes|(?<=[\s0-9])x)\s*$", re.IGNORECASE
+)
 
 
 class _DecodedTextRunParser(HTMLParser):
@@ -636,14 +650,27 @@ def _validate_currency_formatting(html: str) -> list[str]:
         trailing = text[match.end():cutoff]
         if _RATE_SUFFIX_RE.match(trailing):
             continue
-        # In a Calculation/Notes cell, ONLY a figure immediately followed by
+        # In a Calculation/Notes cell, ONLY a figure immediately adjacent to
         # a multiplication marker (×, "x", "times") is a rate operand and
         # exempt — a component amount being summed ("ALB $22 + NAT $33") or
         # the calculated monthly result ("= $12,008.50/mo") in the SAME cell
         # is not itself a rate and must still be held to the whole-dollar
-        # rule, even though the cell as a whole is rate context.
-        if any(calc_mask[match.start():match.end()]) and _CALC_RATE_OPERAND_RE.match(trailing):
-            continue
+        # rule, even though the cell as a whole is rate context. The rate
+        # can appear as either operand of the multiplication ("$0.04048 ×
+        # 511 hrs" or "511 hrs × $23.50"), so both a trailing marker
+        # (checked above the figure) and a leading marker (checked below,
+        # from the previous boundary up to the figure) qualify.
+        if any(calc_mask[match.start():match.end()]):
+            if _CALC_RATE_OPERAND_TRAILING_RE.match(trailing):
+                continue
+            lead_start = 0
+            for boundary in reversed(boundaries):
+                if boundary <= match.start():
+                    lead_start = boundary
+                    break
+            leading = text[max(lead_start, match.start() - 25):match.start()]
+            if _CALC_RATE_OPERAND_LEADING_RE.search(leading):
+                continue
         token = match.group(0)
         if token in seen:
             continue

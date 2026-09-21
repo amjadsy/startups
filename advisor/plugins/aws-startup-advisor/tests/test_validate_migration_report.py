@@ -1576,6 +1576,48 @@ def test_calc_notes_column_calculated_monthly_result_still_flagged(
     assert "$23.50" not in out
 
 
+def test_calc_notes_column_rate_operand_before_marker_not_flagged(
+    tmp_path: Path,
+) -> None:
+    # Regression: the rate can be the RIGHT operand of the multiplication
+    # ("511 hrs × $23.50"), not only the left ("$23.50 × 511 hrs"). The
+    # exemption originally checked only for a multiplication marker TRAILING
+    # the figure, so a rate written as "<quantity> × $<rate>" was wrongly
+    # flagged. A rate operand preceded by × (or x / times) in the
+    # Calculation/Notes column must pass, exactly like the trailing-marker
+    # form does.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "1 vCPU &times; $0.04048 &times; 511 hrs",
+        "511 hrs &times; $23.50",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 0, out
+    assert "currency formatting" not in out
+
+
+def test_calc_notes_column_capital_x_in_word_not_treated_as_marker(
+    tmp_path: Path,
+) -> None:
+    # Regression: the bare "x" multiplication-marker alternative matched the
+    # capital "X" that merely opens an unrelated service name like "X-Ray",
+    # wrongly exempting an adjacent summed component amount ("$1 + $22.49
+    # X-Ray tracing") as if $22.49 were a rate operand. A capital X that
+    # continues a word (followed by a letter or hyphen, not whitespace/a
+    # digit/"$") is not a multiplication marker, so the summed component
+    # amount must still be flagged.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        "ALB $22 + NAT $33 for VPC-attached Fargate/RDS",
+        "Logs $1 + $22.49 X-Ray tracing",
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert "$22.49" in out
+
+
 def test_same_rate_figure_outside_calculation_column_still_flagged(tmp_path: Path) -> None:
     # Control for the above: the SAME rate figure, in a Monthly Cost cell
     # (NOT the Calculation/Notes column), must still be flagged — the
