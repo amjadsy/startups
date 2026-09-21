@@ -79,11 +79,14 @@ _TEMP_SUFFIX = ".json.tmp"
 # abandoned by a crashed run and safe to reclaim without racing a live writer.
 _ORPHAN_TEMP_AGE_S = 3600
 
-# The current-cost key each platform writes. Checked first so an extra *_monthly
-# field in current_costs can't be copied into sourceMonthly by accident.
-PLATFORM_SOURCE_KEY = {
-    "GCP": "gcp_monthly",
-    "HEROKU": "heroku_monthly",
+# Where each platform's source-monthly baseline lives in its infra estimate, as
+# (container, field). The location differs by skill: GCP writes current_costs.gcp_monthly;
+# Heroku writes its baseline under cost_comparison.heroku_monthly_baseline (its
+# current_costs holds only source/accuracy metadata, not a number). Reading only the
+# platform's own field keeps an unrelated number from being copied by accident.
+PLATFORM_SOURCE_FIELD = {
+    "GCP": ("current_costs", "gcp_monthly"),
+    "HEROKU": ("cost_comparison", "heroku_monthly_baseline"),
 }
 
 # The plugin's pricing_source.status values -> the web contract's pricingSource enum.
@@ -205,22 +208,19 @@ def _looser_accuracy(a: dict, b: dict) -> dict:
     return result
 
 
-def _source_monthly(current_costs: object, source_platform: str) -> float | None:
-    """The numeric monthly source-platform cost if present, else None.
-
-    `current_costs` carries a skill-specific key (e.g. gcp_monthly / heroku_monthly)
-    and may instead mark the baseline unavailable (no billing access), in which case
-    there is no number to copy and sourceMonthly is omitted. The platform's own key
-    is preferred so an unrelated *_monthly field can't be copied by accident.
-    """
-    if not isinstance(current_costs, dict):
+def _source_monthly(data: dict, source_platform: str) -> float | None:
+    """The infra estimate's monthly source-platform baseline, or None. Reads ONLY the
+    platform's own field (see PLATFORM_SOURCE_FIELD) — the baseline may be absent (no
+    billing access), in which case sourceMonthly is omitted, and honoring one field
+    keeps an unrelated number from being copied by accident."""
+    location = PLATFORM_SOURCE_FIELD.get(source_platform)
+    if location is None:
         return None
-    # Honor ONLY the platform's own key. No fallback to any other *_monthly field:
-    # copying an unrelated one (e.g. support_monthly) would fabricate a source figure.
-    preferred = PLATFORM_SOURCE_KEY.get(source_platform)
-    if preferred and _is_usable_amount(current_costs.get(preferred)):
-        return current_costs[preferred]
-    return None
+    container = data.get(location[0])
+    if not isinstance(container, dict):
+        return None
+    value = container.get(location[1])
+    return value if _is_usable_amount(value) else None
 
 
 def _service_items(projected: object) -> list[dict]:
@@ -326,7 +326,7 @@ def _infra_route(data: dict, source_platform: str) -> tuple[float, float | None,
     aws = projected.get("aws_monthly_balanced") if isinstance(projected, dict) else None
     if not _is_amount(aws):
         raise SkipEmit("no usable projected_costs.aws_monthly_balanced")
-    return aws, _source_monthly(data.get("current_costs"), source_platform), _service_items(projected)
+    return aws, _source_monthly(data, source_platform), _service_items(projected)
 
 
 def _billing_route(data: dict) -> tuple[float, float | None, list[dict]]:
@@ -441,8 +441,8 @@ def build_plan(migration_dir: Path, plugin_json_path: Path) -> tuple[dict, str, 
     # missing/malformed value: a real total that merely exceeds the cap.
     if aws_monthly > MAX_USD_AMOUNT:
         raise SkipEmit("total AWS monthly exceeds the supported maximum")
-    if source_monthly is not None and source_monthly > MAX_USD_AMOUNT:
-        source_monthly = None  # optional — drop rather than sink the handoff
+    # sourceMonthly needs no cap re-check here: it is already cap-filtered by
+    # _is_usable_amount in the route extractor, and FULL runs omit it entirely.
 
     # cost.accuracy is optional for infra-only/billing-only (emitted when present) and
     # REQUIRED for a FULL import. A FULL plan must carry a band BOTH contributing routes

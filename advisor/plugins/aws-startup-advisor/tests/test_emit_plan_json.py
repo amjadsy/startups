@@ -31,6 +31,7 @@ def _seed(
     current_costs: object = {"gcp_monthly": 165},
     accuracy_confidence: str | None = None,
     pricing_source: object = None,
+    cost_comparison: object = None,
 ) -> None:
     """Write a minimal .phase-status.json + estimation-infra.json into the dir."""
     status: dict = {"migration_id": "0226-1430", "last_updated": "2026-02-26T14:30:00Z", "phases": {"generate": "completed"}}
@@ -49,6 +50,8 @@ def _seed(
         infra["accuracy_confidence"] = accuracy_confidence
     if pricing_source is not None:
         infra["pricing_source"] = pricing_source
+    if cost_comparison is not None:
+        infra["cost_comparison"] = cost_comparison
     (migration_dir / "estimation-infra.json").write_text(json.dumps(infra), encoding="utf-8")
 
 
@@ -200,7 +203,14 @@ def test_omits_service_items_when_breakdown_empty(tmp_path: Path) -> None:
 
 
 def test_heroku_maps_to_heroku_infra(tmp_path: Path) -> None:
-    _seed(tmp_path, owning_skill="HEROKU_TO_AWS", current_costs={"heroku_monthly": 90})
+    # Heroku's monthly baseline lives under cost_comparison.heroku_monthly_baseline,
+    # NOT current_costs.heroku_monthly — that's where the source figure comes from.
+    _seed(
+        tmp_path,
+        owning_skill="HEROKU_TO_AWS",
+        current_costs={"source": "billing_data"},
+        cost_comparison={"heroku_monthly_baseline": 90},
+    )
     result = _run(tmp_path)
 
     plan = json.loads((tmp_path / "plan.json").read_text())
@@ -209,12 +219,14 @@ def test_heroku_maps_to_heroku_infra(tmp_path: Path) -> None:
     assert plan["cost"]["sourceMonthly"] == 90
 
 
-def test_omits_source_monthly_when_baseline_unavailable(tmp_path: Path) -> None:
-    # Heroku with no billing access: current_costs marks it unavailable, no number.
+def test_heroku_source_omitted_when_no_baseline(tmp_path: Path) -> None:
+    # No cost_comparison baseline (e.g. no billing access) -> sourceMonthly omitted,
+    # but the plan still emits with the AWS estimate.
     _seed(tmp_path, owning_skill="HEROKU_TO_AWS", current_costs={"source": "unavailable"})
     result = _run(tmp_path)
 
     plan = json.loads((tmp_path / "plan.json").read_text())
+    assert plan["sourcePlatform"] == "HEROKU"
     assert "sourceMonthly" not in plan["cost"]
     assert plan["cost"]["awsMonthly"] == 112
 
@@ -561,6 +573,47 @@ def test_heroku_plus_ai_is_skipped_as_invalid_combo(tmp_path: Path) -> None:
 
     assert result.stdout.startswith("PLAN_SKIP |")
     assert not (tmp_path / "plan.json").exists()
+
+
+def test_full_skipped_when_summed_aws_exceeds_cap(tmp_path: Path) -> None:
+    # Each route is under the cap, but the FULL sum crosses it — the sum is the only
+    # place the cap applies to a combined total, so this must skip.
+    _seed(tmp_path, projected={"aws_monthly_balanced": 90_000_000}, accuracy_confidence="±5-10%")
+    (tmp_path / "estimation-ai.json").write_text(
+        json.dumps(
+            {
+                "cost_comparison": {"projected_bedrock_monthly": 20_000_000},
+                "current_costs": {"gcp_monthly_ai_spend": 1},
+                "accuracy_confidence": "±15-25%",
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = _run(tmp_path)
+
+    assert result.returncode == 0
+    assert result.stdout.startswith("PLAN_SKIP |")
+    assert "exceeds" in result.stdout
+    assert not (tmp_path / "plan.json").exists()
+
+
+def test_accuracy_band_parsing_edge_cases(tmp_path: Path) -> None:
+    # INFRA_ONLY makes accuracy optional, so each case shows the parse result directly:
+    # a swapped band normalizes; anything unparseable/out-of-range omits the field.
+    cases = {
+        "swapped": ("±40-30%", {"minPercent": 30, "maxPercent": 40}),
+        "words": ("unknown", None),
+        "empty": ("", None),
+        "no_percent": ("30", None),
+        "out_of_range": ("±150%", None),
+    }
+    for name, (band, expected) in cases.items():
+        run_dir = tmp_path / name
+        run_dir.mkdir()
+        _seed(run_dir, accuracy_confidence=band)
+        _run(run_dir)
+        plan = json.loads((run_dir / "plan.json").read_text())
+        assert plan["cost"].get("accuracy") == expected, name
 
 
 def test_accuracy_single_value_band_and_stale_cache(tmp_path: Path) -> None:
