@@ -10,8 +10,13 @@ Fail-open by design: any missing or unreadable input leaves the migration
 successful, writes no file, prints the reason, and stays re-runnable. A missed
 handoff must never cost a customer their migration result.
 
-Scope: GCP and Heroku infra runs (the two skills that persist a cost estimate).
-The OpenAI/LLM-to-Bedrock path has no persisted cost artifact and is a follow-up.
+Cost routes: a run costs its work as infra (`estimation-infra.json`), billing-only
+(`estimation-billing.json`, the no-IaC fallback), and/or AI (`estimation-ai.json`,
+which runs independently and can accompany infra or billing). The route(s) present
+decide scope and basis: infra/billing alone -> INFRA_ONLY; a base route + AI -> FULL
+(the two figures summed). A standalone AI-only run is deferred — the contract only
+accepts AI_ONLY with sourcePlatform OPENAI, and the LLM-to-Bedrock path persists no
+cost file, so a GCP AI-only run has no valid mapping yet.
 
 Usage:
   python3 scripts/emit-plan-json.py --migration-dir <dir>
@@ -19,6 +24,8 @@ Usage:
 Reads:
   <dir>/.phase-status.json              run_id, owning_skill
   <dir>/estimation-infra.json           projected_costs.aws_monthly_balanced, current_costs.*
+  <dir>/estimation-billing.json         cost_comparison.aws_monthly_mid / .gcp_monthly, aws_projection.services[]
+  <dir>/estimation-ai.json              cost_comparison.projected_bedrock_monthly, current_costs.gcp_monthly_ai_spend
   <PLUGIN_ROOT>/.claude-plugin/plugin.json   version
 
 Writes:
@@ -36,6 +43,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
 import tempfile
 import time
@@ -55,10 +63,6 @@ SKILL_TO_PLATFORM = {
     "GCP_TO_AWS": "GCP",
     "HEROKU_TO_AWS": "HEROKU",
 }
-
-# We copy the "balanced" AWS scenario (projected_costs.aws_monthly_balanced), so the
-# basis the web contract records for that figure is BALANCED.
-AWS_MONTHLY_BASIS = "BALANCED"
 
 # Bounds the strict web import contract enforces. Mirrored here so an out-of-bounds
 # value is dropped (or the handoff fails open) locally rather than being emitted and
@@ -80,6 +84,24 @@ _ORPHAN_TEMP_AGE_S = 3600
 PLATFORM_SOURCE_KEY = {
     "GCP": "gcp_monthly",
     "HEROKU": "heroku_monthly",
+}
+
+# The plugin's pricing_source.status values -> the web contract's pricingSource enum.
+# (A "cached" status with fallback_staleness.is_stale is mapped to CACHED_STALE below.)
+PRICING_SOURCE_MAP = {
+    "cached": "CACHED",
+    "cached_fallback": "CACHED_FALLBACK",
+    "live": "LIVE",
+    "unavailable": "UNAVAILABLE",
+}
+
+# Which scopes the ImportPlan handler accepts per sourcePlatform. Mirrored here so the
+# writer never emits a (platform, scope) the import would reject. All combos reachable
+# today are valid; this guards against a future route change silently producing one.
+VALID_SCOPES_BY_PLATFORM = {
+    "GCP": {"INFRA_ONLY", "FULL"},
+    "HEROKU": {"INFRA_ONLY"},
+    "OPENAI": {"AI_ONLY"},
 }
 
 
@@ -123,6 +145,70 @@ def _import_str_len(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2
 
 
+def _pricing_source(raw: object) -> str | None:
+    """Map the plugin's pricing_source to the web pricingSource enum, or None. `raw` is
+    an object with a `status` (infra) or a plain string (billing/AI). A cached status
+    flagged stale becomes CACHED_STALE."""
+    if isinstance(raw, dict):
+        status = raw.get("status")
+        staleness = raw.get("fallback_staleness")
+        if status == "cached" and isinstance(staleness, dict) and staleness.get("is_stale") is True:
+            return "CACHED_STALE"
+    elif isinstance(raw, str):
+        status = raw
+    else:
+        return None
+    return PRICING_SOURCE_MAP.get(status)
+
+
+def _accuracy(data: dict) -> dict | None:
+    """The cost.accuracy object for a route, or None if not derivable. Parses the
+    `accuracy_confidence` band string (e.g. "±5-10%", "±30%") into integer
+    minPercent/maxPercent and maps the route's pricing_source to pricingSource."""
+    text = data.get("accuracy_confidence")
+    if not isinstance(text, str):
+        return None
+    # Anchor on the "%" band ("±5-10%", "±30%") so a stray number elsewhere in the
+    # string can't be mistaken for a percentage.
+    match = re.search(r"(\d+(?:\.\d+)?)\s*(?:-\s*(\d+(?:\.\d+)?))?\s*%", text)
+    if match is None:
+        return None
+    low = round(float(match.group(1)))
+    high = round(float(match.group(2))) if match.group(2) else low
+    if low > high:
+        low, high = high, low
+    if not (0 <= low <= 100 and 0 <= high <= 100):
+        return None
+    accuracy: dict = {"minPercent": low, "maxPercent": high}
+    # pricing_source is top-level (infra object / AI string) or under metadata (billing).
+    raw = data.get("pricing_source")
+    if raw is None and isinstance(data.get("metadata"), dict):
+        raw = data["metadata"].get("pricing_source")
+    pricing = _pricing_source(raw)
+    if pricing is not None:
+        accuracy["pricingSource"] = pricing
+    return accuracy
+
+
+def _merge_accuracy(base: dict | None, other: dict | None) -> dict | None:
+    """Combine two accuracy bands into the widest envelope — a summed FULL plan is no
+    more precise than its looser half, so base-only would understate the uncertainty.
+    pricingSource is kept only when both agree; a single enum can't truthfully describe
+    two different pricing sources."""
+    if base is None:
+        return other
+    if other is None:
+        return base
+    merged: dict = {
+        "minPercent": min(base["minPercent"], other["minPercent"]),
+        "maxPercent": max(base["maxPercent"], other["maxPercent"]),
+    }
+    pricing = base.get("pricingSource")
+    if pricing is not None and pricing == other.get("pricingSource"):
+        merged["pricingSource"] = pricing
+    return merged
+
+
 def _source_monthly(current_costs: object, source_platform: str) -> float | None:
     """The numeric monthly source-platform cost if present, else None.
 
@@ -152,9 +238,9 @@ def _service_items(projected: object) -> list[dict]:
     figure is read. The "total" rollup row, any entry with no usable amount, and any
     name over the contract length are skipped; GCP runs may carry an empty breakdown.
 
-    classification is INFRASTRUCTURE — always correct here because this writer only
-    emits INFRA_ONLY runs (AI-inclusive runs are skipped upstream), so it is implied
-    by the scope, not generated. `category` is not persisted, so it is omitted.
+    classification is INFRASTRUCTURE — every row in an infra/billing breakdown is an
+    infrastructure service; the single AI line for a combined run is added by the
+    caller with AI_ML. `category` is not persisted, so it is omitted.
     """
     if not isinstance(projected, dict):
         return []
@@ -200,15 +286,81 @@ def _service_items(projected: object) -> list[dict]:
     return items
 
 
+def _billing_service_items(aws_projection: object) -> list[dict]:
+    """Per-service line items from a billing estimate's `aws_projection.services[]` (a
+    list, unlike the infra breakdown). Each service carries `aws_target` (name) and
+    `aws_mid` (mid monthly cost); same bounds and skips as the infra items."""
+    if not isinstance(aws_projection, dict):
+        return []
+    services = aws_projection.get("services")
+    if not isinstance(services, list):
+        return []
+    items: list[dict] = []
+    for svc in services:
+        if not isinstance(svc, dict):
+            continue
+        cost = svc.get("aws_mid")
+        if not _is_usable_amount(cost):
+            continue
+        name = svc.get("aws_target")
+        if not isinstance(name, str):
+            continue
+        name = name.strip()
+        if not name or name.lower() == "total" or _import_str_len(name) > MAX_SERVICE_NAME_LEN:
+            continue
+        items.append({"serviceName": name, "monthlyCost": cost, "classification": "INFRASTRUCTURE"})
+    return items
+
+
+def _load_route(path: Path) -> dict | None:
+    """Load a cost artifact if present: the dict when present, None when absent, and
+    SkipEmit when present but not a JSON object. JSON/decode errors propagate to main's
+    fail-open handler (they don't destroy a prior plan)."""
+    if not path.is_file():
+        return None
+    data = _load_json(path)
+    if not isinstance(data, dict):
+        raise SkipEmit(f"{path.name} is not a JSON object")
+    return data
+
+
+def _infra_route(data: dict, source_platform: str) -> tuple[float, float | None, list[dict]]:
+    """(awsMonthly, sourceMonthly-or-None, service items) for an infra estimate."""
+    projected = data.get("projected_costs")
+    aws = projected.get("aws_monthly_balanced") if isinstance(projected, dict) else None
+    if not _is_amount(aws):
+        raise SkipEmit("no usable projected_costs.aws_monthly_balanced")
+    return aws, _source_monthly(data.get("current_costs"), source_platform), _service_items(projected)
+
+
+def _billing_route(data: dict) -> tuple[float, float | None, list[dict]]:
+    """(awsMonthly, sourceMonthly-or-None, service items) for a billing-only estimate."""
+    comparison = data.get("cost_comparison")
+    aws = comparison.get("aws_monthly_mid") if isinstance(comparison, dict) else None
+    if not _is_amount(aws):
+        raise SkipEmit("no usable cost_comparison.aws_monthly_mid")
+    raw_source = comparison.get("gcp_monthly") if isinstance(comparison, dict) else None
+    source = raw_source if _is_usable_amount(raw_source) else None
+    return aws, source, _billing_service_items(data.get("aws_projection"))
+
+
+def _ai_route(data: dict) -> tuple[float, float | None]:
+    """(awsMonthly, sourceMonthly-or-None) for an AI estimate. No per-service list."""
+    comparison = data.get("cost_comparison")
+    aws = comparison.get("projected_bedrock_monthly") if isinstance(comparison, dict) else None
+    if not _is_amount(aws):
+        raise SkipEmit("no usable cost_comparison.projected_bedrock_monthly")
+    current = data.get("current_costs")
+    raw_source = current.get("gcp_monthly_ai_spend") if isinstance(current, dict) else None
+    source = raw_source if _is_usable_amount(raw_source) else None
+    return aws, source
+
+
 def build_plan(migration_dir: Path, plugin_json_path: Path) -> tuple[dict, str, str]:
     """Build the plan dict from validated artifacts, or raise SkipEmit to fail open."""
     status_path = migration_dir / ".phase-status.json"
-    infra_path = migration_dir / "estimation-infra.json"
-
     if not status_path.is_file():
         raise SkipEmit("no .phase-status.json in migration dir")
-    if not infra_path.is_file():
-        raise SkipEmit("no estimation-infra.json (no cost estimate to hand off)")
 
     status = _load_json(status_path)
     if not isinstance(status, dict):
@@ -221,15 +373,6 @@ def build_plan(migration_dir: Path, plugin_json_path: Path) -> tuple[dict, str, 
     if source_platform is None:
         raise SkipEmit(f"owning_skill {owning_skill!r} has no web handoff yet")
 
-    # Scope reflects what the run actually costed. A run that also costed AI
-    # (estimation-ai.json present) is FULL or AI_ONLY, and its awsMonthly must fold
-    # in the Bedrock cost under a *_PLUS_AI_SUM basis — that merge is a follow-up.
-    # This writer emits only the pure-infra case, so skip any AI-inclusive run
-    # rather than mislabel it INFRA_ONLY with an infra-only cost.
-    if (migration_dir / "estimation-ai.json").is_file():
-        raise SkipEmit("AI-inclusive run (FULL/AI_ONLY) — infra-only handoff is a follow-up")
-    scope = "INFRA_ONLY"
-
     # runId carries the attribution the handoff exists for; without it there is
     # nothing to hand off, so fail open rather than write an unattributable plan.
     # Must be a non-empty string: a numeric/other run_id would be copied verbatim and
@@ -238,17 +381,83 @@ def build_plan(migration_dir: Path, plugin_json_path: Path) -> tuple[dict, str, 
     if not isinstance(run_id, str) or not run_id.strip():
         raise SkipEmit("no usable run_id in .phase-status.json")
 
-    infra = _load_json(infra_path)
-    if not isinstance(infra, dict):
-        raise SkipEmit("estimation-infra.json is not a JSON object")
-    projected = infra.get("projected_costs")
-    aws_monthly = projected.get("aws_monthly_balanced") if isinstance(projected, dict) else None
-    if not _is_amount(aws_monthly):
-        raise SkipEmit("no usable projected_costs.aws_monthly_balanced")
-    # Distinct from the missing/malformed case above: a real figure that merely
-    # exceeds the contract cap, so an on-call reader isn't sent hunting for corruption.
+    # Read whichever cost artifacts the run produced. infra and billing are mutually
+    # exclusive (billing is the no-IaC fallback); AI runs independently and may
+    # accompany either. The route(s) present decide scope, basis and the totals.
+    infra_data = _load_route(migration_dir / "estimation-infra.json")
+    billing_data = _load_route(migration_dir / "estimation-billing.json")
+    ai_data = _load_route(migration_dir / "estimation-ai.json")
+
+    if infra_data is not None and billing_data is not None:
+        raise SkipEmit("both infra and billing estimates present (unexpected)")
+
+    # Base (non-AI) route: infra or billing.
+    base_data = infra_data if infra_data is not None else billing_data
+    base_aws = base_source = base_basis = None
+    base_items: list[dict] = []
+    if infra_data is not None:
+        base_aws, base_source, base_items = _infra_route(infra_data, source_platform)
+        base_basis = "BALANCED"
+    elif billing_data is not None:
+        base_aws, base_source, base_items = _billing_route(billing_data)
+        base_basis = "BILLING_MID"
+
+    ai_aws = ai_source = None
+    if ai_data is not None:
+        ai_aws, ai_source = _ai_route(ai_data)
+
+    if base_aws is None and ai_aws is None:
+        raise SkipEmit("no cost estimate to hand off")
+
+    if base_aws is not None and ai_aws is not None:
+        # Combined run: sum the two routes (the *_PLUS_AI_SUM basis names the operation)
+        # and add one Bedrock line for the AI figure, which has no per-service breakdown.
+        scope = "FULL"
+        basis = "INFRA_PLUS_AI_SUM" if infra_data is not None else "BILLING_MID_PLUS_AI_SUM"
+        aws_monthly = base_aws + ai_aws
+        source_monthly = (
+            base_source + ai_source if base_source is not None and ai_source is not None else None
+        )
+        items = base_items + [
+            {"serviceName": "Amazon Bedrock", "monthlyCost": ai_aws, "classification": "AI_ML"}
+        ]
+    elif base_aws is not None:
+        # Infra-only or billing-only.
+        scope, basis, aws_monthly, source_monthly, items = (
+            "INFRA_ONLY",
+            base_basis,
+            base_aws,
+            base_source,
+            base_items,
+        )
+    else:
+        # AI-only. sourcePlatform here is GCP/HEROKU, but the contract only accepts
+        # AI_ONLY with sourcePlatform OPENAI (and the LLM-to-Bedrock path persists no
+        # cost file), so a GCP AI-only run has no valid mapping yet — defer rather than
+        # emit a plan the import would reject.
+        raise SkipEmit("AI-only run has no valid web mapping yet (deferred)")
+
+    # Never emit a (platform, scope) the import handler rejects (e.g. HEROKU must be
+    # INFRA_ONLY). Unreachable with today's routes, but guards a future change.
+    if scope not in VALID_SCOPES_BY_PLATFORM.get(source_platform, set()):
+        raise SkipEmit(f"{source_platform} + {scope} is not an importable combination")
+
+    # Enforce the contract's USD cap on the (possibly summed) totals. Distinct from a
+    # missing/malformed value: a real total that merely exceeds the cap.
     if aws_monthly > MAX_USD_AMOUNT:
-        raise SkipEmit("projected_costs.aws_monthly_balanced exceeds the supported maximum")
+        raise SkipEmit("total AWS monthly exceeds the supported maximum")
+    if source_monthly is not None and source_monthly > MAX_USD_AMOUNT:
+        source_monthly = None  # optional — drop rather than sink the handoff
+
+    # cost.accuracy is optional for infra-only/billing-only (emitted when present) and
+    # REQUIRED for a FULL import. For FULL, widen the base band to also cover the AI
+    # estimate's band so the summed plan doesn't understate its uncertainty; a FULL run
+    # with no derivable band is skipped rather than emitted and rejected.
+    accuracy = _accuracy(base_data) if isinstance(base_data, dict) else None
+    if scope == "FULL":
+        accuracy = _merge_accuracy(accuracy, _accuracy(ai_data) if isinstance(ai_data, dict) else None)
+        if accuracy is None:
+            raise SkipEmit("FULL run has no usable accuracy band for cost.accuracy")
 
     plan: dict = {
         "schemaVersion": SCHEMA_VERSION,
@@ -257,20 +466,18 @@ def build_plan(migration_dir: Path, plugin_json_path: Path) -> tuple[dict, str, 
         "runId": run_id,
         "cost": {
             "awsMonthly": aws_monthly,
-            "awsMonthlyBasis": AWS_MONTHLY_BASIS,
+            "awsMonthlyBasis": basis,
         },
     }
-
-    source_monthly = _source_monthly(infra.get("current_costs"), source_platform)
     if source_monthly is not None:
         plan["cost"]["sourceMonthly"] = source_monthly
-
-    service_items = _service_items(projected)
-    # The contract caps the list at 100. If a breakdown yields more, there is no
+    if accuracy is not None:
+        plan["cost"]["accuracy"] = accuracy
+    # The contract caps the list at 100. If the route(s) yield more, there is no
     # meaningful subset to pick, so omit the optional field rather than send an
     # over-limit list that would reject the whole handoff.
-    if 0 < len(service_items) <= MAX_SERVICE_ITEMS:
-        plan["cost"]["awsServiceItems"] = service_items
+    if 0 < len(items) <= MAX_SERVICE_ITEMS:
+        plan["cost"]["awsServiceItems"] = items
 
     # The web contract's field is `producerVersion` (named for the producer, not the
     # plugin, so a partner submission needs no second contract) — NOT `pluginVersion`.
