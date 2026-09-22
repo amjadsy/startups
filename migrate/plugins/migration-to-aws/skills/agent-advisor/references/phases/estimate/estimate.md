@@ -196,8 +196,9 @@ unverified SW polling"`), never a made-up total. State the unverified rate in th
 For each effective AgentCore microVM unit, carry `agentcore_platform` from Design into its
 estimate entry. CPU cost uses active vCPU-seconds; memory cost includes idle time. V1 memory
 follows the running high-water mark; V2 uses the time-varying billed footprint with reclamation.
-The 2026-09-21 pricing snapshot includes system overhead, a 128 MB minimum, and V2 idle-memory
-reclamation after 120 seconds. Do not zero memory charges during model/human waits.
+Read memory-billing rules from the separate `microvms_memory_billing` fact, refreshed through
+awsknowledge per freshness.md. Its 2026-09-21 snapshot includes system overhead, a 128 MB
+minimum, and V2 idle-memory reclamation after 120 seconds. Do not zero memory charges during model/human waits.
 State CPU time, memory profile, session duration/count, and overhead assumptions separately.
 If memory measurements are unavailable, use explicit low/high footprint assumptions for the
 coarse band; do not claim measured savings or automatically select V1. V2 unit rates are higher,

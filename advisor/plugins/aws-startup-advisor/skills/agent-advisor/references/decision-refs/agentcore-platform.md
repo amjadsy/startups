@@ -64,7 +64,8 @@ record; they do not select a version independently.
 ## Service facts to refresh
 
 The following are **cached as of 2026-09-21**, not verification of a future run. Refresh the
-profile's `platform_versions`, `v2_regions`, `v2_constraints`, and `microvms_pricing` facts
+profile's `platform_versions`, `v2_regions`, `v2_constraints`, `microvms_pricing`, and
+`microvms_memory_billing` facts
 under `freshness.md`. Record actual lookup results, including failures.
 
 - V2 Regions: `us-east-1`, `us-east-2`, `us-west-2`, `eu-west-1`, `ap-northeast-1`.
@@ -104,8 +105,9 @@ Prefer a currently verified deployment tool that sets `platformVersion` on creat
 The Python starter toolkit's `configure`/`launch` path can still package and provision a POC;
 when it cannot select the platform, follow it with `scripts/set_agentcore_platform.py` copied
 into the POC. That helper preserves the runtime configuration, explicitly updates the platform
-if needed, waits up to 15 minutes, and requires `GetAgentRuntime` to return the requested
-platform and `READY`. It refuses Instances. A failed update never triggers a V1 retry.
+if needed, allows up to 15 minutes for each readiness wait, and requires `GetAgentRuntime`
+to return the requested platform and `READY`. The platform update receives a fresh wait budget
+after the API accepts it. It refuses Instances. A failed update never triggers a V1 retry.
 
 Before any resource-creating command, check SDK support and resolve the pending applicability
 checks. Capture the exact runtime ID from the deployed project's config, not a name search.
@@ -116,7 +118,10 @@ This is a POC deployment step, not authorization to update an unrelated existing
 Save only the helper's ID/revision/platform/status output as `runtime-verification.json`
 inside that unit's POC directory. Keep the full Get response, especially environment variables,
 out of reports and logs. A create/update response, local `/ping`, or successful toolkit exit
-does not prove the deployed platform. Mode A has no deployment evidence until the user runs
+does not prove the deployed platform. The first readback records the observed numeric revision;
+it does not attest to a toolkit-requested revision that the toolkit has not supplied. The
+helper's own update is checked against the revision returned by `UpdateAgentRuntime`; use
+the application smoke test to validate deployed application behavior. Mode A has no deployment evidence until the user runs
 the script. Harness retains its declarative deployment model; verify its target-specific
 platform support and runtime ID, and use the same readback requirement without substituting
 a custom-code POC. If deployment support remains unverified, leave an explicit blocking TODO.

@@ -597,8 +597,6 @@ echo "Region: ${AWS_REGION:-<verified-target-region>}   Model: ${BEDROCK_MODEL_I
 read -r -p "Type 'deploy' to continue: " CONFIRM
 [ "$CONFIRM" = "deploy" ] || { echo "Aborted."; exit 1; }
 
-# Invalidate evidence from an earlier attempt before beginning this deployment.
-rm -f runtime-verification.json
 DEPLOY_REGION="<verified-target-region>"
 PLATFORM_VERSION="V2"  # Replace with the unit's recorded version, including an evidenced V1 exception.
 [ "${AWS_REGION:-$DEPLOY_REGION}" = "$DEPLOY_REGION" ] || { echo "Region changed; recheck platform applicability."; exit 1; }
@@ -613,6 +611,8 @@ if [[ ! "$AGENT_NAME" =~ ^[a-zA-Z][a-zA-Z0-9_]{0,47}$ ]]; then
 fi
 
 uv run --with boto3 python set_agentcore_platform.py --check-sdk
+# Preflight passed. Invalidate prior evidence before the first provisioning command.
+rm -f runtime-verification.json
 # TODO: verify current agentcore CLI flags against AWS docs (awsknowledge MCP)
 agentcore configure --entrypoint agent.py --name "$AGENT_NAME" --region "$AWS_REGION"
 agentcore launch --agent "$AGENT_NAME" --auto-update-on-conflict --env AWS_REGION="$AWS_REGION" --env BEDROCK_MODEL_ID="$BEDROCK_MODEL_ID"

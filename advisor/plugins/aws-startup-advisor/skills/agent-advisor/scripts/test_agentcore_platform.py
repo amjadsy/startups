@@ -123,6 +123,54 @@ def test_timeout_is_bounded_without_mutation(runtime, monkeypatch):
     client.update_agent_runtime.assert_not_called()
 
 
+def test_platform_update_gets_its_own_wait_budget(runtime, monkeypatch):
+    elapsed = [0]
+    monkeypatch.setattr(platform.time, "monotonic", lambda: elapsed[0])
+    monkeypatch.setattr(platform.time, "sleep", lambda _: elapsed.__setitem__(0, elapsed[0] + 400))
+    upgraded = {**runtime, "platformVersion": "V2", "agentRuntimeVersion": "2"}
+    client = Mock()
+    client.get_agent_runtime.side_effect = [
+        {**runtime, "status": "UPDATING"}, runtime,
+        {**upgraded, "status": "UPDATING"}, {**upgraded, "status": "UPDATING"}, upgraded,
+    ]
+    client.update_agent_runtime.return_value = {"agentRuntimeVersion": "2"}
+    assert platform.set_platform(client, runtime["agentRuntimeId"], "V2")["platformVersion"] == "V2"
+    assert elapsed[0] == 1200
+    assert client.update_agent_runtime.call_count == 1
+
+
+def test_platform_update_wait_still_times_out(runtime, monkeypatch):
+    elapsed = [0]
+    monkeypatch.setattr(platform.time, "monotonic", lambda: elapsed[0])
+    monkeypatch.setattr(platform.time, "sleep", lambda _: elapsed.__setitem__(0, elapsed[0] + 901))
+    client = Mock()
+    client.get_agent_runtime.side_effect = [runtime, {**runtime, "status": "UPDATING"}]
+    client.update_agent_runtime.return_value = {"agentRuntimeVersion": "2"}
+    with pytest.raises(TimeoutError):
+        platform.set_platform(client, runtime["agentRuntimeId"], "V2")
+    assert client.update_agent_runtime.call_count == 1
+
+
+@pytest.mark.parametrize("scoring_status,platform_statuses,expected", [
+    ("final", ["verified"], "final"),
+    ("final", ["pending"], "provisional"),
+    ("provisional", ["verified"], "provisional"),
+    ("final", [None, "verified"], "final"),
+    ("final", ["verified", "pending"], "provisional"),
+    ("final", [None], "final"),
+])
+def test_design_writes_recommendation_status(scoring_status, platform_statuses, expected):
+    design_md = Path(__file__).parent.parent / "references/phases/design/design.md"
+    code = re.search(r"```python\n(.*?)\n```", design_md.read_text(), re.S).group(1)
+    design = {"recommendation_status": "provisional", "units": [
+        {"agentcore_platform": None if status is None else {"version": "V2", "status": status}}
+        for status in platform_statuses
+    ]}
+    # Execute the reviewed status-assignment snippet, with only fixture artifacts as inputs.
+    exec(code, {"design": design, "scoring_result": {"recommendation_status": scoring_status}})  # nosec B102
+    assert design["recommendation_status"] == expected
+
+
 @pytest.mark.parametrize("failure,run_id,override,expected_name", [
     ("none", "0921-1530", None, "poc_agent_0921_1530"),
     ("none", "01a0b59b-a54c-7963-8759-48e49b10df0f", None,
@@ -133,13 +181,15 @@ def test_timeout_is_bounded_without_mutation(runtime, monkeypatch):
     ("name", "0921-1530", "9invalid", None),
     ("name", "0921-1530", "A" * 49, None),
     ("sdk", "0921-1530", None, "poc_agent_0921_1530"),
+    ("configure", "0921-1530", None, "poc_agent_0921_1530"),
+    ("launch", "0921-1530", None, "poc_agent_0921_1530"),
     ("update", "0921-1530", None, "poc_agent_0921_1530"),
     ("region", "0921-1530", None, "poc_agent_0921_1530"),
     ("declined", "0921-1530", None, "poc_agent_0921_1530"),
 ], ids=[
     "default-timestamp", "default-uuid", "custom-name", "max-length",
     "invalid-hyphen", "invalid-first-character", "over-length",
-    "sdk", "update", "region", "declined",
+    "sdk", "configure", "launch", "update", "region", "declined",
 ])
 def test_exact_deploy_template_orders_preflight_and_platform_verification(
     tmp_path, failure, run_id, override, expected_name
@@ -174,6 +224,8 @@ elif tool == "agentcore":
     if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_]{0,47}", name):
         print("Invalid agent name: only letters, numbers, and underscores are allowed.", file=sys.stderr)
         sys.exit(2)
+    if args[0] == os.environ["FAILURE"]:
+        sys.exit(1)
 elif tool == "uv":
     if "--check-sdk" in args:
         sys.exit(1 if os.environ["FAILURE"] == "sdk" else 0)
@@ -214,8 +266,13 @@ elif tool == "uv":
     if failure in ("name", "sdk", "region", "declined"):
         assert result.returncode != 0
         assert writes == []
-        if failure != "declined":
-            assert not evidence_path.exists()
+        assert json.loads(evidence_path.read_text()) == {"platformVersion": "V1", "status": "READY"}
+        assert "Platform verified." not in result.stdout
+    elif failure in ("configure", "launch"):
+        assert result.returncode != 0
+        assert len(writes) == (1 if failure == "configure" else 2)
+        assert not evidence_path.exists()
+        assert "Platform verified." not in result.stdout
     else:
         if failure == "none":
             assert result.returncode == 0, result.stderr

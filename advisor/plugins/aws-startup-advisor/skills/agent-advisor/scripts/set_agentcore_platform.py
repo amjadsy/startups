@@ -53,7 +53,9 @@ def set_platform(client, runtime_id, version):
         params = {key: runtime[key] for key in UPDATE_FIELDS if key in runtime}
         params.update(agentRuntimeId=runtime_id, platformVersion=version)
         response = client.update_agent_runtime(**params)
-        runtime = wait_ready(client, runtime_id, deadline, response["agentRuntimeVersion"])
+        runtime = wait_ready(
+            client, runtime_id, time.monotonic() + 900, response["agentRuntimeVersion"]
+        )
     if runtime["platformVersion"] != version:
         raise RuntimeError("Deployed platform does not match the recommendation.")
     return {key: runtime[key] for key in (

@@ -77,12 +77,24 @@
         "V2": {
           "vcpu_hour": 0.1276,
           "gb_hour": 0.0169
-        },
-        "v2_idle_memory_reclaim_seconds": 120,
-        "minimum_memory_mb": 128
+        }
       },
       "as_of": "2026-09-21",
       "source": "https://aws.amazon.com/bedrock/agentcore/pricing/",
+      "verification_channel": "awspricing",
+      "verify_via_mcp": true
+    },
+    {
+      "key": "microvms_memory_billing",
+      "verification_key": "agentcore.microvms_memory_billing",
+      "value": {
+        "v2_idle_memory_reclaim_seconds": 120,
+        "minimum_memory_mb": 128,
+        "includes_system_overhead": true
+      },
+      "as_of": "2026-09-21",
+      "source": "https://aws.amazon.com/bedrock/agentcore/pricing/",
+      "verification_channel": "awsknowledge",
       "verify_via_mcp": true
     },
     {

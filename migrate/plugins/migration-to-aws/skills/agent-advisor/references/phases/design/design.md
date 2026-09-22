@@ -22,11 +22,11 @@ _preconditions:
   - _validate_json: [scoring-result.json, confirm.json, model-recommendation.json]
     _on_failure: _unrecoverable
 _postconditions:
-  - _assert: "Each effective AgentCore microVM unit has agentcore_platform per agentcore-platform.md, defaults to V2, and names an evidenced exception for V1; Instances and other effective runtimes have null; the primary record is mirrored at the top level; pending checks make the recommendation provisional. Runtime scores and compute-type routing are unchanged."
-    _on_failure: _halt_and_inform
   - _check_file_exists: design.json
     _on_failure: _halt_and_inform
   - _validate_json: design.json
+    _on_failure: _halt_and_inform
+  - _assert: "Each effective AgentCore microVM unit has agentcore_platform per agentcore-platform.md, defaults to V2, and names an evidenced exception for V1; Instances and other effective runtimes have null; the primary record is mirrored at the top level; pending checks make the recommendation provisional. Runtime scores and compute-type routing are unchanged."
     _on_failure: _halt_and_inform
   - _assert: "Every unit selecting registry records its intended Registry Region and current-run verified Registry availability; cached or unavailable Regions cannot satisfy this check. A user-confirmed omission is reflected in both confirm.json and design.json service lists, including the primary-unit mirrors."
     _on_failure: _halt_and_inform
@@ -67,7 +67,7 @@ Load ALL THREE files (each is required; do not skip any — Step 4's lock-in che
 ## Step 3 — Refresh volatile facts
 
 Load `${CLAUDE_PLUGIN_ROOT}/skills/agent-advisor/references/decision-refs/freshness.md` and follow its procedure:
-read the winning profile's `volatile_facts`, try awsknowledge MCP for each, fall back to cached
+read the winning profile's `volatile_facts`, use each fact's declared MCP channel, fall back to cached
 values on failure. Record which succeeded vs fell back (for the freshness footer).
 When any unit selects `registry`, also load the AgentCore service card and the
 `registry_regions` fact from `references/runtimes/agentcore.json`, even for non-AgentCore
@@ -299,8 +299,22 @@ POC dispatch) MUST read `unit.effective_runtime` as the deploy/cost/render targe
 `references/decision-refs/agentcore-platform.md` for each effective AgentCore unit. Write its
 `agentcore_platform` record (or null for Instances); other effective runtimes get null. Apply
 the V2 default and automatic applicability checks without changing scores or asking for a
-version preference. Append pending platform checks to `warnings` and set the design
-`recommendation_status` to `provisional`; preserve any provisional status from scoring.
+version preference. If platform checks are pending, append them to `warnings`. Always write
+`recommendation_status`, including on a fully verified run, using the assembled units and
+`scoring-result.json` as `scoring_result`:
+
+```python
+design["recommendation_status"] = scoring_result["recommendation_status"]
+if any(
+    unit.get("agentcore_platform") is not None
+    and unit["agentcore_platform"]["status"] != "verified"
+    for unit in design["units"]
+):
+    design["recommendation_status"] = "provisional"
+```
+
+A final score stays final when every applicable platform is verified. Pending platform checks
+make it provisional, and verified platforms never upgrade a provisional scoring result.
 
 Each unit also carries its `coupling` object over from `context-signals.json.units[]` (verbatim
 — `{ "mode": "queue|api|a2a|none" }`), **falling back to `answers.json.units[<id>].coupling`
@@ -396,6 +410,6 @@ in Step 6, independent of `handoff_required`.)
 
 ## Maturity/readiness and provisional-verification extension
 
-Load `references/decision-refs/maturity-readiness.md` with the design inputs. Copy `target_maturity`, `readiness`, and `deferred_verification_requirements` from the run artifacts into `design.json`, preserving the release and evaluation gates applicable to the tier. Preserve `recommendation_status` as provisional if either scoring or the platform applicability checks are pending; copying scoring status must not clear a pending platform check. A `provisional` recommendation is not a launch approval: state the unresolved constraint, verification key, owner, and blocking decision explicitly.
+Load `references/decision-refs/maturity-readiness.md` with the design inputs. Copy `target_maturity`, `readiness`, and `deferred_verification_requirements` from the run artifacts into `design.json`, preserving the release and evaluation gates applicable to the tier. Keep the `recommendation_status` explicitly computed in Step 5; do not overwrite it when copying the other maturity/readiness fields. A `provisional` recommendation is not a launch approval: state the unresolved constraint, verification key, owner, and blocking decision explicitly.
 
 This supersedes the unconditional statement in Step 4b: include an AgentCore I/O-wait billing advantage only if the sibling `$RUN_DIR/current-run-verifications.json` artifact is schema-valid, its `run_id` matches `$RUN_DIR`, and its `agentcore.io_wait_billing` record has `status: "verified"` with a source-backed observed value from this run. Never read or write verification evidence through `answers.json`. Without validated current-run evidence, say only that the billing behavior requires current verification and do not make a comparative billing claim.

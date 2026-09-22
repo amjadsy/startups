@@ -6,11 +6,13 @@ freshness lookups carry ONLY public service, feature, model, or region names (e.
 file contents, prompts, architecture details, or anything else from the workspace
 or the run directory in an outbound request — the answer never depends on it.
 
-## Fields to verify at runtime via the awsknowledge MCP
+## Fields to verify at runtime via MCP
 
 - AgentCore platform V1/V2 behavior, V2-specific Regions, environment/startup limits, deployment
   tooling, and version-specific CPU/memory prices (`platform_versions`, `v2_regions`,
-  `v2_constraints`, `microvms_pricing` in the runtime profile). Follow `agentcore-platform.md`.
+  `v2_constraints`, `microvms_pricing`, `microvms_memory_billing` in the runtime profile).
+  Use awspricing for CPU/memory unit rates; use awsknowledge for billing behavior and service
+  constraints. Follow `agentcore-platform.md`.
   Cached dates are source snapshots, never this run's verification. Unverified applicability
   leaves V2 provisional; it does not automatically select V1.
 
@@ -94,7 +96,10 @@ observed this run may be listed as verified.
    Check Registry facts only when `registry` is selected. In the main skill, include
    `registry_regions` from `references/runtimes/agentcore.json` even if the winning runtime is
    ECS, EKS, Lambda, or another runtime. In add-capabilities, use the Registry Hard limits entry.
-2. Attempt an awsknowledge MCP lookup for each.
+2. Attempt the fact's `verification_channel` MCP lookup, defaulting to `awsknowledge` when
+   unspecified. `microvms_pricing` uses `awspricing`, matching Estimate;
+   `microvms_memory_billing` uses `awsknowledge` for reclamation, minimum billing, and overhead.
+   A price lookup does not verify those billing rules. Keep the actual MCP and source per fact.
 3. On success (the MCP call returned a value THIS run), use the fresh value and list the field as
    verified.
 4. On failure OR if you did not call the MCP at all (unavailable, skipped), use the cached
@@ -133,10 +138,10 @@ in `capabilities-recommendation.md`. Only a lookup observed this run counts as v
 Choose the wording that matches what actually happened:
 
 - If some fields were MCP-verified this run:
-  > _Generated `<DATE>`. Facts verified via AWS Knowledge MCP: `<list verified>`. Cached values used
+  > _Generated `<DATE>`. Facts verified via MCP: `<list verified fields and their MCP names>`. Cached values used
   > for: `<list cached>`. Limits and pricing change — verify against AWS docs before committing._
 - If the MCP was not called / unavailable:
-  > _Generated `<DATE>`. AWS Knowledge MCP not called this run; all facts are cached values —
+  > _Generated `<DATE>`. No fact lookups completed via MCP this run; all facts are cached values —
   > verify against AWS docs before committing._
 
 The footer is a summary, not the only place a date belongs. A cached number quoted in the body —
