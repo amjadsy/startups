@@ -304,8 +304,16 @@ version preference. If platform checks are pending, append them to `warnings`. A
 `scoring-result.json` as `scoring_result`:
 
 ```python
+scored_units = scoring_result.get("units", {})
 design["recommendation_status"] = scoring_result["recommendation_status"]
-if any(
+design["deferred_verification_requirements"] = scoring_result.get("deferred_verification_requirements", [])
+if scored_units:
+    design["deferred_verification_requirements"] = [
+        {**requirement, "unit_id": unit_id}
+        for unit_id, result in scored_units.items()
+        for requirement in result["deferred_verification_requirements"]
+    ]
+if any(result["recommendation_status"] == "provisional" for result in scored_units.values()) or any(
     unit.get("agentcore_platform") is not None
     and unit["agentcore_platform"]["status"] != "verified"
     for unit in design["units"]
@@ -313,8 +321,11 @@ if any(
     design["recommendation_status"] = "provisional"
 ```
 
-A final score stays final when every applicable platform is verified. Pending platform checks
-make it provisional, and verified platforms never upgrade a provisional scoring result.
+The scorer's top-level status and requirements mirror the primary unit. Aggregate the scored
+units when present, so a provisional secondary unit cannot disappear behind a final primary.
+Retain each deferred requirement with its `unit_id` for the report. A final recommendation
+requires all unit scores and applicable platforms to be verified; flat legacy scoring results
+retain their original status and requirements.
 
 Each unit also carries its `coupling` object over from `context-signals.json.units[]` (verbatim
 — `{ "mode": "queue|api|a2a|none" }`), **falling back to `answers.json.units[<id>].coupling`
@@ -410,6 +421,6 @@ in Step 6, independent of `handoff_required`.)
 
 ## Maturity/readiness and provisional-verification extension
 
-Load `references/decision-refs/maturity-readiness.md` with the design inputs. Copy `target_maturity`, `readiness`, and `deferred_verification_requirements` from the run artifacts into `design.json`, preserving the release and evaluation gates applicable to the tier. Keep the `recommendation_status` explicitly computed in Step 5; do not overwrite it when copying the other maturity/readiness fields. A `provisional` recommendation is not a launch approval: state the unresolved constraint, verification key, owner, and blocking decision explicitly.
+Load `references/decision-refs/maturity-readiness.md` with the design inputs. Copy `target_maturity` and `readiness` from the run artifacts into `design.json`, preserving the release and evaluation gates applicable to the tier. Keep the `recommendation_status` and unit-annotated `deferred_verification_requirements` explicitly computed in Step 5; do not overwrite them with the primary-unit mirror when copying maturity/readiness fields. A `provisional` recommendation is not a launch approval: state the unresolved constraint, verification key, owner, and blocking decision explicitly.
 
 This supersedes the unconditional statement in Step 4b: include an AgentCore I/O-wait billing advantage only if the sibling `$RUN_DIR/current-run-verifications.json` artifact is schema-valid, its `run_id` matches `$RUN_DIR`, and its `agentcore.io_wait_billing` record has `status: "verified"` with a source-backed observed value from this run. Never read or write verification evidence through `answers.json`. Without validated current-run evidence, say only that the billing behavior requires current verification and do not make a comparative billing claim.

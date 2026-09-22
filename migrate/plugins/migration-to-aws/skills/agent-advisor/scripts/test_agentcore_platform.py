@@ -12,6 +12,7 @@ from unittest.mock import Mock
 import pytest
 
 import set_agentcore_platform as platform
+import score_units
 
 
 @pytest.fixture
@@ -171,34 +172,13 @@ def test_design_writes_recommendation_status(scoring_status, platform_statuses, 
     assert design["recommendation_status"] == expected
 
 
-@pytest.mark.parametrize("failure,run_id,override,expected_name", [
-    ("none", "0921-1530", None, "poc_agent_0921_1530"),
-    ("none", "01a0b59b-a54c-7963-8759-48e49b10df0f", None,
-     "poc_agent_01a0b59b_a54c_7963_8759_48e49b10df0f"),
-    ("none", "0921-1530", "CustomAgent_42", "CustomAgent_42"),
-    ("none", "0921-1530", "A" * 48, "A" * 48),
-    ("name", "0921-1530", "invalid-name", None),
-    ("name", "0921-1530", "9invalid", None),
-    ("name", "0921-1530", "A" * 49, None),
-    ("sdk", "0921-1530", None, "poc_agent_0921_1530"),
-    ("configure", "0921-1530", None, "poc_agent_0921_1530"),
-    ("launch", "0921-1530", None, "poc_agent_0921_1530"),
-    ("update", "0921-1530", None, "poc_agent_0921_1530"),
-    ("region", "0921-1530", None, "poc_agent_0921_1530"),
-    ("declined", "0921-1530", None, "poc_agent_0921_1530"),
-], ids=[
-    "default-timestamp", "default-uuid", "custom-name", "max-length",
-    "invalid-hyphen", "invalid-first-character", "over-length",
-    "sdk", "configure", "launch", "update", "region", "declined",
-])
-def test_exact_deploy_template_orders_preflight_and_platform_verification(
-    tmp_path, failure, run_id, override, expected_name
-):
+def _run_deploy_template(tmp_path, failure, run_id, unit_id, override, expected_name, runtime_store=None):
     """Run the authored shell with fake CLIs, including its real config-reading heredoc."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
     poc = Path(__file__).parent.parent / "references/phases/poc/poc.md"
     section = poc.read_text().split("### 3d.", 1)[1].split("### 3e.", 1)[0]
     shell = re.search(r"```bash\n(.*?)\n```", section, re.S).group(1)
-    shell = shell.replace("<verified-target-region>", "us-west-2").replace("<run_id>", run_id)
+    shell = shell.replace("<verified-target-region>", "us-west-2").replace("<run_id>", run_id).replace("<unit_id>", unit_id)
     script = tmp_path / "deploy.sh"
     script.write_text(shell)
     binaries = tmp_path / "bin"
@@ -226,17 +206,35 @@ elif tool == "agentcore":
         sys.exit(2)
     if args[0] == os.environ["FAILURE"]:
         sys.exit(1)
+    if os.environ.get("FAKE_RUNTIME_STORE") and args[0] == "launch":
+        store = pathlib.Path(os.environ["FAKE_RUNTIME_STORE"])
+        runtimes = json.loads(store.read_text()) if store.exists() else {}
+        if name in runtimes and "--auto-update-on-conflict" not in args:
+            sys.exit(1)
+        runtime = runtimes.setdefault(name, {"id": f"poc_runtime-{len(runtimes) + 1:010d}"})
+        runtime["artifact"] = os.environ["FAKE_UNIT_ID"]
+        store.write_text(json.dumps(runtimes))
+        pathlib.Path(".bedrock_agentcore.yaml").write_text(json.dumps({
+            "agents": {name: {"bedrock_agentcore": {"agent_id": runtime["id"]}}}
+        }))
 elif tool == "uv":
     if "--check-sdk" in args:
         sys.exit(1 if os.environ["FAILURE"] == "sdk" else 0)
-    if "pyyaml" in args:
+    if "python" in args and "-" in args:
         code = sys.stdin.read()
-        command = [sys.executable, "-c", code, args[-1]]
+        command = [sys.executable, "-c", code, *args[args.index("-") + 1:]]
         sys.exit(subprocess.run(command).returncode)
     if os.environ["FAILURE"] == "update":
         sys.exit(1)
+    runtime_id = args[args.index("--runtime-id") + 1]
+    if os.environ.get("FAKE_RUNTIME_STORE"):
+        store = pathlib.Path(os.environ["FAKE_RUNTIME_STORE"])
+        runtimes = json.loads(store.read_text())
+        runtime = next(row for row in runtimes.values() if row["id"] == runtime_id)
+        runtime["platform"] = args[args.index("--platform-version") + 1]
+        store.write_text(json.dumps(runtimes))
     print(json.dumps({
-        "agentRuntimeId": args[args.index("--runtime-id") + 1],
+        "agentRuntimeId": runtime_id,
         "agentRuntimeVersion": "2",
         "platformVersion": args[args.index("--platform-version") + 1],
         "status": "READY",
@@ -255,6 +253,9 @@ elif tool == "uv":
     env.pop("AGENT_NAME", None)
     if override is not None:
         env["AGENT_NAME"] = override
+    if runtime_store is not None:
+        env["FAKE_RUNTIME_STORE"] = str(runtime_store)
+        env["FAKE_UNIT_ID"] = unit_id
     # Fixed bash executable and test-owned script; no shell interpolation.
     result = subprocess.run(  # nosec B603
         ["/bin/bash", str(script)], cwd=tmp_path, env=env,
@@ -262,6 +263,35 @@ elif tool == "uv":
         text=True, capture_output=True, timeout=10,
     )
     calls = [json.loads(line) for line in log.read_text().splitlines()]
+    return result, calls, evidence_path
+
+
+@pytest.mark.parametrize("failure,run_id,override,expected_name", [
+    ("none", "0921-1530", None, "poc_planner_7afe65243f6f1f8032635a87"),
+    ("none", "01a0b59b-a54c-7963-8759-48e49b10df0f", None,
+     "poc_planner_85a77fa2e38a6bbf0ed9401a"),
+    ("none", "0921-1530", "CustomAgent_42", "CustomAgent_42"),
+    ("none", "0921-1530", "A" * 48, "A" * 48),
+    ("name", "0921-1530", "invalid-name", None),
+    ("name", "0921-1530", "9invalid", None),
+    ("name", "0921-1530", "A" * 49, None),
+    ("sdk", "0921-1530", None, "poc_planner_7afe65243f6f1f8032635a87"),
+    ("configure", "0921-1530", None, "poc_planner_7afe65243f6f1f8032635a87"),
+    ("launch", "0921-1530", None, "poc_planner_7afe65243f6f1f8032635a87"),
+    ("update", "0921-1530", None, "poc_planner_7afe65243f6f1f8032635a87"),
+    ("region", "0921-1530", None, "poc_planner_7afe65243f6f1f8032635a87"),
+    ("declined", "0921-1530", None, "poc_planner_7afe65243f6f1f8032635a87"),
+], ids=[
+    "default-timestamp", "default-uuid", "custom-name", "max-length",
+    "invalid-hyphen", "invalid-first-character", "over-length",
+    "sdk", "configure", "launch", "update", "region", "declined",
+])
+def test_exact_deploy_template_orders_preflight_and_platform_verification(
+    tmp_path, failure, run_id, override, expected_name
+):
+    result, calls, evidence_path = _run_deploy_template(
+        tmp_path, failure, run_id, "planner", override, expected_name
+    )
     writes = [call for call in calls if call[0] == "agentcore"]
     if failure in ("name", "sdk", "region", "declined"):
         assert result.returncode != 0
@@ -295,3 +325,65 @@ elif tool == "uv":
             evidence = json.loads((tmp_path / "runtime-verification.json").read_text())
             assert evidence["platformVersion"] == "V2"
             assert evidence["agentRuntimeId"] == "right-runtime"
+
+
+@pytest.mark.parametrize("run_id,unit_ids", [
+    ("0922-0900", ["planner", "researcher"]),
+    ("0922-0900", ["worker-a", "worker_a"]),
+    ("01a0b59b-a54c-7963-8759-48e49b10df0f", ["worker" * 15 + "a", "worker" * 15 + "b"]),
+])
+def test_two_units_keep_distinct_runtimes_and_artifacts(tmp_path, run_id, unit_ids):
+    store = tmp_path / "runtimes.json"
+    ids = []
+    for index, unit_id in enumerate(unit_ids):
+        result, _, evidence = _run_deploy_template(
+            tmp_path / f"unit_{index}", "none", run_id, unit_id, None, None, store
+        )
+        assert result.returncode == 0, result.stderr
+        ids.append(json.loads(evidence.read_text())["agentRuntimeId"])
+    runtimes = json.loads(store.read_text())
+    assert len(set(ids)) == len(runtimes) == 2
+    assert {row["artifact"] for row in runtimes.values()} == set(unit_ids)
+    assert all(re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_]{0,47}", name) for name in runtimes)
+    result, _, evidence = _run_deploy_template(
+        tmp_path / "rerun", "none", run_id, unit_ids[0], None, None, store
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(evidence.read_text())["agentRuntimeId"] == ids[0]
+    assert len(json.loads(store.read_text())) == 2
+
+
+@pytest.mark.parametrize("primary_unit,worker_duration,expected", [
+    ("interactive", "over_8hr", "provisional"),
+    ("worker", "over_8hr", "provisional"),
+    ("interactive", "under_15min", "final"),
+])
+def test_design_aggregates_real_per_unit_scoring(tmp_path, capsys, primary_unit, worker_duration, expected):
+    answers = {
+        "entry_point": "build_scratch", "primary_unit": primary_unit, "system": {},
+        "units": {
+            "interactive": {"workload_class": "agent_session", "session_duration": "under_15min",
+                            "ops_preference": "minimal", "session_state": "hitl", "traffic_pattern": "bursty",
+                            "framework": "strands", "isolation": "required"},
+            "worker": {"workload_class": "agent_session", "session_duration": worker_duration,
+                       "compute_tier": "gpu" if worker_duration == "over_8hr" else "light"},
+        },
+    }
+    path = tmp_path / "answers.json"
+    path.write_text(json.dumps(answers))
+    assert score_units.main([str(path)]) == 0
+    scored = json.loads(capsys.readouterr().out)
+    design = {"units": [{"id": "interactive", "agentcore_platform": {"version": "V2", "status": "verified"}},
+                        {"id": "worker", "agentcore_platform": None}]}
+    text = (Path(__file__).parent.parent / "references/phases/design/design.md").read_text()
+    code = re.search(r"```python\n(.*?)\n```", text, re.S).group(1)
+    # Execute the reviewed producer snippet against the actual scoring CLI output.
+    exec(code, {"design": design, "scoring_result": scored})  # nosec B102
+    assert design["recommendation_status"] == expected
+    if worker_duration == "over_8hr":
+        assert scored["units"]["interactive"]["recommendation_status"] == "final"
+        assert scored["units"]["worker"]["recommendation_status"] == "provisional"
+        assert design["deferred_verification_requirements"]
+        assert {r["unit_id"] for r in design["deferred_verification_requirements"]} == {"worker"}
+    else:
+        assert design["deferred_verification_requirements"] == []

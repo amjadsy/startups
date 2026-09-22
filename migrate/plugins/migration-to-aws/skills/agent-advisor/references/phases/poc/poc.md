@@ -581,9 +581,12 @@ if __name__ == "__main__":
 
 Use this template for a verified microVM POC. Substitute `PLATFORM_VERSION` from the unit's
 Design record and `DEPLOY_REGION` from its checked target Region; neither is a new user prompt.
-Use a run-specific agent name; normalize hyphens in the default run ID to underscores and
-validate any explicit name against the toolkit's 1–48 character contract. Use the final name
-consistently for configure, launch, config lookup, and teardown. If the caller changes Region,
+Substitute `<unit_id>` from this unit's Design record, even in a single-unit run. Shell-quote
+substituted IDs as data. Derive the default name from both run and unit identity: the readable
+unit prefix is bounded, while the digest covers both complete IDs so sanitization/truncation
+cannot collapse two unit names. Explicit `AGENT_NAME` overrides must be distinct per unit.
+Validate the final name against the toolkit's 1–48 character contract and use it consistently
+for configure, launch, config lookup, and teardown. If the caller changes Region,
 re-run applicability checks before generating a new script. Verify toolkit flags/config paths
 against the installed version.
 
@@ -602,8 +605,14 @@ PLATFORM_VERSION="V2"  # Replace with the unit's recorded version, including an 
 [ "${AWS_REGION:-$DEPLOY_REGION}" = "$DEPLOY_REGION" ] || { echo "Region changed; recheck platform applicability."; exit 1; }
 export AWS_REGION="$DEPLOY_REGION"
 export BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-<MODEL_ID>}"
-DEFAULT_AGENT_NAME="poc_agent_<run_id>"
-DEFAULT_AGENT_NAME="${DEFAULT_AGENT_NAME//-/_}"
+DEFAULT_AGENT_NAME="$(uv run --no-project python - "<run_id>" "<unit_id>" <<'PY'
+import hashlib, json, re, sys
+run_id, unit_id = sys.argv[1:]
+prefix = re.sub(r"[^A-Za-z0-9_]", "_", unit_id)[:12]
+identity = json.dumps([run_id, unit_id], ensure_ascii=True, separators=(",", ":"))
+print(f"poc_{prefix}_{hashlib.sha256(identity.encode()).hexdigest()[:24]}")
+PY
+)"
 AGENT_NAME="${AGENT_NAME:-$DEFAULT_AGENT_NAME}"
 if [[ ! "$AGENT_NAME" =~ ^[a-zA-Z][a-zA-Z0-9_]{0,47}$ ]]; then
   echo "Invalid agent name: use 1-48 letters, numbers, or underscores, starting with a letter."
@@ -687,9 +696,9 @@ mandatory; no step may be skipped or reordered:**
    `$RUN_DIR/poc/created-resources.json` BEFORE running its create command
    (`{"type": ..., "name": ..., "region": ..., "status": "pending"}`), then update
    `"status": "created"` after — a crash between create and record must not orphan an
-   untracked resource. On the code path, generated runtime names carry the normalized run ID
-   suffix (e.g. `poc_agent_0921_1530`); record the final validated name for safe teardown
-   matching, including when the user supplies an explicit name. On the Harness path,
+   untracked resource. On the code path, generated runtime names include a unit prefix and a
+   digest of the complete run/unit identity. Record the run ID, unit ID, and final validated
+   name for safe teardown matching, including when the user supplies an explicit name. On the Harness path,
    the CLI names resources itself (project/agent name + generated suffix) — do not promise
    run-id suffixes; instead record the actual names/ARNs (and the CloudFormation stack name)
    in the ledger after deploy, and make those the teardown match keys.
