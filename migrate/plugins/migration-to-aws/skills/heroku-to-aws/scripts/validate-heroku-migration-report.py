@@ -355,8 +355,19 @@ def _validate_optimization_content(body: str) -> list[str]:
     literal no-eligible sentence can pass."""
     if _has_populated_opportunity_row(body):
         return []
-    text = re.sub(r"<[^>]+>", " ", body).lower()
-    text = re.sub(r"\s+", " ", text)
+    # Extract the RENDERED text (entities decoded, comments and inert
+    # script/style/template excluded) rather than raw-regex-stripping tags — so
+    # the fallback sentence is recognized when written with entity escapes
+    # (`1&#45;year`, `&nbsp;` between words) and is NOT satisfied by a copy that
+    # exists only inside an HTML comment or <template> the browser never renders.
+    # Reuses the same _DecodedTextParser the currency check uses, so both agree
+    # on what "rendered" means.
+    parser = _DecodedTextParser()
+    parser.feed(body)
+    parser.close()
+    # Normalize decoded whitespace (incl. NBSP U+00A0 from `&nbsp;`) to single
+    # spaces so an entity-separated sentence matches the literal one.
+    text = re.sub(r"\s+", " ", parser.text().replace("\u00a0", " ")).strip().lower()
     if NO_ELIGIBLE_COMMITMENT_SENTENCE in text:
         return []
     return [

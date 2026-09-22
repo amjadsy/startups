@@ -151,6 +151,13 @@ Omit the section when workshop was declined or never entered.
   before sign-off.
 - Title: `Heroku to AWS Migration Assessment`.
 - Cost labeling: every dollar figure is an **estimated monthly** cost.
+- **Whole-dollar monthly figures (blocking).** Render every monthly-scale dollar
+  figure ($2 or more) as a **whole dollar** — `$112/mo`,` $25,684/mo` — never with
+  cents (`$112.34/mo`fails the report validator's currency gate and blocks
+  Generate). Cents are allowed only for genuinely sub-dollar precision (` $1.50`,
+  `$0.40`) or an explicit per-unit rate (` $0.018/hr`, `$5.00/mo per policy`). Round
+  the`projected_costs.*`tiers and the Heroku baseline to the nearest dollar when
+  you write them into`exec-costs`, the cost one-liner, and the what-if table.
 - Reader vocabulary: no `*.json` filenames or `aws_*.` resource IDs in
   `decision-summary` / `exec-costs` / `what-if-scenarios` (name things the
   reader controls).
@@ -219,8 +226,13 @@ the report is edited — a stub is never acceptable):
 4. When `recommendation.decision_basis` exists: contains `decision-basis`.
 5. If `scenarios/index.json` has ≥2 scenarios, contains `what-if-scenarios`.
 6. `cost-optimization` is non-empty — the table or the explicit no-eligible-commitment
-   sentence, never a blank section.
+   sentence, never a blank section. If you wrote the sentence, it renders as visible
+   text (not only inside a comment/`<template>`) and reads verbatim once entities decode.
 7. Every `<th>` declares `scope="col"`/`"row"`; any `<figure>` has `aria-label` + `<figcaption>`.
+8. **No monthly-scale dollar figure renders with cents.** Scan every `$` figure: any
+   monthly total $2 or more must be whole-dollar (`$112/mo`, not` $112.34/mo`) — the
+   validator's currency gate is blocking. Round any cents you find on a monthly figure
+   before returning. (Cents are fine only on sub-$2 amounts or explicit per-unit rates.)
 
 A report failure must not delete the Terraform/docs — repair the HTML in this fragment. Fixing
 the report is **only** done here, before control returns; the completion gate never edits it.

@@ -148,6 +148,53 @@ def test_empty_cost_optimization_fails() -> None:
     assert "cost-optimization" in out and "empty" in out.lower()
 
 
+def test_no_eligible_sentence_with_entity_hyphens_passes() -> None:
+    # Regression (09-22 P2): the no-commitment sentence written with entity-escaped
+    # hyphens (`1&#45;year`) renders as the exact required text — must satisfy the
+    # content check (decoded rendered text, not a raw literal match).
+    html = GOOD.replace(
+        "No 1-year/3-year commitment product applies to this architecture.",
+        "No 1&#45;year/3&#45;year commitment product applies to this architecture.",
+    )
+    code, out = run(html)
+    assert code == 0, out
+
+
+def test_no_eligible_sentence_with_nbsp_passes() -> None:
+    # Regression (09-22 P2): `&nbsp;` between words decodes to whitespace; the
+    # sentence must still be recognized after whitespace normalization.
+    html = GOOD.replace(
+        "No 1-year/3-year commitment product applies to this architecture.",
+        "No&nbsp;1-year/3-year&nbsp;commitment product applies to this architecture.",
+    )
+    code, out = run(html)
+    assert code == 0, out
+
+
+def test_no_eligible_sentence_only_in_comment_fails() -> None:
+    # Regression (09-22 P2): the sentence present ONLY inside an HTML comment is
+    # not rendered — must NOT satisfy the content requirement.
+    html = GOOD.replace(
+        '<section id="cost-optimization"><p>No 1-year/3-year commitment product applies to this architecture.</p></section>',
+        '<section id="cost-optimization"><!-- No 1-year/3-year commitment product applies to this architecture. --><p>See optimization notes.</p></section>',
+    )
+    code, out = run(html)
+    assert code == 1, out
+    assert "cost-optimization" in out
+
+
+def test_no_eligible_sentence_only_in_template_fails() -> None:
+    # Regression (09-22 P2): the sentence present ONLY inside an inert <template>
+    # is not rendered — must NOT satisfy the content requirement.
+    html = GOOD.replace(
+        '<section id="cost-optimization"><p>No 1-year/3-year commitment product applies to this architecture.</p></section>',
+        '<section id="cost-optimization"><template><p>No 1-year/3-year commitment product applies to this architecture.</p></template><p>See optimization notes.</p></section>',
+    )
+    code, out = run(html)
+    assert code == 1, out
+    assert "cost-optimization" in out
+
+
 def test_heading_only_cost_optimization_fails() -> None:
     # A heading alone (no opportunity table, no no-eligible-commitment sentence)
     # must not satisfy the content requirement.
