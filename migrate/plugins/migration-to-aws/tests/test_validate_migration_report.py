@@ -1772,6 +1772,80 @@ def test_cost_figure_match_passes(tmp_path: Path) -> None:
     assert "cost figure mismatch" not in out
 
 
+def test_invisible_script_anchor_does_not_satisfy_visible_figure(tmp_path: Path) -> None:
+    # Regression (09-22 P2): an anchor inside a <script> is inert — never rendered —
+    # so its dollar token must not stand in for the visible figure. Here the script
+    # anchors $112 (matching the estimate) while the VISIBLE figure is $999.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        '<strong data-cost-key="aws_monthly_balanced">$112</strong>',
+        '<script type="application/json" data-cost-key="aws_monthly_balanced">"$112/mo"</script>'
+        '<strong>$999/mo</strong>',
+        1,
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    # The script anchor is ignored, so the required visible anchor is now MISSING.
+    assert code == 1, out
+    assert 'missing data-cost-key="aws_monthly_balanced"' in out
+
+
+def test_hidden_anchor_does_not_satisfy_visible_figure(tmp_path: Path) -> None:
+    # Regression (09-22 P2): an anchor on a `hidden` element is not rendered — must
+    # not supply the compared value while the visible $999 disagrees.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        '<strong data-cost-key="aws_monthly_balanced">$112</strong>',
+        '<span hidden data-cost-key="aws_monthly_balanced">$112/mo</span>'
+        '<strong>$999/mo</strong>',
+        1,
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert 'missing data-cost-key="aws_monthly_balanced"' in out
+
+
+def test_nested_recognized_anchor_is_still_checked(tmp_path: Path) -> None:
+    # Regression (09-22 P2): a nested data-cost-key inside an outer anchor must be
+    # validated on its own, not swallowed by the outer element. Here a Premium
+    # anchor rendering $999 is nested inside the Balanced anchor; Premium != 198 in
+    # the estimate, so it must be caught as a mismatch.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        '<strong data-cost-key="aws_monthly_balanced">$112</strong>',
+        '<span data-cost-key="aws_monthly_balanced">$112'
+        '<strong data-cost-key="aws_monthly_premium">$999/mo</strong></span>',
+        1,
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert "cost figure mismatch" in out
+    assert "aws_monthly_premium" in out
+
+
+def test_fractional_estimate_rounds_to_nearest_dollar_not_truncated(tmp_path: Path) -> None:
+    # Regression (09-22 P2): a fractional monthly total must compare at the emitter's
+    # display precision — nearest-dollar rounding, not int() truncation. With
+    # aws_monthly_balanced = 112.90, the correctly rounded rendered "$113" must PASS
+    # (the old int(112.90)=112 wrongly failed it).
+    est = json.loads(FIXTURE_EST_INFRA.read_text(encoding="utf-8"))
+    est["projected_costs"]["aws_monthly_balanced"] = 112.90
+    est_path = tmp_path / "estimation-infra.json"
+    est_path.write_text(json.dumps(est), encoding="utf-8")
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        '<strong data-cost-key="aws_monthly_balanced">$112</strong>',
+        '<strong data-cost-key="aws_monthly_balanced">$113</strong>',
+        1,
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, est_path, FIXTURE_EST_AI)
+    assert code == 0, out
+    assert "cost figure mismatch" not in out
+
+
 def test_cost_figure_skipped_without_estimation(tmp_path: Path) -> None:
     # No estimation-infra.json -> the numeric cross-check is skipped (fail open on absence);
     # a wrong anchored figure is not flagged when there is nothing to compare against.
@@ -1875,14 +1949,14 @@ def test_unknown_cost_key_ignored(tmp_path: Path) -> None:
 
 
 def test_non_numeric_json_value_fails_not_crash(tmp_path: Path) -> None:
-    # A non-whole-dollar JSON value yields a named FAIL, never an uncaught traceback (exit 2).
+    # A non-numeric JSON value yields a named FAIL, never an uncaught traceback (exit 2).
     est = json.loads(FIXTURE_EST_INFRA.read_text(encoding="utf-8"))
     est["projected_costs"]["aws_monthly_balanced"] = "$112"
     est_path = tmp_path / "estimation-infra.json"
     est_path.write_text(json.dumps(est), encoding="utf-8")
     code, out = run_validator(FIXTURE, est_path, FIXTURE_EST_AI)
     assert code == 1, out
-    assert "not a whole-dollar number" in out
+    assert "not a numeric dollar amount" in out
 
 
 def test_cost_anchor_inside_html_comment_does_not_satisfy_requirement(tmp_path: Path) -> None:

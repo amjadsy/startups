@@ -1238,15 +1238,35 @@ def _validate_appendix_config(html: str) -> list[str]:
     return errors
 
 
+def _canonical_money(value: float) -> str:
+    """Canonical display form for a dollar amount, matching the emitter's own
+    rule (generate-artifacts-report.md rule 19 / the currency-formatting gate):
+    monthly-scale totals (>= $2) round to the nearest whole dollar; genuinely
+    small totals (< $2) keep two-decimal cents. Both the rendered figure and the
+    JSON figure pass through this SAME function before comparison, so a correctly
+    rounded `$113` for `112.90` matches, and the small-total exception (e.g.
+    `$0.40`) is preserved instead of being truncated to `0`."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        raise
+    if abs(v) >= _CENTS_MEANINGFUL_BELOW:
+        return str(int(round(v)))  # nearest-dollar; round(112.90)=113, round(112.4)=112
+    return f"{v:.2f}"  # small total: retain cents (0.40 -> "0.40")
+
+
 def _normalize_money(text: str) -> str | None:
-    """Reduce a rendered money string to a bare integer-dollar string for exact
-    comparison against the JSON. '$1,415/mo' -> '1415'; '$112' -> '112'. Returns
-    None when no dollar amount is present. Cents are truncated (the artifacts
-    store whole-dollar monthly figures)."""
-    m = re.search(r"\$\s*([0-9][0-9,]*)(?:\.[0-9]+)?", text)
+    """Reduce a rendered money string to its canonical display form for exact
+    comparison against the JSON figure (same normalization on both sides via
+    `_canonical_money`). '$1,415/mo' -> '1415'; '$112.90' -> '113'; '$0.40' ->
+    '0.40'. Returns None when no dollar amount is present."""
+    m = re.search(r"\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)", text)
     if not m:
         return None
-    return m.group(1).replace(",", "")
+    try:
+        return _canonical_money(float(m.group(1).replace(",", "")))
+    except (TypeError, ValueError):
+        return None
 
 
 # Which estimation-infra.json figure each data-cost-key anchor must equal. The
@@ -1268,81 +1288,121 @@ _COST_ANCHORS = {
 # to catch). Premium/optimized are optional (skip when absent).
 _REQUIRED_COST_KEYS = ("aws_monthly_balanced", "current_monthly")
 
+# Elements whose subtree the browser never renders — an anchor (or its text)
+# inside one must never stand in for the visible figure. Mirrors
+# _DecodedTextRunParser's _INERT_TAGS so the anchor collector and the currency
+# text parser agree on what "rendered" means.
+_ANCHOR_INERT_TAGS = {"script", "style", "template"}
+
+
 class _CostAnchorParser(HTMLParser):
     """Collect the rendered text of every `data-cost-key="..."` element.
 
-    Uses the stdlib HTML parser rather than a regex so that (a) markup inside an
-    HTML comment is never mistaken for a real anchor — comments are a distinct
-    token the parser never re-tokenizes as tags — (b) nested child markup
-    (`<span data-cost-key="x"><strong>$112</strong></span>`) is read through the
-    anchored element's OWN matching close tag, not the first `</` encountered,
-    by counting nested opens/closes of the same tag name, and (c) content inside
-    a <template> subtree is skipped — <template> children are inert (never
-    rendered by the browser) even though the parser still walks their tags, so
-    an anchor placed there must not stand in for the visible figure elsewhere in
-    the document. Character references are decoded automatically
-    (`convert_charrefs=True`, the default).
+    Uses the stdlib HTML parser rather than a regex so that:
+    (a) markup inside an HTML comment is never mistaken for a real anchor —
+        comments are a distinct token the parser never re-tokenizes as tags;
+    (b) nested child markup is read through the anchored element's OWN matching
+        close tag, not the first `</` encountered, by counting nested
+        opens/closes — and a NESTED `data-cost-key` element is collected as its
+        own anchor too (an outer anchor being open must not swallow a recognized
+        inner figure), tracked on a stack;
+    (c) inert subtrees (`<script>`, `<style>`, `<template>`) are skipped — their
+        content is never rendered by the browser, so an anchor or dollar token
+        placed there must not satisfy the visible-figure requirement, even when
+        the inert element itself carries `data-cost-key`;
+    (d) an element with a truthy `hidden` attribute is skipped for the same
+        reason — its subtree is not rendered.
+    Character references are decoded automatically (`convert_charrefs=True`).
     """
+
+    # Void elements never have an end tag, so they must not be pushed onto the
+    # element stack (doing so would desync every subsequent close).
+    _VOID_TAGS = {
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr",
+    }
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.results: list[tuple[str, str]] = []  # (key, inner text)
-        self._tag_name: str | None = None
-        self._depth = 0
-        self._pending_key = ""
-        self._parts: list[str] = []
-        self._template_depth = 0  # >0 while inside any <template> subtree
+        self.results: list[tuple[str, str]] = []  # (key, inner text), document order
+        # One frame per open non-void element, innermost last. Each frame:
+        #   {"tag", "inert": bool, "hidden": bool, "anchor": {key,parts}|None}
+        # `inert`/`hidden` are STICKY down the subtree (an element inside an inert
+        # or hidden ancestor is itself skipped) — computed as ancestor-or-self.
+        self._stack: list[dict] = []
+
+    def _in_skip(self) -> bool:
+        """True when the current point is inside an inert or hidden subtree."""
+        return bool(self._stack) and (self._stack[-1]["inert"] or self._stack[-1]["hidden"])
+
+    @staticmethod
+    def _is_hidden(attrs: list[tuple[str, str | None]]) -> bool:
+        # `hidden` is a boolean attribute: present means hidden. Treat an explicit
+        # `hidden="false"` as not-hidden; any other presence hides the subtree.
+        d = dict(attrs)
+        if "hidden" not in d:
+            return False
+        v = d.get("hidden")
+        return v is None or str(v).strip().lower() != "false"
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "template":
-            self._template_depth += 1
-        if self._template_depth > 0:
-            return  # <template> content is inert — never rendered, never an anchor
-        if self._tag_name is not None:
-            if tag == self._tag_name:
-                self._depth += 1
-            return
+        parent = self._stack[-1] if self._stack else None
+        # inert/hidden are STICKY: an element inside an inert/hidden ancestor is
+        # itself inert/hidden. Kept as clean booleans (never a truthy list).
+        inert = bool(parent and parent["inert"]) or tag in _ANCHOR_INERT_TAGS
+        hidden = bool(parent and parent["hidden"]) or self._is_hidden(attrs)
+        anchor = None
         key = dict(attrs).get("data-cost-key")
-        if key:
-            self._tag_name = tag
-            self._depth = 1
-            self._pending_key = key.lower()
-            self._parts = []
+        # Start a new anchor only when this element is actually rendered.
+        if key and not inert and not hidden:
+            anchor = {"key": key.lower(), "parts": []}
+        frame = {"tag": tag, "inert": inert, "hidden": hidden, "anchor": anchor}
+        if tag not in self._VOID_TAGS:
+            self._stack.append(frame)
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if self._template_depth > 0:
+        if tag in _ANCHOR_INERT_TAGS or self._in_skip():
             return
-        # A self-closed anchor (<span data-cost-key="x" />) has no text content;
-        # treat it as an anchor with empty rendered text rather than ignoring it.
-        if self._tag_name is None:
-            key = dict(attrs).get("data-cost-key")
-            if key:
-                self.results.append((key.lower(), ""))
+        parent_hidden = self._stack[-1]["hidden"] if self._stack else False
+        key = dict(attrs).get("data-cost-key")
+        # A self-closed anchor has no text content; record it (empty) only if rendered.
+        if key and not parent_hidden and not self._is_hidden(attrs):
+            self.results.append((key.lower(), ""))
 
     def handle_endtag(self, tag: str) -> None:
-        if tag == "template" and self._template_depth > 0:
-            self._template_depth -= 1
+        if tag in self._VOID_TAGS:
             return
-        if self._template_depth > 0:
-            return
-        if self._tag_name is None or tag != self._tag_name:
-            return
-        self._depth -= 1
-        if self._depth == 0:
-            self.results.append((self._pending_key, "".join(self._parts)))
-            self._tag_name = None
-            self._parts = []
+        # Pop to the nearest matching open tag (tolerate minor misnesting). Every
+        # frame in the popped slice that carried an anchor is emitted — including
+        # any INNER anchors implicitly closed by an outer element's end tag — so a
+        # nested `data-cost-key` is never silently dropped. Emit innermost-first,
+        # then the matched frame, all in the order they closed.
+        for i in range(len(self._stack) - 1, -1, -1):
+            if self._stack[i]["tag"] == tag:
+                popped = self._stack[i:]
+                del self._stack[i:]
+                for frame in reversed(popped):  # innermost closes first
+                    if frame["anchor"] is not None:
+                        self.results.append(
+                            (frame["anchor"]["key"], "".join(frame["anchor"]["parts"]))
+                        )
+                return
+        # Unmatched close tag: ignore.
 
     def handle_data(self, data: str) -> None:
-        if self._template_depth > 0:
+        if self._in_skip():
             return
-        if self._tag_name is not None:
-            self._parts.append(data)
+        # Append rendered text to every open anchor on the stack (an outer
+        # anchor's text legitimately includes its children's text).
+        for frame in self._stack:
+            if frame["anchor"] is not None:
+                frame["anchor"]["parts"].append(data)
 
 
 def _cost_anchor_matches(html: str) -> list[tuple[str, str]]:
     """Parse `html` and return every (data-cost-key, rendered text) pair found
-    outside of comments and other non-rendered markup (e.g. <template>)."""
+    outside comments and non-rendered markup (script/style/template/hidden),
+    including nested recognized anchors."""
     parser = _CostAnchorParser()
     parser.feed(html)
     parser.close()
@@ -1386,11 +1446,14 @@ def _validate_cost_figures(
         if expected is None:
             continue  # the JSON does not carry this figure -> nothing to assert
         try:
-            expected_dollars = str(int(expected))
+            # Normalize the JSON figure to the SAME display precision the emitter
+            # renders at (nearest dollar for monthly-scale, cents for small
+            # totals) so a correctly rounded report matches — not a truncation.
+            expected_dollars = _canonical_money(float(expected))
         except (TypeError, ValueError):
             errors.append(
-                f'estimation-infra.json {".".join(path)} is not a whole-dollar '
-                f"number: {expected!r}"
+                f'estimation-infra.json {".".join(path)} is not a numeric dollar '
+                f"amount: {expected!r}"
             )
             continue
         rendered = _normalize_money(text)
