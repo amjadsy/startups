@@ -45,7 +45,7 @@ Note: Cloud Run maps to Fargate via deterministic fast-path ("Always"). The `com
 
 GKE usage signals Kubernetes adoption, so the **default is to keep Kubernetes on EKS Auto Mode** — AWS operates the nodes (the GKE Autopilot equivalent, and AWS's recommended approach going forward). Branch on `preferences.json` → `design_constraints.kubernetes` (set by Q8):
 
-- **`kubernetes = "eks-auto"` or absent** → **EKS Auto Mode** (default). An absent preference resolves to Auto Mode, not Fargate — teams that want to manage nodes or leave Kubernetes say so in Clarify (Q8 B/C).
+- **`kubernetes = "eks-auto"` or absent** → **EKS Auto Mode** (default). An absent preference resolves to Auto Mode, not Fargate — teams that want to manage nodes or leave Kubernetes say so in Clarify (Q8 options 2/3).
 - **`kubernetes = "eks-standard"`** → **Standard EKS Cluster with managed node groups** (user explicitly wants node control).
 - **`kubernetes = "ecs-fargate"`** → **Fargate** (user chose to drop Kubernetes).
 - **Autopilot signal:** when the source `google_container_cluster` has `config.autopilot_enabled: true`, Auto Mode is the direct 1:1 mapping — record it in the rationale (`"GKE Autopilot → EKS Auto Mode (managed-node equivalent)"`). A Standard cluster (`autopilot_enabled: false`) still defaults to Auto Mode but `eks-standard` is the natural opt-out if the user wants to preserve node pools.
@@ -174,7 +174,7 @@ Apply in order; first match wins:
 ### Example 5b: GKE Standard cluster, user wants node control
 
 - GCP: `google_container_cluster` with `config.autopilot_enabled: false`, node pool `machine_type=n2-standard-4`
-- Signals: self-managed node pools; Q8 = B (`kubernetes: "eks-standard"`)
+- Signals: self-managed node pools; Q8 = option 2 (`kubernetes: "eks-standard"`)
 - Criterion 3 (User Preference): `kubernetes = "eks-standard"` → Standard EKS Cluster with managed node groups
 - → **AWS: Standard EKS Cluster with managed node groups (m7g.xlarge, Graviton default)** — preserves direct node control
 - Confidence: `inferred`
@@ -182,7 +182,7 @@ Apply in order; first match wins:
 ### Example 5c: GKE cluster, team wants off Kubernetes
 
 - GCP: `google_container_cluster` (Standard), stateless HTTP services
-- Signals: Q8 = C (`kubernetes: "ecs-fargate"` — team chose to drop Kubernetes)
+- Signals: Q8 = option 3 (`kubernetes: "ecs-fargate"` — team chose to drop Kubernetes)
 - Criterion 3 (User Preference): `kubernetes = "ecs-fargate"` → Fargate
 - → **AWS: ECS Fargate** — no Kubernetes control plane or manifests to operate
 - Confidence: `inferred`
