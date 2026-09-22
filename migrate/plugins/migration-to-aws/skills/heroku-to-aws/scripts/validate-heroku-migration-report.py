@@ -222,21 +222,43 @@ def _validate_currency_formatting(html: str) -> list[str]:
 
 
 class _TagAttrCollector(HTMLParser):
-    """Collect (tag, attrs-dict, is_self_closed) for every start tag, using the
-    stdlib parser rather than a literal-syntax regex. This accepts any legal
-    HTML attribute spelling — quoted or unquoted values, spaces around `=`,
+    """Collect (tag, attrs-dict, is_self_closed) for every RENDERED start tag,
+    using the stdlib parser rather than a literal-syntax regex. This accepts any
+    legal HTML attribute spelling — quoted or unquoted values, spaces around `=`,
     single or double quotes — instead of only the exact `name="value"` form a
-    hand-rolled regex happens to match."""
+    hand-rolled regex happens to match.
+
+    Tags inside an inert subtree (`<script>`, `<style>`, `<template>`) are
+    skipped — the browser never renders them, so a class/attribute declared only
+    there (e.g. a `verdict-headline` inside a `<template>`) must not be read as a
+    rendered element. Mirrors _DecodedTextParser's inert handling so every
+    "is this rendered?" check in this file agrees on the answer."""
+
+    _INERT_TAGS = {"script", "style", "template"}
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.tags: list[tuple[str, dict[str, str | None], bool]] = []
+        self._inert_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self.tags.append((tag, dict(attrs), False))
+        if tag in self._INERT_TAGS:
+            self._inert_depth += 1
+            return
+        if self._inert_depth == 0:
+            self.tags.append((tag, dict(attrs), False))
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self.tags.append((tag, dict(attrs), True))
+        # A self-closed inert tag opens no subtree; a self-closed normal tag is a
+        # rendered element (unless nested in an inert subtree).
+        if tag in self._INERT_TAGS:
+            return
+        if self._inert_depth == 0:
+            self.tags.append((tag, dict(attrs), True))
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._INERT_TAGS and self._inert_depth > 0:
+            self._inert_depth -= 1
 
 
 def _collect_tags(html: str) -> list[tuple[str, dict[str, str | None], bool]]:
@@ -274,7 +296,16 @@ class _OpportunityRowParser(HTMLParser):
         <tbody> is valid HTML (browsers infer an implicit tbody) and must be
         treated the same as one with an explicit <tbody>.
     <th> cells are deliberately excluded — header rows never count as an
-    opportunity row, regardless of tbody/thead placement."""
+    opportunity row, regardless of tbody/thead placement.
+
+    Inert subtrees (`<script>`, `<style>`, `<template>`) are skipped entirely:
+    text inside them is never rendered, so a cell whose only content is a
+    `<template>`/`<script>`, or a whole table nested in a `<template>`, must not
+    register as a populated opportunity row. Mirrors _DecodedTextParser's inert
+    handling so this check agrees with the fallback-sentence check on what
+    counts as rendered content."""
+
+    _INERT_TAGS = {"script", "style", "template"}
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -283,6 +314,7 @@ class _OpportunityRowParser(HTMLParser):
         self._tr_depth = 0
         self._td_open = False  # a <td> is currently open (its end tag may be omitted)
         self._td_has_text = False
+        self._inert_depth = 0  # >0 while inside script/style/template
 
     def _in_table(self) -> bool:
         return self._table_depth > 0
@@ -303,6 +335,11 @@ class _OpportunityRowParser(HTMLParser):
         self._td_has_text = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._INERT_TAGS:
+            self._inert_depth += 1
+            return
+        if self._inert_depth > 0:
+            return  # table/row/cell structure inside an inert subtree is not rendered
         if tag == "table":
             self._table_depth += 1
         elif tag == "tr" and self._in_table():
@@ -314,10 +351,18 @@ class _OpportunityRowParser(HTMLParser):
                 self._td_open = True
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._INERT_TAGS or self._inert_depth > 0:
+            return
         if tag in ("td", "th") and self._tr_depth > 0:
             self._close_cell()  # a self-closed <td/> or <th/> can never carry text content
 
     def handle_endtag(self, tag: str) -> None:
+        if tag in self._INERT_TAGS:
+            if self._inert_depth > 0:
+                self._inert_depth -= 1
+            return
+        if self._inert_depth > 0:
+            return
         if tag in ("td", "th"):
             self._close_cell()
         elif tag == "tr":
@@ -330,7 +375,7 @@ class _OpportunityRowParser(HTMLParser):
                 self._table_depth -= 1
 
     def handle_data(self, data: str) -> None:
-        if self._td_open and data.strip():
+        if self._inert_depth == 0 and self._td_open and data.strip():
             self._td_has_text = True
 
 
@@ -445,6 +490,7 @@ class _AccessibilityParser(HTMLParser):
         "area", "base", "br", "col", "embed", "hr", "img", "input",
         "link", "meta", "param", "source", "track", "wbr",
     }
+    _INERT_TAGS = {"script", "style", "template"}
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -456,11 +502,17 @@ class _AccessibilityParser(HTMLParser):
         self._table_depth = 0  # >0 while inside a <table> (nesting-tolerant)
         self._table_bad_at: dict[int, bool] = {}
         self._figure_stack: list[dict[str, bool | None]] = []
+        self._inert_depth = 0  # >0 while inside script/style/template
 
     def _in_table(self) -> bool:
         return self._table_depth > 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._INERT_TAGS:
+            self._inert_depth += 1
+            return
+        if self._inert_depth > 0:
+            return  # a <th>/<figure> inside an inert subtree is not rendered — do not audit it
         attr_map = dict(attrs)
         if tag == "table":
             self._table_depth += 1
@@ -493,6 +545,12 @@ class _AccessibilityParser(HTMLParser):
         pass
 
     def handle_endtag(self, tag: str) -> None:
+        if tag in self._INERT_TAGS:
+            if self._inert_depth > 0:
+                self._inert_depth -= 1
+            return
+        if self._inert_depth > 0:
+            return
         if tag == "table" and self._table_depth > 0:
             self._table_depth -= 1
             if self._table_depth == 0:

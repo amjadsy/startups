@@ -496,3 +496,65 @@ def test_validator_is_packaged_inside_the_skill_directory() -> None:
     assert SCRIPT.parent.name == "scripts"
     assert SCRIPT.parent.parent.name == "heroku-to-aws"
     assert SCRIPT.parent.parent.parent.name == "skills"
+
+
+# --- Inert/hidden-content negative controls (sweep: close the class across every
+# rendered-content check, not one parser per review round). Inert = never rendered
+# by the browser: <script>, <style>, <template>. ---
+
+
+def test_inert_only_opportunity_table_fails() -> None:
+    """A whole opportunity table nested in a <template> is never rendered, so it
+    must not satisfy the cost-optimization content requirement."""
+    html = GOOD.replace(
+        '<section id="cost-optimization"><p>No 1-year/3-year commitment product applies to this architecture.</p></section>',
+        '<section id="cost-optimization"><template><table><tr>'
+        "<td>RDS Reserved Instance</td></tr></table></template></section>",
+    )
+    code, out = run(html)
+    assert code == 1, out
+    assert "cost-optimization" in out
+
+
+def test_opportunity_cell_only_inert_content_fails() -> None:
+    """A visible row whose only cell content is an inert <template>/<script>
+    subtree renders nothing, so it is not a populated opportunity row."""
+    html = GOOD.replace(
+        '<section id="cost-optimization"><p>No 1-year/3-year commitment product applies to this architecture.</p></section>',
+        '<section id="cost-optimization"><table><tr>'
+        '<td><script type="application/json">{"x":1}</script></td></tr>'
+        "<tr><td><template>RDS Reserved Instance</template></td></tr>"
+        "</table></section>",
+    )
+    code, out = run(html)
+    assert code == 1, out
+    assert "cost-optimization" in out
+
+
+def test_verdict_headline_only_in_template_fails() -> None:
+    """A verdict-headline that exists only inside an inert <template> renders no
+    verdict, so a declared recommendation.outcome must still fail the check."""
+    html = GOOD.replace(
+        '<p class="verdict-headline">Go, with conditions</p>',
+        '<template><p class="verdict-headline">Go, with conditions</p></template>',
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out = run(html, migration_dir=_rec_dir(tmp))
+    assert code == 1, out
+    assert "verdict-headline" in out.lower()
+
+
+def test_th_inside_template_not_audited_for_scope() -> None:
+    """A <th> inside an inert <template> is never rendered, so the accessibility
+    scan must not demand scope="col"/"row" on it (no false-positive). The visible
+    exec-costs table keeps its valid scope, so the report still passes."""
+    html = GOOD.replace(
+        "</table></section>",
+        "</table>"
+        "<template><table><tr><th>Hidden header, no scope</th></tr></table></template>"
+        "</section>",
+        1,
+    )
+    code, out = run(html)
+    assert code == 0, out
+    assert "REPORT_OK" in out
