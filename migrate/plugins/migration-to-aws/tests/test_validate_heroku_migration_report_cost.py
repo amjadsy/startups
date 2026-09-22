@@ -104,7 +104,7 @@ def test_non_numeric_json_value_fails_not_crash() -> None:
         )
         code, out = run(GOOD, migration_dir=d)
     assert code == 1, out
-    assert "not a whole-dollar number" in out
+    assert "not a numeric dollar amount" in out
 
 
 def test_cost_anchor_inside_html_comment_does_not_satisfy_requirement() -> None:
@@ -257,3 +257,96 @@ def test_escaped_anchor_example_inside_section_does_not_satisfy_requirement() ->
         code, out = run(html, migration_dir=_est_dir(tmp, 112))
     assert code == 1, out
     assert 'missing data-cost-key="aws_monthly_balanced"' in out
+
+
+# --- Rendered-reality regressions (parity with the GCP validator): inert/hidden
+# anchors do not count, nested anchors are collected independently, and the display
+# precision rounds rather than truncates. ---
+
+
+def test_nested_inner_anchor_is_collected_not_dropped() -> None:
+    # An inner data-cost-key nested in an outer one must be read as its own anchor,
+    # not swallowed by the outer element. Inner $999 != estimate 112 -> FAIL.
+    html = GOOD.replace(
+        '<span data-cost-key="aws_monthly_balanced">$112/mo</span>',
+        '<span data-cost-key="aws_monthly_balanced">$112/mo '
+        '<strong data-cost-key="aws_monthly_balanced">$999</strong></span>',
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out = run(html, migration_dir=_est_dir(tmp, 112))
+    assert code == 1, out
+    assert "999" in out and "mismatch" in out.lower()
+
+
+def test_hidden_anchor_does_not_satisfy_requirement() -> None:
+    # A hidden anchor is not rendered; a visible $999 stands instead. estimate 112.
+    html = GOOD.replace(
+        '<span data-cost-key="aws_monthly_balanced">$112/mo</span>',
+        '<span hidden data-cost-key="aws_monthly_balanced">$112/mo</span>$999',
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out = run(html, migration_dir=_est_dir(tmp, 112))
+    assert code == 1, out
+    assert 'missing data-cost-key="aws_monthly_balanced"' in out
+
+
+def test_hidden_false_is_still_hidden() -> None:
+    # In HTML `hidden="false"` is still the Hidden state (invalid-value default),
+    # so the anchor is not rendered and must not satisfy the requirement.
+    html = GOOD.replace(
+        '<span data-cost-key="aws_monthly_balanced">$112/mo</span>',
+        '<span hidden="false" data-cost-key="aws_monthly_balanced">$112/mo</span>$999',
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out = run(html, migration_dir=_est_dir(tmp, 112))
+    assert code == 1, out
+    assert 'missing data-cost-key="aws_monthly_balanced"' in out
+
+
+def test_script_anchor_does_not_satisfy_requirement() -> None:
+    # An anchor inside an inert <script> subtree is never rendered.
+    html = GOOD.replace(
+        '<span data-cost-key="aws_monthly_balanced">$112/mo</span>',
+        '<script type="application/json">'
+        '<span data-cost-key="aws_monthly_balanced">$112</span></script>$999',
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        code, out = run(html, migration_dir=_est_dir(tmp, 112))
+    assert code == 1, out
+    assert 'missing data-cost-key="aws_monthly_balanced"' in out
+
+
+def test_rounded_cents_figure_matches_not_truncated() -> None:
+    # estimate 112.90 renders as $113 (nearest dollar); the validator must accept
+    # it, not reject it because int(112.90) == 112.
+    html = GOOD.replace(
+        '<span data-cost-key="aws_monthly_balanced">$112/mo</span>',
+        '<span data-cost-key="aws_monthly_balanced">$113/mo</span>',
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        d = Path(tmp)
+        (d / "estimation-infra.json").write_text(
+            json.dumps({"projected_costs": {"aws_monthly_balanced": 112.90}}),
+            encoding="utf-8",
+        )
+        code, out = run(html, migration_dir=d)
+    assert code == 0, out
+    assert "REPORT_OK" in out
+
+
+def test_two_dollar_boundary_canonicalizes_consistently() -> None:
+    # estimate 1.999 canonicalizes to "2" and a displayed $2 canonicalizes to "2",
+    # so they match — the $2 rounding-threshold boundary must not spuriously fail.
+    html = GOOD.replace(
+        '<span data-cost-key="aws_monthly_balanced">$112/mo</span>',
+        '<span data-cost-key="aws_monthly_balanced">$2/mo</span>',
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        d = Path(tmp)
+        (d / "estimation-infra.json").write_text(
+            json.dumps({"projected_costs": {"aws_monthly_balanced": 1.999}}),
+            encoding="utf-8",
+        )
+        code, out = run(html, migration_dir=d)
+    assert code == 0, out
+    assert "REPORT_OK" in out

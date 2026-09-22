@@ -1250,9 +1250,14 @@ def _canonical_money(value: float) -> str:
         v = float(value)
     except (TypeError, ValueError):
         raise
-    if abs(v) >= _CENTS_MEANINGFUL_BELOW:
-        return str(int(round(v)))  # nearest-dollar; round(112.90)=113, round(112.4)=112
-    return f"{v:.2f}"  # small total: retain cents (0.40 -> "0.40")
+    # Decide precision on the ROUNDED magnitude, not the raw one, so a value that
+    # rounds up ACROSS the $2 threshold canonicalizes consistently with how it
+    # renders. Otherwise 1.999 (raw < 2 -> "2.00") would mismatch a displayed $2
+    # (2.0 >= 2 -> "2"): both must land on "2". round() first, then classify.
+    rounded_whole = int(round(v))
+    if abs(rounded_whole) >= _CENTS_MEANINGFUL_BELOW:
+        return str(rounded_whole)  # nearest-dollar; 112.90->113, 112.4->112, 1.999->2
+    return f"{v:.2f}"  # genuinely small total: retain cents (0.40 -> "0.40")
 
 
 def _normalize_money(text: str) -> str | None:
@@ -1337,13 +1342,13 @@ class _CostAnchorParser(HTMLParser):
 
     @staticmethod
     def _is_hidden(attrs: list[tuple[str, str | None]]) -> bool:
-        # `hidden` is a boolean attribute: present means hidden. Treat an explicit
-        # `hidden="false"` as not-hidden; any other presence hides the subtree.
-        d = dict(attrs)
-        if "hidden" not in d:
-            return False
-        v = d.get("hidden")
-        return v is None or str(v).strip().lower() != "false"
+        # `hidden` is a BOOLEAN attribute: its mere presence hides the subtree,
+        # regardless of value. In HTML `hidden="false"` is NOT a not-hidden value —
+        # "false" is an invalid value for a boolean attribute, whose invalid-value
+        # default is the Hidden state. So any `hidden` attribute (including
+        # `hidden=""`, `hidden="hidden"`, and `hidden="false"`) hides the element;
+        # only the attribute's ABSENCE leaves it visible.
+        return "hidden" in dict(attrs)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         parent = self._stack[-1] if self._stack else None

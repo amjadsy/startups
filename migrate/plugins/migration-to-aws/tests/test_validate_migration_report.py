@@ -1806,6 +1806,43 @@ def test_hidden_anchor_does_not_satisfy_visible_figure(tmp_path: Path) -> None:
     assert 'missing data-cost-key="aws_monthly_balanced"' in out
 
 
+def test_hidden_false_is_still_hidden(tmp_path: Path) -> None:
+    # Regression (09-22 P2): `hidden="false"` is still the Hidden state in HTML
+    # (invalid-value default for a boolean attribute), so the anchor is not rendered
+    # and must not supply the compared value while the visible $999 disagrees.
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        '<strong data-cost-key="aws_monthly_balanced">$112</strong>',
+        '<span hidden="false" data-cost-key="aws_monthly_balanced">$112/mo</span>'
+        '<strong>$999/mo</strong>',
+        1,
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, FIXTURE_EST_INFRA, FIXTURE_EST_AI)
+    assert code == 1, out
+    assert 'missing data-cost-key="aws_monthly_balanced"' in out
+
+
+def test_two_dollar_boundary_canonicalizes_consistently(tmp_path: Path) -> None:
+    # Regression (09-22 P2): a value that rounds up across the $2 threshold must
+    # canonicalize the same on both sides. estimate 1.999 -> "2" and displayed $2 ->
+    # "2", so they match; the old raw-magnitude branch made 1.999 -> "2.00" != "2".
+    est = json.loads(FIXTURE_EST_INFRA.read_text(encoding="utf-8"))
+    est.setdefault("projected_costs", {})["aws_monthly_balanced"] = 1.999
+    est_path = tmp_path / "estimation-infra.json"
+    est_path.write_text(json.dumps(est), encoding="utf-8")
+    html = FIXTURE.read_text(encoding="utf-8").replace(
+        '<strong data-cost-key="aws_monthly_balanced">$112</strong>',
+        '<strong data-cost-key="aws_monthly_balanced">$2</strong>',
+        1,
+    )
+    path = tmp_path / "migration-report.html"
+    path.write_text(html, encoding="utf-8")
+    code, out = run_validator(path, est_path, FIXTURE_EST_AI)
+    assert code == 0, out
+    assert "REPORT_OK" in out
+
+
 def test_nested_recognized_anchor_is_still_checked(tmp_path: Path) -> None:
     # Regression (09-22 P2): a nested data-cost-key inside an outer anchor must be
     # validated on its own, not swallowed by the outer element. Here a Premium

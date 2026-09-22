@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""Validate heroku-to-aws migration-report.html (thin stakeholder report).
+"""Validate heroku-to-aws migration report HTML (thin stakeholder report).
 
-Required sections: decision-summary, exec-costs, next-steps.
-Conditional: what-if-scenarios when scenarios/index.json has ≥2 entries.
-Footer must contain "draft for review".
+Two modes, sharing the decision-core sections (see
+skills/heroku-to-aws/references/shared/report-decision-core.md):
+
+  full     (default) migration-report.html — decision-summary, exec-costs,
+           next-steps required; decision-basis / what-if-scenarios conditional.
+  decision decision-report.html — decision-summary, exec-costs required;
+           decision-cta required instead of next-steps; decision-basis /
+           what-if-scenarios conditional (same triggers as full mode).
 
 Exit 0 on PASS, 1 on FAIL.
 
 Usage:
   python3 validate-heroku-migration-report.py /path/to/migration-report.html \\
       --migration-dir "$MIGRATION_DIR"
+  python3 validate-heroku-migration-report.py /path/to/decision-report.html \\
+      --mode decision
 """
 
 from __future__ import annotations
@@ -21,22 +28,53 @@ import sys
 from html.parser import HTMLParser
 from pathlib import Path
 
-REQUIRED_SECTION_IDS = [
+# Required in both modes.
+COMMON_REQUIRED_SECTION_IDS = [
     "decision-summary",
     "exec-costs",
-    "next-steps",
 ]
 
-SECTION_OPEN = re.compile(
-    r'<section\b[^>]*\bid=["\']([^"\']+)["\'][^>]*>',
-    re.IGNORECASE,
-)
+# The one structural difference between modes: decision mode ends on a CTA
+# pointing at Generate instead of the full report's next-steps list (which
+# assumes MIGRATION_GUIDE.md / terraform/ already exist — they don't yet in
+# decision mode).
+MODE_REQUIRED_SECTION_ID = {
+    "full": "next-steps",
+    "decision": "decision-cta",
+}
+
+
+class _SectionOpenTagCollector(HTMLParser):
+    """Collect the `id` of every real (rendered) <section> open tag.
+
+    Uses the stdlib parser rather than a regex so that a <section id="..."> that
+    only exists inside an HTML comment (e.g. an unexpanded template placeholder
+    like `<!-- <section id="decision-basis"> when ... -->`) is never counted as
+    present — HTMLParser routes comment text to handle_comment, never
+    re-tokenizing it as a real tag, whereas a regex scanning raw source text
+    cannot distinguish a real tag from one that merely looks like a tag inside
+    a comment."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.section_ids: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "section":
+            sid = dict(attrs).get("id")
+            if sid:
+                self.section_ids.append(sid)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.handle_starttag(tag, attrs)
 
 
 def _section_counts(html: str) -> dict[str, int]:
+    parser = _SectionOpenTagCollector()
+    parser.feed(html)
+    parser.close()
     counts: dict[str, int] = {}
-    for match in SECTION_OPEN.finditer(html):
-        sid = match.group(1)
+    for sid in parser.section_ids:
         counts[sid] = counts.get(sid, 0) + 1
     return counts
 
@@ -120,10 +158,46 @@ def _section_html(html: str, section_id: str) -> str | None:
 
 
 def _normalize_money(text: str) -> str | None:
-    """'$1,415/mo' -> '1415'; '$112' -> '112'. None when no dollar amount present.
-    Cents are truncated (the artifacts store whole-dollar monthly figures)."""
-    m = re.search(r"\$\s*([0-9][0-9,]*)(?:\.[0-9]+)?", text)
-    return m.group(1).replace(",", "") if m else None
+    """Reduce a rendered money string to its canonical display form for exact
+    comparison against the JSON figure (same normalization on both sides via
+    `_canonical_money`). '$1,415/mo' -> '1415'; '$112.90' -> '113'; '$0.40' ->
+    '0.40'. Returns None when no dollar amount is present. Cents are NO LONGER
+    truncated — a correctly rounded report figure must match, not be rejected."""
+    m = re.search(r"\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)", text)
+    if not m:
+        return None
+    try:
+        return _canonical_money(float(m.group(1).replace(",", "")))
+    except (TypeError, ValueError):
+        return None
+
+
+def _canonical_money(value: float) -> str:
+    """Canonical display form for a dollar amount, matching the emitter's own
+    rule (generate-report.md currency rule / the currency-formatting gate):
+    monthly-scale totals (>= $2 after rounding) round to the nearest whole
+    dollar; genuinely small totals keep two-decimal cents. Both the rendered
+    figure and the JSON figure pass through this SAME function before comparison,
+    so a correctly rounded `$113` for `112.90` matches (not truncated to `112`),
+    and the small-total exception (e.g. `$0.40`) is preserved instead of being
+    truncated to `0`. Decides precision on the ROUNDED magnitude so a value that
+    rounds up across the $2 threshold (e.g. 1.999) canonicalizes to `"2"`,
+    matching a displayed `$2`, instead of `"2.00"`."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        raise
+    rounded_whole = int(round(v))
+    if abs(rounded_whole) >= _CENTS_MEANINGFUL_BELOW:
+        return str(rounded_whole)  # nearest-dollar; 112.90->113, 112.4->112, 1.999->2
+    return f"{v:.2f}"  # genuinely small total: retain cents (0.40 -> "0.40")
+
+
+# Elements whose subtree the browser never renders — an anchor (or its text)
+# inside one must never stand in for the visible figure. Mirrors the currency
+# text parser's inert set so the anchor collector and the currency parser agree
+# on what "rendered" means.
+_ANCHOR_INERT_TAGS = {"script", "style", "template"}
 
 
 # data-cost-key anchor -> estimation-infra.json path. Heroku asserts the recommended
@@ -141,78 +215,113 @@ _REQUIRED_COST_KEYS = ("aws_monthly_balanced",)
 class _CostAnchorParser(HTMLParser):
     """Collect the rendered text of every `data-cost-key="..."` element.
 
-    Ported from validate-migration-report.py's parser (GCP). Uses the stdlib
-    HTML parser rather than a regex so that (a) markup inside an HTML comment
-    or a <template> subtree is never mistaken for a real anchor — comments
-    are a distinct token the parser never re-tokenizes as tags, and
-    <template> content is inert (never rendered) so its descendants are
-    skipped even though the parser still walks their tags, and (b) nested
-    child markup (`<span data-cost-key="x"><strong>$112</strong></span>`) is
-    read through the anchored element's OWN matching close tag, not the
-    first `</` encountered, by counting nested opens/closes of the same tag
-    name. Character references are decoded automatically
-    (`convert_charrefs=True`, the default).
+    Ported from validate-migration-report.py's parser (GCP) so both providers
+    agree on what "rendered" means. Uses the stdlib HTML parser rather than a
+    regex so that:
+    (a) markup inside an HTML comment is never mistaken for a real anchor —
+        comments are a distinct token the parser never re-tokenizes as tags;
+    (b) nested child markup is read through the anchored element's OWN matching
+        close tag, not the first `</` encountered, by counting nested
+        opens/closes — and a NESTED `data-cost-key` element is collected as its
+        own anchor too (an outer anchor being open must not swallow a recognized
+        inner figure), tracked on a stack;
+    (c) inert subtrees (`<script>`, `<style>`, `<template>`) are skipped — their
+        content is never rendered by the browser, so an anchor or dollar token
+        placed there must not satisfy the visible-figure requirement, even when
+        the inert element itself carries `data-cost-key`;
+    (d) an element with a `hidden` attribute is skipped for the same reason —
+        its subtree is not rendered.
+    Character references are decoded automatically (`convert_charrefs=True`).
     """
+
+    # Void elements never have an end tag, so they must not be pushed onto the
+    # element stack (doing so would desync every subsequent close).
+    _VOID_TAGS = {
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr",
+    }
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.results: list[tuple[str, str]] = []  # (key, inner text)
-        self._tag_name: str | None = None
-        self._depth = 0
-        self._pending_key = ""
-        self._parts: list[str] = []
-        self._template_depth = 0  # >0 while inside any <template> subtree
+        self.results: list[tuple[str, str]] = []  # (key, inner text), document order
+        # One frame per open non-void element, innermost last. Each frame:
+        #   {"tag", "inert": bool, "hidden": bool, "anchor": {key,parts}|None}
+        # `inert`/`hidden` are STICKY down the subtree (an element inside an inert
+        # or hidden ancestor is itself skipped) — computed as ancestor-or-self.
+        self._stack: list[dict] = []
+
+    def _in_skip(self) -> bool:
+        """True when the current point is inside an inert or hidden subtree."""
+        return bool(self._stack) and (self._stack[-1]["inert"] or self._stack[-1]["hidden"])
+
+    @staticmethod
+    def _is_hidden(attrs: list[tuple[str, str | None]]) -> bool:
+        # `hidden` is a BOOLEAN attribute: its mere presence hides the subtree,
+        # regardless of value. In HTML `hidden="false"` is NOT a not-hidden value —
+        # "false" is an invalid value for a boolean attribute, whose invalid-value
+        # default is the Hidden state. So any `hidden` attribute (including
+        # `hidden=""`, `hidden="hidden"`, and `hidden="false"`) hides the element;
+        # only the attribute's ABSENCE leaves it visible.
+        return "hidden" in dict(attrs)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "template":
-            self._template_depth += 1
-        if self._template_depth > 0:
-            return  # <template> content is inert — never rendered, never an anchor
-        if self._tag_name is not None:
-            if tag == self._tag_name:
-                self._depth += 1
-            return
+        parent = self._stack[-1] if self._stack else None
+        # inert/hidden are STICKY: an element inside an inert/hidden ancestor is
+        # itself inert/hidden. Kept as clean booleans (never a truthy list).
+        inert = bool(parent and parent["inert"]) or tag in _ANCHOR_INERT_TAGS
+        hidden = bool(parent and parent["hidden"]) or self._is_hidden(attrs)
+        anchor = None
         key = dict(attrs).get("data-cost-key")
-        if key:
-            self._tag_name = tag
-            self._depth = 1
-            self._pending_key = key.lower()
-            self._parts = []
+        # Start a new anchor only when this element is actually rendered.
+        if key and not inert and not hidden:
+            anchor = {"key": key.lower(), "parts": []}
+        frame = {"tag": tag, "inert": inert, "hidden": hidden, "anchor": anchor}
+        if tag not in self._VOID_TAGS:
+            self._stack.append(frame)
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if self._template_depth > 0:
+        if tag in _ANCHOR_INERT_TAGS or self._in_skip():
             return
-        # A self-closed anchor (<span data-cost-key="x" />) has no text content;
-        # treat it as an anchor with empty rendered text rather than ignoring it.
-        if self._tag_name is None:
-            key = dict(attrs).get("data-cost-key")
-            if key:
-                self.results.append((key.lower(), ""))
+        parent_hidden = self._stack[-1]["hidden"] if self._stack else False
+        key = dict(attrs).get("data-cost-key")
+        # A self-closed anchor has no text content; record it (empty) only if rendered.
+        if key and not parent_hidden and not self._is_hidden(attrs):
+            self.results.append((key.lower(), ""))
 
     def handle_endtag(self, tag: str) -> None:
-        if tag == "template" and self._template_depth > 0:
-            self._template_depth -= 1
+        if tag in self._VOID_TAGS:
             return
-        if self._template_depth > 0:
-            return
-        if self._tag_name is None or tag != self._tag_name:
-            return
-        self._depth -= 1
-        if self._depth == 0:
-            self.results.append((self._pending_key, "".join(self._parts)))
-            self._tag_name = None
-            self._parts = []
+        # Pop to the nearest matching open tag (tolerate minor misnesting). Every
+        # frame in the popped slice that carried an anchor is emitted — including
+        # any INNER anchors implicitly closed by an outer element's end tag — so a
+        # nested `data-cost-key` is never silently dropped. Emit innermost-first,
+        # then the matched frame, all in the order they closed.
+        for i in range(len(self._stack) - 1, -1, -1):
+            if self._stack[i]["tag"] == tag:
+                popped = self._stack[i:]
+                del self._stack[i:]
+                for frame in reversed(popped):  # innermost closes first
+                    if frame["anchor"] is not None:
+                        self.results.append(
+                            (frame["anchor"]["key"], "".join(frame["anchor"]["parts"]))
+                        )
+                return
+        # Unmatched close tag: ignore.
 
     def handle_data(self, data: str) -> None:
-        if self._template_depth > 0:
+        if self._in_skip():
             return
-        if self._tag_name is not None:
-            self._parts.append(data)
+        # Append rendered text to every open anchor on the stack (an outer
+        # anchor's text legitimately includes its children's text).
+        for frame in self._stack:
+            if frame["anchor"] is not None:
+                frame["anchor"]["parts"].append(data)
 
 
 def _cost_anchor_matches(html: str) -> list[tuple[str, str]]:
     """Parse `html` and return every (data-cost-key, rendered text) pair found
-    outside of comments and other non-rendered markup (e.g. <template>)."""
+    outside comments and non-rendered markup (script/style/template/hidden),
+    including nested recognized anchors."""
     parser = _CostAnchorParser()
     parser.feed(html)
     parser.close()
@@ -266,11 +375,14 @@ def _validate_cost_figures(html: str, migration_dir: Path | None) -> list[str]:
         if expected is None:
             continue
         try:
-            expected_dollars = str(int(expected))
+            # Normalize the JSON figure to the SAME display precision the emitter
+            # renders at (nearest dollar for monthly-scale, cents for small
+            # totals) so a correctly rounded report matches — not a truncation.
+            expected_dollars = _canonical_money(float(expected))
         except (TypeError, ValueError):
             errors.append(
-                f'estimation-infra.json {".".join(path)} is not a whole-dollar '
-                f"number: {expected!r}"
+                f'estimation-infra.json {".".join(path)} is not a numeric dollar '
+                f"amount: {expected!r}"
             )
             continue
         rendered = _normalize_money(text)
@@ -448,16 +560,29 @@ def _validate_currency_formatting(html: str) -> list[str]:
     return errors
 
 
-def validate(html: str, migration_dir: Path | None) -> list[str]:
+def validate(html: str, migration_dir: Path | None, mode: str = "full") -> list[str]:
     errors: list[str] = []
     counts = _section_counts(html)
 
-    for sid in REQUIRED_SECTION_IDS:
+    required = [*COMMON_REQUIRED_SECTION_IDS, MODE_REQUIRED_SECTION_ID[mode]]
+    for sid in required:
         n = counts.get(sid, 0)
         if n == 0:
             errors.append(f'missing required <section id="{sid}">')
         elif n > 1:
             errors.append(f'duplicate <section id="{sid}"> ({n} occurrences)')
+
+    # The other mode's terminal section must NOT appear — decision-report.html
+    # must not carry a next-steps pointer into an execution pack that does not
+    # exist yet, and migration-report.html should not carry the pre-execution
+    # decision-cta once the real thing (next-steps) exists.
+    other_mode = "decision" if mode == "full" else "full"
+    other_terminal = MODE_REQUIRED_SECTION_ID[other_mode]
+    if counts.get(other_terminal, 0) >= 1:
+        errors.append(
+            f'--mode {mode} report must not contain <section id="{other_terminal}"> '
+            f"(that is the {other_mode}-mode terminal section)"
+        )
 
     if "draft for review" not in html.lower():
         errors.append('footer must contain "draft for review" disclaimer')
@@ -478,6 +603,85 @@ def validate(html: str, migration_dir: Path | None) -> list[str]:
                     '<section id="what-if-scenarios">'
                 )
 
+        # generate-report.md / report-decision-core.md § decision-basis: when
+        # Estimate declared decision_basis (evidence/assumptions behind the
+        # verdict), the report MUST render it — in both modes, since decision
+        # mode reuses these exact content rules rather than restating them.
+        # Read the same estimation-infra.json the report itself was built
+        # from, so a report that silently drops decision_basis (e.g. a
+        # refactor that forgets the section) cannot still say REPORT_OK.
+        est_path = migration_dir / "estimation-infra.json"
+        if est_path.is_file():
+            try:
+                est = json.loads(est_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                est = None
+            decision_basis = ((est or {}).get("recommendation") or {}).get("decision_basis")
+            if decision_basis and counts.get("decision-basis", 0) < 1:
+                errors.append(
+                    "estimation-infra.json declares recommendation.decision_basis "
+                    'but the report has no <section id="decision-basis"> '
+                    '("What This Assessment Rests On")'
+                )
+
+    if mode == "decision" and migration_dir is not None:
+        # Decision mode's real invariant: THIS decide-complete cycle has not
+        # itself gone through Generate yet (phases.generate is "pending" or
+        # absent). It is NOT "no terraform/ or generation-*.json file exists
+        # on disk" — a prior Generate/workshop-reprice cycle's execution pack
+        # can legitimately still be sitting there (workshop re-entry
+        # preserves it deliberately: it may hold customer-edited baseline.tf/
+        # variables.tf or hand-authored terraform.tfvars/state that cannot be
+        # safely deleted). Treating raw file presence as the signal made a
+        # perfectly valid decision, after a workshop reprice on a
+        # previously-executed run, permanently unable to pass — the pre-
+        # execution claim this check exists to make ("no code has been
+        # generated for the CURRENT decision") was never really about the
+        # filesystem; it's about .phase-status.json's own bookkeeping.
+        #
+        # phases.generate == "completed"/"in_progress" is exactly the signal
+        # that consent to execute for the CURRENT cycle was already given —
+        # that state is precisely what "decision mode" (pre-execution) must
+        # not be, and .phase-status.json is the interpreter's own source of
+        # truth for it (see phase-status.schema.json's run_mode/phases
+        # description).
+        #
+        # Fail open ONLY on a genuinely MISSING status file — that means no
+        # run has ever tracked state here, which is not evidence of anything
+        # (e.g. the isolated unit-test path validating HTML without a real
+        # $MIGRATION_DIR). Do NOT fail open on a file that EXISTS but is
+        # unreadable or fails to parse as JSON: that is state corruption, and
+        # INTERPRETER.md § State-file validation is explicit that invalid
+        # JSON is a STOP condition ("do not proceed or guess"), not something
+        # to treat as equivalent to "no state exists." Guessing "pending"
+        # past a corrupt file would let a broken run silently pass the one
+        # check this mode exists to enforce.
+        phase_path = migration_dir / ".phase-status.json"
+        generate_status: str | None = None
+        if phase_path.is_file():
+            try:
+                phase_text = phase_path.read_text(encoding="utf-8")
+                if not phase_text.strip():
+                    raise json.JSONDecodeError("empty file", phase_text, 0)
+                phase = json.loads(phase_text)
+            except (OSError, json.JSONDecodeError) as exc:
+                errors.append(
+                    "decision mode: .phase-status.json exists but could not "
+                    f"be read/parsed ({exc}) — state corrupted (invalid "
+                    "JSON). Delete the file and restart the current phase "
+                    "(INTERPRETER.md § State-file validation); an unreadable "
+                    "state file is not evidence of a pre-execution decision"
+                )
+            else:
+                generate_status = (phase or {}).get("phases", {}).get("generate")
+        if generate_status in ("completed", "in_progress"):
+            errors.append(
+                "decision mode: .phase-status.json phases.generate is "
+                f"{generate_status!r} — this decide-complete cycle already "
+                "went through Generate; decision mode is pre-execution only "
+                "for the CURRENT cycle (a prior cycle's execution pack may "
+                "legitimately remain on disk after a workshop reprice)"
+            )
     errors.extend(_validate_cost_figures(html, migration_dir))
     return errors
 
@@ -486,6 +690,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("report_path", type=Path)
     parser.add_argument("--migration-dir", type=Path, default=None)
+    parser.add_argument(
+        "--mode",
+        choices=["full", "decision"],
+        default="full",
+        help="full = migration-report.html (default); decision = decision-report.html",
+    )
     args = parser.parse_args()
 
     if not args.report_path.is_file():
@@ -493,9 +703,9 @@ def main() -> int:
         return 1
 
     html = args.report_path.read_text(encoding="utf-8")
-    errors = validate(html, args.migration_dir)
+    errors = validate(html, args.migration_dir, args.mode)
     if errors:
-        print(f"REPORT_FAIL | file={args.report_path} | errors={len(errors)}", file=sys.stderr)
+        print(f"REPORT_FAIL | file={args.report_path} | mode={args.mode} | errors={len(errors)}", file=sys.stderr)
         for err in errors:
             print(f"  - {err}", file=sys.stderr)
         return 1
@@ -504,9 +714,12 @@ def main() -> int:
     optional = []
     if counts.get("what-if-scenarios", 0) >= 1:
         optional.append("what-if-scenarios")
+    if counts.get("decision-basis", 0) >= 1:
+        optional.append("decision-basis")
+    required_count = len(COMMON_REQUIRED_SECTION_IDS) + 1
     print(
-        "REPORT_OK | structure=complete | sections="
-        f"{len(REQUIRED_SECTION_IDS)}/{len(REQUIRED_SECTION_IDS)}"
+        "REPORT_OK | structure=complete | mode="
+        f"{args.mode} | sections={required_count}/{required_count}"
         + (f" | optional={','.join(optional)}" if optional else "")
     )
     return 0
