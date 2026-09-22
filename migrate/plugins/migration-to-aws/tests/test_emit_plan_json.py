@@ -629,6 +629,23 @@ def test_accuracy_single_value_band_and_stale_cache(tmp_path: Path) -> None:
     assert plan["cost"]["accuracy"] == {"minPercent": 30, "maxPercent": 30, "pricingSource": "CACHED_STALE"}
 
 
+def test_explicit_cached_stale_status_maps_to_cached_stale(tmp_path: Path) -> None:
+    # Once the cache is past its freshness window the estimators set the status DIRECTLY
+    # to "cached_stale" (no nested fallback_staleness flag), e.g. Heroku runs. That
+    # explicit status must still surface as CACHED_STALE, not be dropped.
+    _seed(
+        tmp_path,
+        owning_skill="HEROKU_TO_AWS",
+        accuracy_confidence="±5-10%",
+        pricing_source={"status": "cached_stale"},
+        cost_comparison={"heroku_monthly_baseline": 90},
+    )
+    result = _run(tmp_path)
+
+    plan = json.loads((tmp_path / "plan.json").read_text())
+    assert plan["cost"]["accuracy"] == {"minPercent": 5, "maxPercent": 10, "pricingSource": "CACHED_STALE"}
+
+
 def test_fail_open_on_missing_aws_monthly(tmp_path: Path) -> None:
     _seed(tmp_path, projected={"aws_monthly_premium": 198})  # balanced scenario absent
     result = _run(tmp_path)

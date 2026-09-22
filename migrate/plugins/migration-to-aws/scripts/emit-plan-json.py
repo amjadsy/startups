@@ -90,10 +90,13 @@ PLATFORM_SOURCE_FIELD = {
 }
 
 # The plugin's pricing_source.status values -> the web contract's pricingSource enum.
-# (A "cached" status with fallback_staleness.is_stale is mapped to CACHED_STALE below.)
+# A "cached" status carrying fallback_staleness.is_stale is ALSO mapped to CACHED_STALE
+# by the special case below; this map covers the explicit "cached_stale" status that the
+# estimators emit directly once the cache is past its freshness window.
 PRICING_SOURCE_MAP = {
     "cached": "CACHED",
     "cached_fallback": "CACHED_FALLBACK",
+    "cached_stale": "CACHED_STALE",
     "live": "LIVE",
     "unavailable": "UNAVAILABLE",
 }
