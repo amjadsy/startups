@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-import subprocess
+# Tests invoke only the committed validator using list arguments without a shell.
+import subprocess  # nosec B404
 import sys
 import tempfile
 from pathlib import Path
