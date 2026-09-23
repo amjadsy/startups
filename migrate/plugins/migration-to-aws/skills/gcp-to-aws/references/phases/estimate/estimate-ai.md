@@ -11,13 +11,11 @@ The parent `estimate.md` selects the pricing mode before loading this file.
 **Price lookup order:**
 
 1. **`shared/pricing-cache.md` (primary)** — Look up Bedrock model pricing and source provider pricing by table. Set `pricing_source: "cached"`.
-2. **MCP (secondary)** — If a model is NOT in pricing-cache.md and MCP is available, query `get_pricing("AmazonBedrock", ...)` with model filter and the user's target region. Set `pricing_source: "live"`.
-3. **Cache after MCP failure** — If MCP was attempted but failed, and the model IS in the cache, use the cached price. Set `pricing_source: "cached_fallback"`.
-4. **Unavailable** — If a model is NOT in the cache AND MCP failed, set `pricing_source: "unavailable"` and warn the user.
+2. **Unavailable** — If a model is NOT in the cache, set `pricing_source: "unavailable"` and warn the user. An `_unverified_` cache cell is blocking — do not use it as if it were a confirmed price.
 
 For typical migrations (Claude, Llama, Nova, Mistral, DeepSeek, Gemma, OpenAI gpt-oss, Gemini source pricing), ALL prices are in `pricing-cache.md`. Zero MCP calls needed.
 
-**Model lifecycle:** When building the model comparison table, check `references/shared/ai-model-lifecycle.md` and apply the 90-day exclusion rule:
+**Model lifecycle:** When building the model comparison table, check `references/vendored/ai/ai-model-lifecycle.md` and apply the 90-day exclusion rule:
 
 - **Excluded** (≤90 days to EOL): omit entirely from `model_comparison`, `recommended_model`, and `backup_model`.
 - **Legacy** (>90 days to EOL): include in `model_comparison` with `(Legacy — EOL YYYY-MM-DD)` annotation. Do not select as `recommended_model` unless no Active alternative exists.
@@ -106,7 +104,7 @@ From `ai-workload-profile.json`, record non-monetary factors in `migration_cost_
 - `integration.pattern = "direct_sdk"` → moderate SDK and API pattern changes
 - `integration.pattern = "rest_api"` → higher endpoint, auth, and parsing changes
 - `summary.total_models_detected` > 3 → multi-model coordination
-- `quota_risk = "high"` (from `aws-design-ai.json`) → Bedrock quota increase required before migration; allow 1–5 business days (see `shared/bedrock-quotas.md`)
+- `quota_risk = "high"` (from `aws-design-ai.json`) → Bedrock quota increase required before migration; allow 1–5 business days (see `vendored/ai/bedrock-quotas.md`)
 
 Do **not** repeat these as "costs" in the user-facing summary.
 
@@ -124,7 +122,7 @@ Reference `aws-design-ai.json` → `honest_assessment`. If `"recommend_stay"`, p
 
 **Non-cost benefits to present:** usage counting toward existing AWS commitments, IAM/VPC/PrivateLink/KMS/CloudTrail governance, in-region processing for data residency, prompt caching (Claude, and GPT-5.6 at 90% off cached input with cached tokens exempt from the input-TPM quota), model flexibility (100+ models), AWS ecosystem (Guardrails, Knowledge Bases, AgentCore), and — for a same-model move — the elimination of behavior-delta and prompt-regression risk.
 
-**Pricing source caveat (all providers):** a `pricing-cache.md` cell marked `_unverified_` is **blocking for any quoted figure, whatever the provider** — resolve it from the Bedrock pricing page or the model card before the row enters `model_comparison` or the ROI table; never substitute a guess or a same-tier sibling's rate. The most common cause is the AWS Price List API: it does not carry the proprietary GPT-5.x models (so the `awspricing` MCP returns no rows for them) and it lags new Anthropic frontier launches. An empty MCP result is **not** evidence the model is unavailable or free. See `shared/openai-on-bedrock.md`.
+**Pricing source caveat (all providers):** a `pricing-cache.md` cell marked `_unverified_` is **blocking for any quoted figure, whatever the provider** — resolve it from the Bedrock pricing page or the model card before the row enters `model_comparison` or the ROI table; never substitute a guess or a same-tier sibling's rate. An `_unverified_` cache cell is not evidence the model is unavailable or free — it means the rate was not confirmed when the cache was last updated. See `shared/openai-on-bedrock.md`.
 
 **Unverified gate (all providers, not just OpenAI):** any cell marked `_unverified_` in `shared/pricing-cache.md` — including Anthropic batch cells for models not yet on the [batch-supported models table](https://docs.aws.amazon.com/bedrock/latest/userguide/batch-inference-supported.html) (Sonnet 5, Opus 4.8 as of 2026-09-02) — is blocking for any quoted figure that depends on it. Do not apply a batch discount to an `_unverified_` batch cell; price on-demand and note batch as a possible future saving, or resolve the rate from the Bedrock pricing page first.
 
@@ -282,7 +280,7 @@ All cost values are numbers, not strings. Output must be valid JSON.
 - [ ] `recommendation.path` is one of: `migrate_optimized`, `migrate_phased`, `stay`
 - [ ] If Design `honest_assessment` = `recommend_stay`, then `recommendation.path` = `stay`
 - [ ] `model_comparison` includes ALL viable Bedrock models, not just recommended
-- [ ] Legacy models in `model_comparison` are annotated with EOL dates (per `shared/ai-model-lifecycle.md`)
+- [ ] Legacy models in `model_comparison` are annotated with EOL dates (per `vendored/ai/ai-model-lifecycle.md`)
 - [ ] `recommended_model` is an Active model (not Legacy) unless no Active alternative exists
 - [ ] Neither `recommended_model` nor `backup_model` carries a `restricted (…)` Status in `shared/pricing-cache.md`
 - [ ] Every model has `capabilities_match` checked against `ai_capabilities_required`

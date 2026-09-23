@@ -23,11 +23,11 @@ Read `$MIGRATION_DIR/preferences.json` → `ai_constraints` (if present). If abs
 **Load source-specific design reference based on `ai_source`:**
 
 - `"gemini"` → load `references/design-refs/ai-gemini-to-bedrock.md`
-- `"openai"` → load `references/design-refs/ai-openai-to-bedrock.md` **and**
+- `"openai"` → load `references/vendored/ai/ai-openai-to-bedrock.md` **and**
   `references/shared/openai-on-bedrock.md` (the fact base: model IDs, endpoint paths, region matrix, quotas,
   caching). OpenAI's proprietary GPT models run on Bedrock, so the source model is often itself the target — the
   mapping guide's Tier 0 path is the default, not a cross-family swap.
-- `"anthropic"` → load `references/design-refs/ai-anthropic-to-bedrock.md` (Anthropic SDK → Bedrock Converse API client swap; do NOT use ai-openai-to-bedrock.md for Anthropic SDK users)
+- `"anthropic"` → load `references/vendored/ai/ai-anthropic-to-bedrock.md` (Anthropic SDK → Bedrock Converse API client swap; do NOT use ai-openai-to-bedrock.md for Anthropic SDK users)
 - `"both"` → load both `ai-gemini-to-bedrock.md` and `ai-openai-to-bedrock.md`
 - `"other"` or absent → load `references/design-refs/ai.md` (traditional ML rubric — Vision API, Speech API, Document AI, custom models only; do NOT use for Anthropic SDK users)
 
@@ -39,7 +39,7 @@ Read `$MIGRATION_DIR/preferences.json` → `ai_constraints` (if present). If abs
 
 Read target region from `preferences.json` → `design_constraints.target_region` (default: `us-east-1`).
 
-Call `get_regional_availability` from the `awsknowledge` MCP server for:
+Call `aws___get_regional_availability` from the AWS MCP Server for:
 
 1. Each Bedrock model ID being considered (from the loaded model mapping tables)
 2. If `agentic_profile.is_agentic == true`: check `bedrock-agentcore` (Runtime)
@@ -51,7 +51,7 @@ Call `get_regional_availability` from the `awsknowledge` MCP server for:
 - Note in user summary with alternative region suggestion
 - Do NOT block the design — proceed with the recommendation and flag the constraint
 
-**If MCP call fails after 3 attempts:** Use the static table in `references/shared/ai-migration-guardrails.md` as fallback. Add `"regional_validation": "fallback_static"` to output metadata.
+**If MCP call fails:** Use the static table in `references/vendored/ai/ai-migration-guardrails.md` as fallback. Add `"regional_validation": "fallback_static"` to output metadata.
 
 ---
 
@@ -61,15 +61,15 @@ Call `get_regional_availability` from the `awsknowledge` MCP server for:
 
 If `agentic_profile.is_agentic == true`:
 
-1. Load `references/shared/ai-migration-guardrails.md` (shared warnings — load once, do not reload in sub-files)
+1. Load `references/vendored/ai/ai-migration-guardrails.md` (shared warnings — load once, do not reload in sub-files)
 2. Read `preferences.json` → `ai_constraints.agentic.migration_approach`
 3. Route based on approach:
 
 | `migration_approach` | Action                                                                                                                                                                                                                                                                                                                                                    |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `"retarget"`         | Continue with standard model-swap design below (Parts 1–6). The existing framework stays; only the model layer changes. Load `references/shared/retarget-gotchas.md` for framework-specific migration pitfalls to include in the code migration plan (Part 5).                                                                                            |
-| `"harness"`          | Load `references/design-refs/design-ref-harness.md`. If file does not exist: continue with standard model-swap design, add note to user summary: "AgentCore Harness design reference not yet available. Proceeding with model-layer migration only. For Harness guidance, see https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness.html" |
-| `"strands"`          | Load `references/design-refs/design-ref-agentic-to-agentcore.md`.                                                                                                                                                                                                                                                                                         |
+| `"harness"`          | Load `references/vendored/ai/design-ref-harness.md`. If file does not exist: continue with standard model-swap design, add note to user summary: "AgentCore Harness design reference not yet available. Proceeding with model-layer migration only. For Harness guidance, see https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness.html" |
+| `"strands"`          | Load `references/vendored/ai/design-ref-agentic-to-agentcore.md`.                                                                                                                                                                                                                                                                                         |
 | `"undecided"`        | Treat as `"retarget"` (safest default). Note in user summary: "No migration approach selected — defaulting to retarget (keep framework, swap model layer). Re-run Clarify to select a different approach."                                                                                                                                                |
 
 **Regardless of approach:** Continue with Parts 1–6 below for model selection and mapping. The agentic design ref (Harness/Strands) adds agent infrastructure on top of the model-layer design — it does not replace it.
@@ -82,7 +82,7 @@ Read `preferences.json` → `design_constraints.compliance` (from full-flow Q2 o
 
 | Compliance value | Constraint applied in this design                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hipaa`          | Candidate models restricted to **BAA-eligible Bedrock models** — verify eligibility per model via the AWS Documentation MCP server before shortlisting. Add to the code migration plan (Part 5): Bedrock invocation logging keeps ORIGINAL content in CloudWatch (Guardrails PII masking does not apply to logs) — require KMS encryption + restricted IAM on the log group. Prefer us-east-1/us-west-2.                                                                |
+| `hipaa`          | Candidate models restricted to **BAA-eligible Bedrock models** — verify eligibility per model via `aws___search_documentation` (AWS MCP Server) before shortlisting. Add to the code migration plan (Part 5): Bedrock invocation logging keeps ORIGINAL content in CloudWatch (Guardrails PII masking does not apply to logs) — require KMS encryption + restricted IAM on the log group. Prefer us-east-1/us-west-2.                                                   |
 | `fedramp`        | Target region forced to **GovCloud** (us-gov-east-1/us-gov-west-1); re-run Step 0.5 regional validation against GovCloud — the model catalog is materially smaller, and a `regional_warnings[]` entry is REQUIRED for every candidate model not available there.                                                                                                                                                                                                        |
 | `gdpr`           | Target region restricted to EU (eu-west-1, eu-central-1); model IDs must use **geographic `eu.` inference profiles** — `global.` profiles route outside the EU boundary and are forbidden. Note the GCP-EU → AWS-EU transfer in the summary. Exclude any candidate with no `eu.` Geo profile, including Fable 5 / 5.1 and Mythos. Fable 5's in-region access is limited to `bedrock-mantle` in us-east-1; both use `us.` / `global.` profiles on `bedrock-runtime`.     |
 | `pci`            | Part 5 plan must include: no cardholder data in prompts without tokenization; CloudTrail on Bedrock API calls; scoped IAM (no `bedrock:*`).                                                                                                                                                                                                                                                                                                                             |
@@ -217,7 +217,7 @@ confirmed unsupported API surface. Record which one in `honest_assessment_reason
 
 **Model comparison table** (include in output and user summary): Model, Provider, Max Context, Input/Output Price per 1M, Price Comparison, Streaming, Function Calling, Assessment.
 
-**Quota risk assessment** (per `references/shared/bedrock-quotas.md`):
+**Quota risk assessment** (per `references/vendored/ai/bedrock-quotas.md`):
 
 After selecting models, assess quota risk based on `ai_token_volume` from `preferences.json`:
 
@@ -365,7 +365,7 @@ For each detected `integration.pattern` and `ai_source`, generate before/after m
 
 **No Converse fallback for proprietary GPT models.** The GPT-5.x models are `bedrock-mantle` only and in-region only — there is no `bedrock-runtime` path and no cross-region inference profile. If the workload needs Bedrock Guardrails, Knowledge Bases, invocation logging, or a region these models do not serve, that requires a **model change** to a Bedrock-native model (or gpt-oss), not an endpoint change. Record `migration_path: "converse"` with `model_change: true` in that case.
 
-**Mantle throughput (medium/high volume):** quotas on `bedrock-mantle` are **per-model, per-region input TPM and output TPM — there is no RPM quota**. For `ai_token_volume = "medium"` or `"high"`, note: "Mantle enforces per-model input/output TPM quotas per region; 429s indicate a TPM ceiling, not a request-rate cap. Mitigate with exponential backoff, spreading load across minutes, and prompt caching (cached input is exempt from the input-TPM quota). There is no `bedrock-runtime` fallback for these models, so sustained growth needs a quota increase." See `references/shared/ai-migration-guardrails.md`.
+**Mantle throughput (medium/high volume):** quotas on `bedrock-mantle` are **per-model, per-region input TPM and output TPM — there is no RPM quota**. For `ai_token_volume = "medium"` or `"high"`, note: "Mantle enforces per-model input/output TPM quotas per region; 429s indicate a TPM ceiling, not a request-rate cap. Mitigate with exponential backoff, spreading load across minutes, and prompt caching (cached input is exempt from the input-TPM quota). There is no `bedrock-runtime` fallback for these models, so sustained growth needs a quota increase." See `references/vendored/ai/ai-migration-guardrails.md`.
 
 **gpt-oss migration path:** If `ai_source = "openai"` and the user wants OpenAI-architecture models on the Bedrock-native runtime surface, offer `gpt-oss` as an additional path. Unlike the proprietary GPT models, gpt-oss **does** support `bedrock-runtime` (Converse / InvokeModel), so it is the option when Guardrails or invocation logging are required and an OpenAI-lineage model is preferred. It sits a capability class below the GPT-5.x frontier tier. Record `migration_path: "gpt-oss"`.
 
