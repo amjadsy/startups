@@ -56,7 +56,9 @@ Cached anchors (order-of-magnitude, us-east-1, verify; last updated 2025-07-14):
 - AgentCore microVMs: use `unit.agentcore_platform.version` to select the V1 or V2 consumption
   rates from the `microvms_pricing` fact in `references/runtimes/agentcore.json`. Use that fact's
   own source and `as_of` date, independently of the older anchors below; keep rates in this
-  single cache. Refresh for the target Region via the AWS MCP Server and record the actual source/date.
+  single cache and record its original source/date. Use `pricing_source: cached` or
+  `cached_stale` under Step 2; do not issue a live price lookup. State the target-Region
+  assumption and warn when its rate is not established by the cache.
   Missing platform on an older run requires Design resolution; never silently use V1 prices.
 - AgentCore (Instances compute type, `agentcore_compute_type: "instances"` in design.json):
   EC2 On-Demand rate for the chosen instance type (user's Savings Plans / ODCRs apply) PLUS

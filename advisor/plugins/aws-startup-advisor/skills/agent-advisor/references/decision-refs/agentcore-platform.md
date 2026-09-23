@@ -64,9 +64,10 @@ record; they do not select a version independently.
 ## Service facts to refresh
 
 The following are **cached as of 2026-09-21**, not verification of a future run. Refresh the
-profile's `platform_versions`, `v2_regions`, `v2_constraints`, `microvms_pricing`, and
-`microvms_memory_billing` facts
-under `freshness.md`. Record actual lookup results, including failures.
+profile's `platform_versions`, `v2_regions`, `v2_constraints`, and `microvms_memory_billing`
+facts under `freshness.md`. Record actual lookup results, including failures. Versioned
+CPU/memory unit rates in `microvms_pricing` remain dated cache inputs under Estimate
+— they are not refreshed through MCP or reported as verified this run.
 
 - V2 Regions: `us-east-1`, `us-east-2`, `us-west-2`, `eu-west-1`, `ap-northeast-1`.
 - V2 environment variable total: direct code 1.5 KB; containers 2.5 KB (V1: 4 KB). Inspect

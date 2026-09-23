@@ -81,8 +81,7 @@
       },
       "as_of": "2026-09-21",
       "source": "https://aws.amazon.com/bedrock/agentcore/pricing/",
-      "verification_channel": "aws-mcp",
-      "verify_via_mcp": true
+      "verify_via_mcp": false
     },
     {
       "key": "microvms_memory_billing",
