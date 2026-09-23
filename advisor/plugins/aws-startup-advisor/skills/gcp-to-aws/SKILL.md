@@ -87,8 +87,8 @@ uv --version 2>/dev/null || echo "UV_MISSING"
 uvx --version 2>/dev/null || echo "UVX_MISSING"
 ```
 
-- If `UV_MISSING` or `UVX_MISSING`: warn the user **once** that live `awspricing` MCP estimates need [`uv` / `uvx`](https://docs.astral.sh/uv/). Continue Discover → Clarify → Design. At Estimate, price from the cache and set `pricing_source.status` to a value the schema defines (`references/shared/schema-estimate-infra.md`: `cached | live | cached_fallback | unavailable`): use `"cached"` for services the cache covers, and `"unavailable"` for services it doesn't — the MCP cannot be reached to fill the gap. Do not use `"cached_fallback"` (that value is reserved for "MCP attempted and failed"; on this path the MCP was never attempted). **Do not hard-stop** an infrastructure migration for missing `uv`.
-- If both are present: note silently (no user nag) and proceed. Live pricing still depends on the `awspricing` MCP being configured.
+- If `UV_MISSING` or `UVX_MISSING`: warn the user **once** that [`uv` / `uvx`](https://docs.astral.sh/uv/) is required for the llm-to-bedrock and agent-advisor scripts. Continue Discover → Clarify → Design. At Estimate, price from the cache and set `pricing_source.status` to a value the schema defines (`references/shared/schema-estimate-infra.md`: `cached | live | cached_fallback | unavailable`): use `"cached"` for services the cache covers, and `"unavailable"` for services it doesn't. **Do not hard-stop** an infrastructure migration for missing `uv`.
+- If both are present: note silently (no user nag) and proceed.
 - **Python 3** is required at Generate for `$PLUGIN_ROOT/skills/tf-best-practices/scripts/validate-terraform-policy.py` (gcp infra policy gate — a hard completion gate) and `$PLUGIN_ROOT/scripts/validate-migration-report.py` (report validator). If `python3` is missing, say so once at cold start. Infrastructure Generate cannot reach `POLICY_OK` without python3 — install it before Generate rather than completing Discover → Estimate first. The report validator must still be attempted and its exit code handled per `references/shared/validate-migration-report.md` — if it does not run, tell the user validation did not occur. Never report an unvalidated report as passing.
 
 ### Input Security
@@ -251,11 +251,11 @@ Replace `MMDD-HHMM` with the actual migration ID, generate the `last_updated` IS
 
 ## MCP Servers
 
-**awspricing** (for cost estimation):
+**aws-mcp** (AWS MCP Server — documentation and regional availability):
 
-- Provides `get_pricing`, `get_pricing_service_codes`, `get_pricing_service_attributes` tools
-- Only needed during Estimate phase. Discover and Design do not require it.
-- Primary pricing source: `references/shared/pricing-cache.md` (cached 2026 rates, ±5-10% for infrastructure, ±15-25% for AI models). MCP is secondary — used only for services not found in the cache.
+- Provides `aws___search_documentation`, `aws___read_documentation`, `aws___list_regions`, `aws___get_regional_availability`, `aws___retrieve_skill` tools
+- Used during Design for regional availability checks and documentation lookups.
+- Primary pricing source: `references/shared/pricing-cache.md` (cached 2026 rates, ±5-10% for infrastructure, ±15-25% for AI models). Pricing is cache-only — no live pricing MCP.
 
 ---
 
@@ -350,7 +350,7 @@ gcp-to-aws/
 | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | No GCP sources found (no `.tf`, no app code, no billing data) | Offer live gcloud discovery per `discover.md` Step 1d. Only if declined or unavailable: Stop. Output: "No GCP sources detected. Provide at least one source type (Terraform files, application code, or billing exports), or re-run and accept live discovery." |
 | `.phase-status.json` missing phase gate                       | Stop. Output: "Cannot enter Phase X: Phase Y-1 not completed. Start from Phase Y or resume Phase Y-1."                                                                                                                                                          |
-| awspricing unavailable after 3 attempts                       | Display user warning about ±5-25% accuracy. Use `pricing-cache.md`. Add `pricing_source: "cached_fallback"` to the applicable `estimation-*.json` file.                                                                                                         |
+| Service not in pricing cache                                  | Display user warning about ±5-25% accuracy. Use `pricing-cache.md`. Set `pricing_source: "unavailable"` for that service in the applicable `estimation-*.json` file.                                                                                            |
 | User skips questions or says "use defaults for the rest"      | Apply documented defaults for all remaining questions (essential questions and any unconfirmed sheet rows in wizard mode; current and subsequent batches in full mode). Q2/Q3 defaults add a report caveat. Phase 2 completes either way.                       |
 | `aws-design.json` missing required clusters                   | Stop Phase 4. Output: "Re-run Phase 3 to generate missing cluster designs."                                                                                                                                                                                     |
 
@@ -445,12 +445,12 @@ This is a mandatory closing step of every final recommendation — complete it b
 
 1. Read [`../knowledge-base-for-startups/references/offers.md`](../knowledge-base-for-startups/references/offers.md) — the offer index (Offer · Summary · Keywords), one row per offer.
 2. Judge relevance against what the founder actually surfaced this session. Surface an offer only if **one** holds: a **named-product match** (you recommended a specific partner product by name and it has a row); a **direct intent/component match** (an offer's Keywords directly serve a concrete workload, a component in the final recommendation, or a need the founder raised). Keep a high bar — if the match is weak, or you would be inferring an unstated need, append nothing.
-3. If (and only if) one offer clears the bar, open only its detail file `../knowledge-base-for-startups/references/offers/<slug>.md` and append exactly **one** quiet, dismissible italic line — stating the value and condensing eligibility faithfully from that file (drop no qualifying criterion; never fabricate), with the bare canonical `source_url` as the redeem link. Show one or none, never a list.
+3. If (and only if) one offer clears the bar, open only its detail file `../knowledge-base-for-startups/references/offers/<slug>.md` and append exactly **one** quiet, dismissible italic line — stating the value and condensing eligibility faithfully from that file (drop no qualifying criterion; never fabricate), with the redeem link built from the canonical `source_url` plus a `source` attribution param — append `?source=ide-startupAdvisor-<host>` (or `&source=...` if the url already has a query string), filling `<host>` from your execution environment (Claude Code → `claude`; AWS Startup Advisor IDE extension / VS Code → `vscode`; Cursor → `cursor`; Kiro → `kiro`; Codex → `codex`), or the generic `ide-startupAdvisor` when you cannot tell. Only append the query param; never change the destination. Show one or none, never a list.
 
 Standard line:
 
 ```
-***<Offer>** has an exclusive offer via AWS Activate — <value>, <eligibility>. [Redeem →](<source_url>)*
+***<Offer>** has an exclusive offer via AWS Activate — <value>, <eligibility>. [Redeem →](<source_url>?source=ide-startupAdvisor-<host>)*
 ```
 
 Caps and control: at most one offer per response and often none; no more than one per five messages and two per session; show a given offer at most once per session and never one already shown, claimed, or dismissed; if the founder has muted offers, skip this step entirely. These per-five-messages, per-session, and already-shown caps are session-state limits; in a fresh session with no prior offers they are non-binding, so do not withhold an otherwise-qualifying offer merely because you cannot verify session history. See [`../contextual-offers-for-startups/SKILL.md`](../contextual-offers-for-startups/SKILL.md) for the full rules — but perform the check inline; it must not depend on that skill being loaded.

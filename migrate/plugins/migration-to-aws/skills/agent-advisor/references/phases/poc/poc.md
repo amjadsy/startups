@@ -141,7 +141,7 @@ resolution. These identities must remain separate.
 
 Use an invocation ID in runnable code only when that unit's `model-verification.json` record
 has `status: passed` and exactly matches the recommendation's `api_path` and
-`invocation_model_id`. A catalog date, an awsknowledge lookup, user acceptance, or a non-null
+`invocation_model_id`. A catalog date, an AWS MCP Server lookup, user acceptance, or a non-null
 CRIS-shaped string is not proof of account access. If the probe was not run, failed, or needs
 resolution, write a clearly marked `TODO: verify model id` placeholder in generated files and
 state that the POC has not established runnable model access.
@@ -356,7 +356,7 @@ tools/Gateway + Memory), not custom serving code. Generate:
    deploy` with an `agentcore.json` project config) — NOT via the Python starter-toolkit's
    `configure --entrypoint agent.py` + `launch` (that toolkit only supports the
    code/container path). The exact Harness CLI commands are **volatile**: verify via the
-   awsknowledge MCP (freshness rule); if not verified this run, write the command block with
+   AWS MCP Server (freshness rule); if not verified this run, write the command block with
    `# TODO: verify Harness CLI commands against AWS docs` and say so in the README.
 3. **`poc/README.md`** — per 3e, plus one line stating this is a declarative Harness
    deployment: "no agent serving code to maintain; the agent is defined by harness.json."
@@ -565,7 +565,7 @@ if __name__ == "__main__":
   types, sessions to 14 days), which this POC does not exercise", plus a next-steps
   block naming the capacity-provider setup (create capacity provider → create runtime
   with compute type Instances → same invoke path). Verify current capacity-provider
-  CLI/API usage via the awsknowledge MCP before writing that block (freshness rule).
+  CLI/API usage via the AWS MCP Server before writing that block (freshness rule).
 - For a microVM target, copy `scripts/set_agentcore_platform.py` into the POC. After
   `agentcore configure` / `agentcore launch`, use it to set and read back the planned platform.
   Preserve the Instances functional-POC warning above: its microVM POC needs its own explicit
@@ -576,7 +576,7 @@ if __name__ == "__main__":
   `read -p "Type 'deploy' to continue: "` confirmation before any `agentcore` call.
 - Parameterize region + model id via env vars; do NOT embed credentials.
 - **The exact `agentcore` CLI flags are volatile** — verify current `configure`/`launch` usage
-  via the awsknowledge MCP (freshness rule). If not verified this run, keep the
+  via the AWS MCP Server (freshness rule). If not verified this run, keep the
   `# TODO: verify current agentcore CLI flags against AWS docs` comment above the commands.
 
 Use this template for a verified microVM POC. Substitute `PLATFORM_VERSION` from the unit's
@@ -622,7 +622,7 @@ fi
 uv run --with boto3 python set_agentcore_platform.py --check-sdk
 # Preflight passed. Invalidate prior evidence before the first provisioning command.
 rm -f runtime-verification.json
-# TODO: verify current agentcore CLI flags against AWS docs (awsknowledge MCP)
+# TODO: verify current agentcore CLI flags against AWS docs (AWS MCP Server)
 agentcore configure --entrypoint agent.py --name "$AGENT_NAME" --region "$AWS_REGION"
 agentcore launch --agent "$AGENT_NAME" --auto-update-on-conflict --env AWS_REGION="$AWS_REGION" --env BEDROCK_MODEL_ID="$BEDROCK_MODEL_ID"
 

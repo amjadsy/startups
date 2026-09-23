@@ -81,7 +81,7 @@
       },
       "as_of": "2026-09-21",
       "source": "https://aws.amazon.com/bedrock/agentcore/pricing/",
-      "verification_channel": "awspricing",
+      "verification_channel": "aws-mcp",
       "verify_via_mcp": true
     },
     {
@@ -94,7 +94,7 @@
       },
       "as_of": "2026-09-21",
       "source": "https://aws.amazon.com/bedrock/agentcore/pricing/",
-      "verification_channel": "awsknowledge",
+      "verification_channel": "aws-mcp",
       "verify_via_mcp": true
     },
     {
