@@ -36,51 +36,144 @@ import sys
 from html.parser import HTMLParser
 from pathlib import Path
 
-REQUIRED_SECTION_IDS = [
+# Sections required in BOTH report modes. cost-optimization is required in full
+# mode only (see _required_sections) — the decision pack is pre-execution and does
+# not carry the optimization table.
+COMMON_REQUIRED_SECTION_IDS = [
     "decision-summary",
     "exec-costs",
-    "cost-optimization",
-    "next-steps",
 ]
+# The structural difference between modes: full (migration-report.html) ends on a
+# next-steps list AND carries cost-optimization; decision (decision-report.html) ends
+# on a decision-cta pointing at Generate (next-steps assumes MIGRATION_GUIDE.md /
+# terraform/ already exist — they don't yet in decision mode).
+MODE_REQUIRED_SECTION_ID = {
+    "full": "next-steps",
+    "decision": "decision-cta",
+}
 
-SECTION_OPEN = re.compile(
-    r'<section\b[^>]*\bid=["\']([^"\']+)["\'][^>]*>',
-    re.IGNORECASE,
-)
+
+def _required_sections(mode: str) -> list[str]:
+    required = [*COMMON_REQUIRED_SECTION_IDS, MODE_REQUIRED_SECTION_ID[mode]]
+    if mode == "full":
+        required.append("cost-optimization")
+    return required
+
+# Section identity/count/fragment come from the stdlib HTML parser, never a
+# raw-source regex, so that:
+#   - a <section id="..."> that exists ONLY inside an HTML comment (e.g. the
+#     skeleton's commented `<!-- <section id="what-if-scenarios"> -->` placeholder)
+#     is never counted — HTMLParser routes comment text to handle_comment and
+#     never re-tokenizes it as a tag;
+#   - a section wrapped in an inert subtree (<template>/<script>/<style>) is not
+#     counted — it is never rendered, so it must not satisfy a required-section
+#     gate, and its inner HTML is not returned as a section fragment;
+#   - the real `id` attribute is read regardless of spelling (quoted, unquoted,
+#     or spaced `id = "x"`), and a `data-id` (or any non-`id` attribute) is NOT
+#     mistaken for the section id;
+#   - a duplicate that exists only in a comment does not inflate the count.
+_SECTION_INERT_TAGS = {"script", "style", "template"}
+
+
+class _SectionParser(HTMLParser):
+    """Parse rendered <section> structure: per-id counts and inner-HTML fragments,
+    excluding comments and inert (script/style/template) subtrees."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)  # keep raw text/entities in fragments
+        self.counts: dict[str, int] = {}
+        # Captured fragments: id -> list of inner-HTML strings (document order).
+        self.fragments: dict[str, list[str]] = {}
+        self._inert_depth = 0
+        # Stack of open sections we are capturing: each {id, parts, seen_depth}.
+        self._open_sections: list[dict] = []
+        self._section_depth = 0  # nesting depth of <section> (for fragment close)
+
+    def _emit(self, markup: str) -> None:
+        # Append raw markup to every section fragment currently being captured.
+        for s in self._open_sections:
+            s["parts"].append(markup)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in _SECTION_INERT_TAGS:
+            self._inert_depth += 1
+            return
+        if self._inert_depth > 0:
+            return  # inside an inert subtree — not rendered
+        if tag == "section":
+            sid = dict(attrs).get("id")
+            self._section_depth += 1
+            if sid:
+                self.counts[sid] = self.counts.get(sid, 0) + 1
+                self.fragments.setdefault(sid, [])
+                self._open_sections.append(
+                    {"id": sid, "parts": [], "depth": self._section_depth}
+                )
+            return
+        self._emit(self.get_starttag_text() or "")
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in _SECTION_INERT_TAGS or self._inert_depth > 0:
+            return
+        if tag == "section":
+            sid = dict(attrs).get("id")
+            if sid:
+                self.counts[sid] = self.counts.get(sid, 0) + 1
+                self.fragments.setdefault(sid, []).append("")
+            return
+        self._emit(self.get_starttag_text() or "")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in _SECTION_INERT_TAGS:
+            if self._inert_depth > 0:
+                self._inert_depth -= 1
+            return
+        if self._inert_depth > 0:
+            return
+        if tag == "section":
+            # Close the innermost open captured section at this depth.
+            while self._open_sections and self._open_sections[-1]["depth"] >= self._section_depth:
+                done = self._open_sections.pop()
+                self.fragments.setdefault(done["id"], []).append("".join(done["parts"]))
+            if self._section_depth > 0:
+                self._section_depth -= 1
+            return
+        self._emit(f"</{tag}>")
+
+    def handle_data(self, data: str) -> None:
+        if self._inert_depth == 0:
+            self._emit(data)
+
+    def handle_entityref(self, name: str) -> None:
+        if self._inert_depth == 0:
+            self._emit(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        if self._inert_depth == 0:
+            self._emit(f"&#{name};")
+
+
+def _parse_sections(html: str) -> _SectionParser:
+    parser = _SectionParser()
+    parser.feed(html)
+    parser.close()
+    return parser
 
 
 def _section_counts(html: str) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for match in SECTION_OPEN.finditer(html):
-        sid = match.group(1)
-        counts[sid] = counts.get(sid, 0) + 1
-    return counts
+    """Count rendered <section id> occurrences (comments/inert excluded)."""
+    return _parse_sections(html).counts
 
 
 def _section_html(html: str, section_id: str) -> str | None:
-    """Return the inner HTML of <section id="section_id"> ... </section>.
-
-    Brace-free, tag-depth match on <section> so a nested <section> does not
-    truncate early. Returns None when the section is absent.
-    """
-    open_re = re.compile(
-        rf'<section\b[^>]*\bid=["\']{re.escape(section_id)}["\'][^>]*>',
-        re.IGNORECASE,
-    )
-    m = open_re.search(html)
-    if not m:
+    """Return the inner HTML of the first rendered <section id="section_id">,
+    or None when it is absent (or exists only in a comment/inert subtree). A
+    nested <section> does not truncate early — the parser closes on the
+    matching depth."""
+    frags = _parse_sections(html).fragments.get(section_id)
+    if not frags:
         return None
-    depth = 1
-    pos = m.end()
-    tag_re = re.compile(r"</?section\b", re.IGNORECASE)
-    for tag in tag_re.finditer(html, pos):
-        if tag.group(0).lower().startswith("</"):
-            depth -= 1
-            if depth == 0:
-                return html[m.end():tag.start()]
-        else:
-            depth += 1
-    return html[m.end():]
+    return frags[0]
 
 
 def _body_scope(html: str) -> str:
@@ -593,16 +686,28 @@ def _validate_accessibility(html: str) -> list[str]:
     return errors
 
 
-def validate(html: str, migration_dir: Path | None) -> list[str]:
+def validate(html: str, migration_dir: Path | None, mode: str = "full") -> list[str]:
     errors: list[str] = []
     counts = _section_counts(html)
 
-    for sid in REQUIRED_SECTION_IDS:
+    for sid in _required_sections(mode):
         n = counts.get(sid, 0)
         if n == 0:
             errors.append(f'missing required <section id="{sid}">')
         elif n > 1:
             errors.append(f'duplicate <section id="{sid}"> ({n} occurrences)')
+
+    # The other mode's terminal section must NOT appear — decision-report.html must
+    # not carry a next-steps pointer into an execution pack that does not exist yet,
+    # and migration-report.html must not carry the pre-execution decision-cta once the
+    # real next-steps exists.
+    other_mode = "decision" if mode == "full" else "full"
+    other_terminal = MODE_REQUIRED_SECTION_ID[other_mode]
+    if counts.get(other_terminal, 0) >= 1:
+        errors.append(
+            f'--mode {mode} report must not contain <section id="{other_terminal}"> '
+            f"(that is the {other_mode}-mode terminal section)"
+        )
 
     if "draft for review" not in html.lower():
         errors.append('footer must contain "draft for review" disclaimer')
@@ -613,8 +718,9 @@ def validate(html: str, migration_dir: Path | None) -> list[str]:
     # item 6: a table of real opportunity rows, or the explicit no-eligible-commitment
     # sentence — never empty, and never satisfied by a heading or table-header text
     # alone). A heading like "Cost Optimization Opportunities" or a table with only
-    # column headers and an empty <tbody> must not pass as content.
-    if counts.get("cost-optimization", 0) >= 1:
+    # column headers and an empty <tbody> must not pass as content. Full mode only —
+    # the decision pack carries no optimization table.
+    if mode == "full" and counts.get("cost-optimization", 0) >= 1:
         body = _section_html(html, "cost-optimization") or ""
         errors.extend(_validate_optimization_content(body))
 
@@ -635,6 +741,63 @@ def validate(html: str, migration_dir: Path | None) -> list[str]:
                     '<section id="what-if-scenarios">'
                 )
 
+        # generate-report.md / report-decision-core.md § decision-basis: when Estimate
+        # declared decision_basis (evidence/assumptions behind the verdict), the report
+        # MUST render it — in both modes, since decision mode reuses these exact content
+        # rules. Read the same estimation-infra.json the report was built from, so a
+        # report that silently drops decision-basis cannot still say REPORT_OK.
+        est_path = migration_dir / "estimation-infra.json"
+        if est_path.is_file():
+            try:
+                est = json.loads(est_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                est = None
+            decision_basis = ((est or {}).get("recommendation") or {}).get("decision_basis")
+            if decision_basis and counts.get("decision-basis", 0) < 1:
+                errors.append(
+                    "estimation-infra.json declares recommendation.decision_basis "
+                    'but the report has no <section id="decision-basis"> '
+                    '("What This Assessment Rests On")'
+                )
+
+    if mode == "decision" and migration_dir is not None:
+        # Decision mode's invariant: THIS decide-complete cycle has not itself gone
+        # through Generate yet (phases.generate is "pending"/absent). It is NOT "no
+        # terraform/ file exists" — a prior Generate/workshop-reprice cycle's execution
+        # pack can legitimately still be on disk (workshop re-entry preserves it). The
+        # signal is .phase-status.json's own bookkeeping, not the filesystem.
+        #
+        # Fail open ONLY on a genuinely MISSING status file (no run ever tracked state
+        # here, e.g. the isolated unit-test path). Do NOT fail open on a file that
+        # EXISTS but is unreadable/invalid JSON: that is corruption, and INTERPRETER.md
+        # § State-file validation says invalid JSON is a STOP condition, not "no state."
+        phase_path = migration_dir / ".phase-status.json"
+        generate_status: str | None = None
+        if phase_path.is_file():
+            try:
+                phase_text = phase_path.read_text(encoding="utf-8")
+                if not phase_text.strip():
+                    raise json.JSONDecodeError("empty file", phase_text, 0)
+                phase = json.loads(phase_text)
+            except (OSError, json.JSONDecodeError) as exc:
+                errors.append(
+                    "decision mode: .phase-status.json exists but could not be "
+                    f"read/parsed ({exc}) — state corrupted (invalid JSON). Delete the "
+                    "file and restart the current phase (INTERPRETER.md § State-file "
+                    "validation); an unreadable state file is not evidence of a "
+                    "pre-execution decision"
+                )
+            else:
+                generate_status = (phase or {}).get("phases", {}).get("generate")
+        if generate_status in ("completed", "in_progress"):
+            errors.append(
+                "decision mode: .phase-status.json phases.generate is "
+                f"{generate_status!r} — this decide-complete cycle already went through "
+                "Generate; decision mode is pre-execution only for the CURRENT cycle (a "
+                "prior cycle's execution pack may legitimately remain on disk after a "
+                "workshop reprice)"
+            )
+
     return errors
 
 
@@ -642,6 +805,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("report_path", type=Path)
     parser.add_argument("--migration-dir", type=Path, default=None)
+    parser.add_argument(
+        "--mode",
+        choices=["full", "decision"],
+        default="full",
+        help="full = migration-report.html (default); decision = decision-report.html",
+    )
     args = parser.parse_args()
 
     if not args.report_path.is_file():
@@ -649,7 +818,7 @@ def main() -> int:
         return 1
 
     html = args.report_path.read_text(encoding="utf-8")
-    errors = validate(html, args.migration_dir)
+    errors = validate(html, args.migration_dir, args.mode)
     if errors:
         print(f"REPORT_FAIL | file={args.report_path} | errors={len(errors)}", file=sys.stderr)
         for err in errors:
@@ -660,9 +829,10 @@ def main() -> int:
     optional = []
     if counts.get("what-if-scenarios", 0) >= 1:
         optional.append("what-if-scenarios")
+    required = _required_sections(args.mode)
     print(
         "REPORT_OK | structure=complete | sections="
-        f"{len(REQUIRED_SECTION_IDS)}/{len(REQUIRED_SECTION_IDS)}"
+        f"{len(required)}/{len(required)}"
         + (f" | optional={','.join(optional)}" if optional else "")
     )
     return 0

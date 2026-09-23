@@ -11,6 +11,13 @@ _contributes:
 > clone — decision + costs + optional what-if scenarios, then point at
 > `MIGRATION_GUIDE.md` for procedure. Runs **after** docs so the guide exists
 > when the report links to it.
+>
+> **This file is the single source of truth for `decision-summary` /
+> `decision-basis` / `exec-costs` / `what-if-scenarios` content rules.**
+> `references/shared/report-decision-core.md` (loaded by the Decision gate,
+> `estimate-assemble.md` choice A) reuses these same rules to render
+> `decision-report.html` — it does not restate them. If you change a section's
+> content rule here, it applies to both outputs.
 
 **Execute ALL steps in order. Do not skip.**
 
@@ -246,7 +253,7 @@ dispatched):
 
 ```
 python3 "<SKILL_BASE>/scripts/validate-heroku-migration-report.py" \
-  "$MIGRATION_DIR/migration-report.html" --migration-dir "$MIGRATION_DIR"
+  "$MIGRATION_DIR/migration-report.html" --mode full --migration-dir "$MIGRATION_DIR"
 ```
 
 `REPORT_OK` → the report gate passes. `REPORT_FAIL` → the main-window step emits `GATE_FAIL` **and
