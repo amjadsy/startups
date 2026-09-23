@@ -101,6 +101,9 @@ class _SectionParser(HTMLParser):
         if self._inert_depth > 0:
             return  # inside an inert subtree — not rendered
         if tag == "section":
+            # Keep nested section attributes in the containing fragment so a
+            # second parser retains cost anchors and hidden ancestry.
+            self._emit(self.get_starttag_text() or "")
             sid = dict(attrs).get("id")
             self._section_depth += 1
             if sid:
@@ -116,6 +119,7 @@ class _SectionParser(HTMLParser):
         if tag in _SECTION_INERT_TAGS or self._inert_depth > 0:
             return
         if tag == "section":
+            self._emit(self.get_starttag_text() or "")
             sid = dict(attrs).get("id")
             if sid:
                 self.counts[sid] = self.counts.get(sid, 0) + 1
@@ -137,6 +141,7 @@ class _SectionParser(HTMLParser):
                 self.fragments.setdefault(done["id"], []).append("".join(done["parts"]))
             if self._section_depth > 0:
                 self._section_depth -= 1
+            self._emit("</section>")
             return
         self._emit(f"</{tag}>")
 

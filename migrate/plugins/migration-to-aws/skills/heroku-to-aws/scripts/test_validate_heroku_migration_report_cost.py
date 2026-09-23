@@ -102,6 +102,33 @@ def test_nested_markup_reads() -> None:
     assert "cost figure mismatch" not in out
 
 
+def test_nested_section_anchor_is_preserved() -> None:
+    html = GOOD.replace(
+        '<span data-cost-key="aws_monthly_balanced">$112/mo</span>',
+        '<section data-cost-key="aws_monthly_balanced">$112/mo</section>',
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        migration_dir = _est_dir(tmp, 112)
+        for mode in ("full", "decision"):
+            report = html if mode == "full" else html.replace('id="next-steps"', 'id="decision-cta"')
+            code, out = run(report, migration_dir, mode=mode)
+            assert code == 0, out
+
+
+def test_hidden_nested_section_does_not_supply_required_anchor() -> None:
+    html = GOOD.replace(
+        '<span data-cost-key="aws_monthly_balanced">$112/mo</span>',
+        '<section hidden><span data-cost-key="aws_monthly_balanced">$112/mo</span></section>$999/mo',
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        migration_dir = _est_dir(tmp, 112)
+        for mode in ("full", "decision"):
+            report = html if mode == "full" else html.replace('id="next-steps"', 'id="decision-cta"')
+            code, out = run(report, migration_dir, mode=mode)
+            assert code == 1, out
+            assert 'missing data-cost-key="aws_monthly_balanced"' in out
+
+
 def test_non_numeric_json_value_fails_not_crash() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         d = Path(tmp)
