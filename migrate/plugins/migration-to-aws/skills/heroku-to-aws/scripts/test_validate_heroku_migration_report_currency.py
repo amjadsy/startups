@@ -1,27 +1,26 @@
 """Currency-formatting tests for the heroku-to-aws report validator.
 
-Kept in a separate module rather than extending an existing Heroku report
-test suite: none exists yet on this branch (validate-heroku-migration-report.py
-has zero test coverage on main as of this change; a broader Heroku report
-test suite is a separate, larger effort). Mirrors the GCP validator's
-currency-formatting tests in test_validate_migration_report.py — same rule,
-same regression, same fixture-shaped inline HTML pattern.
+Kept in a separate module alongside the validator (and the structural
+test_validate_heroku_migration_report.py) so the whole validator ships as one
+self-contained unit under skills/heroku-to-aws/scripts/. Mirrors the GCP
+validator's currency-formatting tests in test_validate_migration_report.py —
+same rule, same regressions, same fixture-shaped inline HTML pattern.
 """
 
 from __future__ import annotations
 
-import subprocess
+import subprocess  # nosec B404 — test-only, list args, no shell, committed script path
 import sys
 import tempfile
 from pathlib import Path
 
-PLUGIN_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = PLUGIN_ROOT / "scripts" / "validate-heroku-migration-report.py"
+SCRIPT = Path(__file__).resolve().parent / "validate-heroku-migration-report.py"
 
 GOOD = """<!DOCTYPE html>
 <html lang="en"><body><div class="report">
 <section id="decision-summary"><p class="verdict-headline">Go</p></section>
 <section id="exec-costs"><p>Balanced Est. $112/mo</p></section>
+<section id="cost-optimization"><p>No 1-year/3-year commitment product applies to this architecture.</p></section>
 <section id="next-steps"><ol><li>See MIGRATION_GUIDE.md</li></ol></section>
 <footer>draft for review</footer>
 </div></body></html>
