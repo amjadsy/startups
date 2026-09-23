@@ -393,7 +393,7 @@ const CREDENTIAL_PATTERNS: RegExp[] = [
   /\bBearer\s+[A-Za-z0-9._~+/-]{12,}=*\b/i, // bearer token
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/, // JWT
   /\b[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/i, // URI userinfo
-  /\b(?:password|passwd|secret|token|api[_-]?key|access[_-]?key)\s*[:=]\s*["']?(?!<|\*{3,}|\[|\$\{?[A-Z_])[^\s"'<>*\[\]]{8,}/i, // literal assignment
+  /\b(?:[A-Za-z][A-Za-z0-9]*_)*(?:password|passwd|secret|token|api_?key|access_?key)(?:_[A-Za-z0-9]+)*\b\s*[:=]\s*["']?(?!<|\*{3,}|\[|\$\{?[A-Z_])[^\s"'<>*\[\]]{8,}/i, // literal configuration assignment
   /--?(?:password|passwd|secret|token|api[_-]?key|access[_-]?key)(?:=|\s+)["']?(?!<|\*{3,}|\[|\$\{?[A-Z_])[^\s"'<>*\[\]]{8,}/i, // CLI literal
 ];
 

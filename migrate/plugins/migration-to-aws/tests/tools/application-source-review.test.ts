@@ -503,30 +503,34 @@ describe('final review artifact validation', () => {
 // --- configuration names vs credentials ---------------------------------------
 
 describe('configuration names vs literal credentials', () => {
-  it('allows configuration names such as SIGNING_SECRET', () => {
-    const clean = findings([{
-      question: 'runtime_settings',
-      status: 'PRESENT',
-      value: [{
-        component_id: 'component-api',
-        process_ids: [],
-        setting_name: 'SIGNING_SECRET',
-        use: 'HMAC signing key name',
-        required: true,
-        default_present: false,
-        loaded_dynamically: false,
-      }],
-      sources: [],
-      limitations: [],
-    }]);
-    assert.deepEqual(scanDisallowedContent(clean), []);
+  it('allows secret-bearing configuration names without values', () => {
+    for (const settingName of ['SIGNING_SECRET', 'DATABASE_PASSWORD', 'AWS_SECRET_ACCESS_KEY']) {
+      const clean = findings([{
+        question: 'runtime_settings',
+        status: 'PRESENT',
+        value: [{
+          component_id: 'component-api',
+          process_ids: [],
+          setting_name: settingName,
+          use: 'credential setting name',
+          required: true,
+          default_present: false,
+          loaded_dynamically: false,
+        }],
+        sources: [],
+        limitations: [],
+      }]);
+      assert.deepEqual(scanDisallowedContent(clean), []);
+    }
   });
 
-  it('allows standard redaction placeholders in commands', () => {
+  it('allows environment references and standard redaction placeholders in commands', () => {
     for (const command of [
       'heroku run rake seed --token=<redacted>',
       'API_KEY=******** node app.js',
       'node app.js --secret=${REDACTED}',
+      'DATABASE_PASSWORD=$DATABASE_PASSWORD node app.js',
+      'AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} node app.js',
     ]) {
       const clean = findings([{
         question: 'process_commands',
@@ -549,6 +553,54 @@ describe('configuration names vs literal credentials', () => {
       limitations: [],
     }]);
     assert.ok(scanDisallowedContent(leaked).length > 0);
+  });
+
+  it('rejects literal assignments to prefixed secret-bearing configuration names', () => {
+    for (const command of [
+      'DATABASE_PASSWORD=syntheticExampleValue123 node app.js',
+      'AWS_SECRET_ACCESS_KEY=syntheticExampleValue123 node app.js',
+    ]) {
+      const ws = makeWorkspace({ 'Procfile': `web: ${command}\n` });
+      const reviewRequest = request(['process_commands']);
+      const submission = findings([{
+        question: 'process_commands',
+        status: 'PRESENT',
+        value: [{
+          process_id: 'process-web',
+          component_id: 'component-api',
+          type: 'web',
+          name: 'web',
+          command,
+        }],
+        sources: [{ path: 'Procfile', line_start: 1, line_end: 1 }],
+        limitations: [],
+      }]);
+
+      const result = evaluateSubmission({
+        schema,
+        request: reviewRequest,
+        submission,
+        roots: [ws],
+        workspaceRoot: ws,
+      });
+      assert.equal(result.retained, false);
+      assert.match(result.reasons.join('\n'), /high-confidence credential/);
+      assert.equal(object((result.findings.findings as Json[])[0]).status, 'UNKNOWN');
+
+      const artifact = {
+        reviews: [{
+          source_root: '.',
+          request: reviewRequest,
+          status: 'RETAINED',
+          findings: submission,
+          limitations: [],
+        }],
+      };
+      assert.match(
+        validateReviewArtifact(schema, artifact, ws, [reviewRequest]).join('\n'),
+        /high-confidence credential/,
+      );
+    }
   });
 
   it('rejects connection strings and bearer tokens', () => {
