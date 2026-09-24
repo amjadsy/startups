@@ -90,7 +90,7 @@ Generate-only facts. Add `exec-share` to the TOC only when rendered.
 
 **Deferred services flag:** If ANY resource in the design artifact has `aws_service == "Deferred — specialist engagement"`, add a prominent callout:
 
-> ⚠️ **Specialist engagement required:** [service name] does not have an automated AWS mapping from this plugin. Engage your AWS account team and/or a data analytics migration partner to evaluate the best AWS analytics path. This does **not** block phased migration of other services; exclude [service name] from the combined estimated AWS monthly run rate until the target architecture is defined.
+> ⚠️ **Specialist engagement required:** [service name] does not have an automated AWS mapping from this plugin. Engage your AWS account team and/or a third-party data analytics migration specialist to evaluate the best AWS analytics path. This does **not** block phased migration of other services; exclude [service name] from the combined estimated AWS monthly run rate until the target architecture is defined.
 
 **Startup credits callout (decision summary / verdict):**
 
