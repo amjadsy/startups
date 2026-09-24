@@ -65,7 +65,7 @@ The output should show 11 installed skills:
 
 If all 11 appear, tell the user:
 
-> "AWS Startup Advisor skills are installed. You can now ask me about credits, partner offers, architecture for your startup stage, migration from GCP or Heroku, moving your AI stack to Bedrock, or I can scaffold a new app for you.
+> "AWS Startup Advisor skills are installed. You can now ask me about credits, partner offers, architecture for your startup stage, migration from GCP, Azure, or Heroku, moving your AI stack to Bedrock, or I can scaffold a new app for you.
 >
 > Try asking:
 >
