@@ -504,7 +504,16 @@ describe('final review artifact validation', () => {
 
 describe('configuration names vs literal credentials', () => {
   it('allows secret-bearing configuration names without values', () => {
-    for (const settingName of ['SIGNING_SECRET', 'DATABASE_PASSWORD', 'AWS_SECRET_ACCESS_KEY']) {
+    for (
+      const settingName of [
+        'SIGNING_SECRET',
+        'DATABASE_PASSWORD',
+        'AWS_SECRET_ACCESS_KEY',
+        '_DATABASE_PASSWORD',
+        'DATABASE__PASSWORD',
+        'DATABASE_PASSWORD_',
+      ]
+    ) {
       const clean = findings([{
         question: 'runtime_settings',
         status: 'PRESENT',
@@ -531,6 +540,9 @@ describe('configuration names vs literal credentials', () => {
       'node app.js --secret=${REDACTED}',
       'DATABASE_PASSWORD=$DATABASE_PASSWORD node app.js',
       'AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} node app.js',
+      '_DATABASE_PASSWORD=$_DATABASE_PASSWORD node app.js',
+      'java -Dservice.api-key=<redacted> -jar app.jar',
+      'java -Dservice.access-key=${SERVICE_ACCESS_KEY} -jar app.jar',
     ]) {
       const clean = findings([{
         question: 'process_commands',
@@ -559,6 +571,11 @@ describe('configuration names vs literal credentials', () => {
     for (const command of [
       'DATABASE_PASSWORD=syntheticExampleValue123 node app.js',
       'AWS_SECRET_ACCESS_KEY=syntheticExampleValue123 node app.js',
+      '_DATABASE_PASSWORD=syntheticExampleValue123 node app.js',
+      'DATABASE__PASSWORD=syntheticExampleValue123 node app.js',
+      'DATABASE_PASSWORD_=syntheticExampleValue123 node app.js',
+      'java -Dservice.api-key=syntheticVerifyValue123 -jar app.jar',
+      'java -Dservice.access-key=syntheticVerifyValue123 -jar app.jar',
     ]) {
       const ws = makeWorkspace({ 'Procfile': `web: ${command}\n` });
       const reviewRequest = request(['process_commands']);
