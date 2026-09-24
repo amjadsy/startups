@@ -1,7 +1,7 @@
 {
   "captured_at": "2026-07-20T18:20:00Z",
   "gcloud_version": "Google Cloud SDK 532.0.0",
-  "account": "founder@example.com",
+  "account": "founder@acme-demo.com",
   "project": "acme-prod",
   "method": "per_service",
   "cai_enable_offered": true,

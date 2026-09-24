@@ -224,7 +224,7 @@ along with `honest_assessment_reason`.
 **Non-cost benefits to present:** usage counting toward existing AWS commitments,
 IAM/VPC/PrivateLink/KMS/CloudTrail governance, in-region processing for data residency, prompt
 caching (Claude, and GPT-5.6 at 90% off cached input with cached tokens exempt from the input-TPM
-quota), model flexibility (100+ models), AWS service integration (Guardrails, Knowledge Bases, AgentCore),
+quota), model flexibility (100+ models), AWS ecosystem (Guardrails, Knowledge Bases, AgentCore),
 and — for a same-model move — the elimination of behavior-delta and prompt-regression risk.
 
 **Pricing source caveat for OpenAI models:** the AWS Price List API does not carry the
