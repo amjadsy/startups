@@ -7,7 +7,7 @@ title: "Merge for Startups ($5000 off annual plans of Unified and Agent Handler)
 
 Apply to this offer in one step!
 
-Contact [pritak@merge.dev](mailto:pritak@merge.dev) for additional questions.
+See the [official Merge offer page](https://aws.amazon.com/startups/offers/merge) for current availability and redemption instructions. For questions, use [Merge's support options](https://help.merge.dev/en/articles/9558166-how-do-i-contact-merge-support).
 
 ### Merge for Startups ($5000 off annual plans of Unified and Agent Handler)
 
@@ -17,4 +17,4 @@ Merge provides a single API for 220+ integrations across HRIS, ATS, Accounting, 
 
 Apply to this offer in one step!
 
-Contact [pritak@merge.dev](mailto:pritak@merge.dev) for additional questions.
+See the [official Merge offer page](https://aws.amazon.com/startups/offers/merge) for current availability and redemption instructions. For questions, use [Merge's support options](https://help.merge.dev/en/articles/9558166-how-do-i-contact-merge-support).
