@@ -393,9 +393,28 @@ const CREDENTIAL_PATTERNS: RegExp[] = [
   /\bBearer\s+[A-Za-z0-9._~+/-]{12,}=*\b/i, // bearer token
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/, // JWT
   /\b[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/i, // URI userinfo
-  /(?<![A-Za-z0-9_])(?=[A-Za-z_])(?:[A-Za-z0-9]*_+)*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key)(?:_+[A-Za-z0-9]*)*\s*[:=]\s*["']?(?!<|\*{3,}|\[|\$\{?[A-Z_])[^\s"'<>*\[\]]{8,}/i, // literal configuration assignment
   /--?(?:password|passwd|secret|token|api[_-]?key|access[_-]?key)(?:=|\s+)["']?(?!<|\*{3,}|\[|\$\{?[A-Z_])[^\s"'<>*\[\]]{8,}/i, // CLI literal
 ];
+
+const LITERAL_ASSIGNMENT_PATTERN =
+  /(?:^|[^A-Za-z0-9_])(?:"([A-Za-z_][A-Za-z0-9_.-]*)"|'([A-Za-z_][A-Za-z0-9_.-]*)'|([A-Za-z_][A-Za-z0-9_.-]*))\s*[:=]\s*["']?(?!<|\*{3,}|\[|\$\{?[A-Z_])[^\s"'<>*\[\]]{8,}/gu;
+const CREDENTIAL_KEY_PARTS = new Set(["password", "passwd", "secret", "token", "apikey", "accesskey"]);
+
+function isCredentialKey(key: string): boolean {
+  const parts = key.toLowerCase().split(/[._-]+/u).filter(Boolean);
+  return parts.some((part, index) =>
+    CREDENTIAL_KEY_PARTS.has(part)
+    || ((part === "api" || part === "access") && parts[index + 1] === "key")
+  );
+}
+
+function hasLiteralCredentialAssignment(text: string): boolean {
+  for (const match of text.matchAll(LITERAL_ASSIGNMENT_PATTERN)) {
+    const key = match[1] ?? match[2] ?? match[3];
+    if (key && isCredentialKey(key)) return true;
+  }
+  return false;
+}
 
 const TARGET_PATTERNS: RegExp[] = [
   /\b(?:recommend(?:s|ed)?|should|propos(?:e|ed))\b.{0,80}\b(?:elastic beanstalk|fargate|amazon rds\b|amazon aurora|elasticache|amazon eks|amazon msk|app runner)\b/i,
@@ -420,6 +439,9 @@ function scanCredentialContent(value: Json): string[] {
   walkStrings(value, (text) => {
     for (const pattern of CREDENTIAL_PATTERNS) {
       if (pattern.test(text)) reasons.push(`high-confidence credential in output: ${pattern.source}`);
+    }
+    if (hasLiteralCredentialAssignment(text)) {
+      reasons.push("high-confidence credential in output: literal assignment");
     }
   });
   return reasons;

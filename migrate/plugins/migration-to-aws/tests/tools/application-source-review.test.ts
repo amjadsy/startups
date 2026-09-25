@@ -512,6 +512,8 @@ describe('configuration names vs literal credentials', () => {
         '_DATABASE_PASSWORD',
         'DATABASE__PASSWORD',
         'DATABASE_PASSWORD_',
+        `A${'_'.repeat(32)}PASSWORD`,
+        `PASSWORD${'_'.repeat(32)}A`,
       ]
     ) {
       const clean = findings([{
@@ -543,6 +545,8 @@ describe('configuration names vs literal credentials', () => {
       '_DATABASE_PASSWORD=$_DATABASE_PASSWORD node app.js',
       'java -Dservice.api-key=<redacted> -jar app.jar',
       'java -Dservice.access-key=${SERVICE_ACCESS_KEY} -jar app.jar',
+      `node app.js --config='{"password":"<redacted>"}'`,
+      `node app.js --config='{"token":"\${SERVICE_TOKEN}"}'`,
     ]) {
       const clean = findings([{
         question: 'process_commands',
@@ -576,6 +580,8 @@ describe('configuration names vs literal credentials', () => {
       'DATABASE_PASSWORD_=syntheticExampleValue123 node app.js',
       'java -Dservice.api-key=syntheticVerifyValue123 -jar app.jar',
       'java -Dservice.access-key=syntheticVerifyValue123 -jar app.jar',
+      `node app.js --config='{"password":"syntheticVerifyValue123"}'`,
+      `node app.js --config='{"token":"syntheticVerifyValue123"}'`,
     ]) {
       const ws = makeWorkspace({ 'Procfile': `web: ${command}\n` });
       const reviewRequest = request(['process_commands']);
@@ -618,6 +624,40 @@ describe('configuration names vs literal credentials', () => {
         /high-confidence credential/,
       );
     }
+  });
+
+  it('handles underscore-heavy configuration names without excessive backtracking', () => {
+    const ws = makeWorkspace({ 'package.json': '{\n  "name": "app"\n}\n' });
+    const reviewRequest = request(['runtime_framework'], context({
+      configuration_names: [
+        `A${'_'.repeat(32)}PASSWORD`,
+        `PASSWORD${'_'.repeat(32)}A`,
+      ],
+    }));
+    const submission = findings([runtimeFramework('nodejs', NODE_SOURCES)]);
+
+    const started = Date.now();
+    const result = evaluateSubmission({
+      schema,
+      request: reviewRequest,
+      submission,
+      roots: [ws],
+      workspaceRoot: ws,
+    });
+    assert.equal(result.retained, true);
+    assert.deepEqual(
+      validateReviewArtifact(schema, {
+        reviews: [{
+          source_root: '.',
+          request: reviewRequest,
+          status: 'RETAINED',
+          findings: submission,
+          limitations: [],
+        }],
+      }, ws, [reviewRequest]),
+      [],
+    );
+    assert.ok(Date.now() - started < 1000, 'credential validation exceeded one second');
   });
 
   it('rejects connection strings and bearer tokens', () => {
